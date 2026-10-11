@@ -15,6 +15,8 @@
 //   capital, so "May" matches "May" and "MAY" but not "may";
 // - anything else (multi-word names, lowercase handles) matches
 //   case-insensitively.
+// A vocabulary form wins any length tie with another form, so a listed acronym ("SAM") is kept
+// even though a person part ("Sam") would also match its all-caps text.
 // Whitespace between the words of a multi-word form matches any run of
 // whitespace, so a name wrapped across lines is still found.
 
@@ -145,6 +147,8 @@ interface Form {
   length: number;
   /** Position of the entity class in ENTITY_CLASSES, the tie-breaker between equal lengths. */
   rank: number;
+  /** A vocabulary form: wins every length tie, so it shields its span from other forms. */
+  shield: boolean;
 }
 
 const WORDCHAR_RE = /[\p{L}\p{N}]/u;
@@ -191,6 +195,7 @@ export class EntityMatcher {
         value: raw,
         length: words.join("").length,
         rank,
+        shield: key === "vocabulary",
       };
       const first = (words[0] as string)[0]?.toLowerCase() as string;
       const list = this.byFirst.get(first) ?? [];
@@ -204,11 +209,12 @@ export class EntityMatcher {
       }
     }
     for (const x of extra) add(`extra:${x.cls}`, x.cls, x.value, ENTITY_CLASSES.length + PSEUDO_CLASSES.indexOf(x.cls));
-    // Longest first; ties broken by class order then text, so the scan is order-independent.
+    // Longest first; at equal length a vocabulary form wins (so "SAM" listed as vocabulary is not
+    // taken for the person part "Sam"); then class order, then text, so the scan is order-independent.
     for (const list of this.byFirst.values()) {
       list.sort(
         (a, b) =>
-          b.length - a.length || a.rank - b.rank || cmp(a.value, b.value),
+          b.length - a.length || Number(b.shield) - Number(a.shield) || a.rank - b.rank || cmp(a.value, b.value),
       );
     }
     this.empty = this.byFirst.size === 0;

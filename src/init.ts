@@ -14,6 +14,7 @@ import {
   SENSITIVE_CLASSES,
   type SensitiveClass,
   defaultPolicy,
+  defaultSamples,
   renderPolicy,
 } from "./policy.ts";
 
@@ -124,10 +125,13 @@ async function askPolicy(p: Prompter): Promise<Policy> {
     policy.models.analyst = await askModel(p, "Analyst", policy.models.analyst);
     policy.models.auditor = await askModel(p, "Auditor", policy.models.analyst);
   }
-  const samples = await p.ask("Sample values per column shown to the analyst", String(policy.profile.samples), (a) =>
+  // Accepting the mode's default leaves `samples` unset in blind.toml, so it follows a later mode change.
+  const byMode = defaultSamples(policy.privacy.mode);
+  const samples = await p.ask("Sample values per column shown to the analyst", String(byMode), (a) =>
     /^\d+$/.test(a) ? null : "expected a whole number (0 or more)",
   );
   policy.profile.samples = Number(samples);
+  policy.profile.samplesExplicit = policy.profile.samples !== byMode;
   const classes = await p.ask("Classes to blind, comma-separated", policy.sensitive.classes.join(","), (a) => {
     const bad = splitList(a).find((c) => !(SENSITIVE_CLASSES as readonly string[]).includes(c));
     return bad === undefined ? null : `unknown class ${JSON.stringify(bad)}; expected some of: ${SENSITIVE_CLASSES.join(", ")}`;

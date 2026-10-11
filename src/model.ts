@@ -5,10 +5,14 @@
 //   anthropic          POST <url>/v1/messages            (url default https://api.anthropic.com)
 //   openai-compatible  POST <url>/chat/completions       (url default the local server in policy.ts)
 //
-// The privacy boundary lives here, and every check runs before the first byte is sent:
+// The privacy boundary lives here, and every check runs before the first byte is sent
+// (a failed check throws ModelRefusal, which a command reports with exit 2):
 //   - privacy.mode "none" calls no model; "local-only" refuses anything that is not a
 //     loopback literal (127.0.0.0/8, ::1, localhost), which rules out claude-cli and the
 //     hosted Anthropic API. There is no fallback to another backend.
+//   - privacy.mode "profile-only" allows a remote model, but the data must be exactly
+//     profilePayload(profile, policy): a schema-valid profile and the policy, nothing else.
+//     The mode and the profile's sample count are printed before every call, even when quiet.
 //   - the caller's data is quoted as JSON inside a <data> block, and any string in it
 //     longer than MAX_DATA_STRING characters is refused, not truncated: a long string
 //     there means document text is about to leave the machine.
@@ -23,8 +27,9 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_LOCAL_URL, type ModelConfig, type Policy, type PrivacyMode } from "./policy.ts";
-import { type Schema, validateSchema } from "./validate.ts";
+import { DEFAULT_LOCAL_URL, type ModelConfig, type Policy, type PrivacyMode, SENSITIVE_CLASSES } from "./policy.ts";
+import type { Profile } from "./schema.ts";
+import { type Schema, validateProfile, validateSchema } from "./validate.ts";
 
 export type Role = "analyst" | "auditor";
 
@@ -56,7 +61,10 @@ export type SpawnFn = (
 
 export interface AskOptions {
   policy: Pick<Policy, "models" | "privacy">;
-  /** Suppress the per-call `role · backend · model · mode · N bytes sent` line. */
+  /**
+   * Suppress the per-call `role · backend · model · mode · [samples k ·] N bytes sent` line.
+   * Ignored under profile-only: a call that may leave the machine is always announced.
+   */
   quiet?: boolean;
   fetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
   spawn?: SpawnFn;
@@ -67,6 +75,19 @@ export interface AskOptions {
 
 export class ModelError extends Error {
   override name = "ModelError";
+}
+
+/**
+ * A call refused before anything was sent: the privacy mode, the endpoint, the key setting,
+ * or the data forbids it. Commands report it with exit 2 (refused), never as a partial result.
+ */
+export class ModelRefusal extends ModelError {
+  override name = "ModelRefusal";
+}
+
+/** False under privacy.mode "none": callers take their model-free path (heuristic analyst, mechanical audit). */
+export function modelsEnabled(policy: Pick<Policy, "privacy">): boolean {
+  return policy.privacy.mode !== "none";
 }
 
 // ---------------------------------------------------------------------------
@@ -86,13 +107,13 @@ function parseEndpoint(role: Role, raw: string): URL {
   try {
     url = new URL(raw);
   } catch {
-    throw new ModelError(`models.${role}.url is not a valid URL`);
+    throw new ModelRefusal(`models.${role}.url is not a valid URL`);
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new ModelError(`models.${role}.url must be http or https (got ${url.protocol})`);
+    throw new ModelRefusal(`models.${role}.url must be http or https (got ${url.protocol})`);
   }
   if (url.username !== "" || url.password !== "") {
-    throw new ModelError(`models.${role}.url must not contain credentials; put the key in the variable key_env names`);
+    throw new ModelRefusal(`models.${role}.url must not contain credentials; put the key in the variable key_env names`);
   }
   return url;
 }
@@ -103,12 +124,12 @@ function parseEndpoint(role: Role, raw: string): URL {
  */
 export function resolveEndpoint(role: Role, cfg: ModelConfig, mode: PrivacyMode): URL | null {
   if (mode === "none") {
-    throw new ModelError(`privacy.mode is "none": no model is called (the ${role} needs a model)`);
+    throw new ModelRefusal(`privacy.mode is none: no model is called (the ${role} needs a model)`);
   }
   if (cfg.backend === "claude-cli") {
     if (mode === "local-only") {
-      throw new ModelError(
-        `models.${role}.backend "claude-cli" sends the prompt to Anthropic, which privacy.mode "local-only" refuses; ` +
+      throw new ModelRefusal(
+        `privacy.mode is local-only: models.${role}.backend "claude-cli" sends the prompt to Anthropic; ` +
           `configure a loopback openai-compatible server, or set privacy.mode = "profile-only" to allow it`,
       );
     }
@@ -118,13 +139,13 @@ export function resolveEndpoint(role: Role, cfg: ModelConfig, mode: PrivacyMode)
   const url = parseEndpoint(role, cfg.url === "" ? fallback : cfg.url);
   const local = isLoopback(url);
   if (mode === "local-only" && !local) {
-    throw new ModelError(
-      `models.${role}.url host ${url.hostname} is not loopback, which privacy.mode "local-only" refuses; ` +
+    throw new ModelRefusal(
+      `privacy.mode is local-only: models.${role}.url host ${url.hostname} is not loopback; ` +
         `use 127.0.0.1, ::1 or localhost, or set privacy.mode = "profile-only" to allow a remote model`,
     );
   }
   if (!local && url.protocol !== "https:") {
-    throw new ModelError(`models.${role}.url must use https for a non-loopback host (${url.hostname})`);
+    throw new ModelRefusal(`models.${role}.url must use https for a non-loopback host (${url.hostname})`);
   }
   return url;
 }
@@ -134,7 +155,7 @@ export function assertShortStrings(data: unknown, path = "$"): void {
   const check = (s: string, at: string) => {
     const n = [...s].length;
     if (n > MAX_DATA_STRING) {
-      throw new ModelError(
+      throw new ModelRefusal(
         `refusing to send: the string at ${at} is ${n} characters, over the ${MAX_DATA_STRING}-character limit for model data`,
       );
     }
@@ -149,6 +170,88 @@ export function assertShortStrings(data: unknown, path = "$"): void {
   }
 }
 
+/** The policy as a model sees it: every string at most MAX_DATA_STRING characters. */
+export interface PolicyView {
+  classes: string[];
+  /** The policy's description, split at spaces into pieces of at most MAX_DATA_STRING characters. */
+  description: string[];
+  examples: string[];
+  keep: string[];
+}
+
+/** What a profile-only call sends: the corpus profile and the policy, and nothing else. */
+export interface ProfilePayload {
+  profile: Profile;
+  policy: PolicyView;
+}
+
+const shortStrings = { type: "array", items: { type: "string", maxLength: MAX_DATA_STRING } } as const;
+const POLICY_VIEW_SCHEMA: Schema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["classes", "description", "examples", "keep"],
+  properties: {
+    classes: { type: "array", items: { enum: [...SENSITIVE_CLASSES] } },
+    description: shortStrings,
+    examples: shortStrings,
+    keep: shortStrings,
+  },
+};
+
+/** Splits text at spaces into pieces of at most `max` code points. Nothing is dropped; a longer word is cut. */
+export function splitText(text: string, max = MAX_DATA_STRING): string[] {
+  const out: string[] = [];
+  let line: string[] = [];
+  const flush = () => {
+    if (line.length > 0) out.push(line.join(""));
+    line = [];
+  };
+  for (const word of text.split(/(\s+)/)) {
+    const w = [...word];
+    if (line.length + w.length <= max) {
+      line.push(...w);
+      continue;
+    }
+    flush();
+    for (let i = 0; i < w.length; i += max) {
+      line = w.slice(i, i + max);
+      if (line.length === max) flush();
+    }
+  }
+  flush();
+  return out;
+}
+
+/** Builds the only data a profile-only call may carry. Strings over the limit are refused later by ask(), not cut. */
+export function profilePayload(profile: Profile, policy: Pick<Policy, "sensitive" | "keep">): ProfilePayload {
+  return {
+    profile,
+    policy: {
+      classes: [...policy.sensitive.classes],
+      description: splitText(policy.sensitive.description),
+      examples: [...policy.sensitive.examples],
+      keep: [...policy.keep.terms],
+    },
+  };
+}
+
+/** Refuses data that is not exactly a profile payload: other keys, an invalid profile, or an invalid policy view. */
+export function assertProfilePayload(data: unknown): asserts data is ProfilePayload {
+  const refuse = (why: string): never => {
+    throw new ModelRefusal(`privacy.mode is profile-only: only the profile and the policy may be sent, ${why}`);
+  };
+  if (typeof data !== "object" || data === null || Array.isArray(data)) refuse("but the data is not an object");
+  const keys = Object.keys(data as object).sort();
+  if (keys.length !== 2 || keys[0] !== "policy" || keys[1] !== "profile") {
+    refuse(`but the data has keys ${JSON.stringify(keys)} (expected exactly "policy" and "profile")`);
+  }
+  const { profile, policy } = data as Record<string, unknown>;
+  const checked = validateProfile(profile);
+  if (!checked.ok) refuse(`but the profile is not valid: ${checked.issues.map((i) => `${i.path}: ${i.message}`).join("; ")}`);
+  const issues = validateSchema(POLICY_VIEW_SCHEMA, policy);
+  if (issues.length > 0) refuse(`but the policy is not valid: ${issues.map((i) => `${i.path}: ${i.message}`).join("; ")}`);
+}
+
 const KEY_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 function readKey(role: Role, cfg: ModelConfig, env: Record<string, string | undefined>): string | undefined {
@@ -156,16 +259,16 @@ function readKey(role: Role, cfg: ModelConfig, env: Record<string, string | unde
   const name = cfg.key_env;
   if (name === "") {
     if (cfg.backend === "anthropic") {
-      throw new ModelError(`models.${role}.key_env is empty; the anthropic backend needs the name of the variable holding the API key`);
+      throw new ModelRefusal(`models.${role}.key_env is empty; the anthropic backend needs the name of the variable holding the API key`);
     }
     return undefined;
   }
   // A pasted key is not a variable name; say so without echoing it.
   if (!KEY_ENV_NAME.test(name)) {
-    throw new ModelError(`models.${role}.key_env must be the name of an environment variable (letters, digits, _), not the key itself`);
+    throw new ModelRefusal(`models.${role}.key_env must be the name of an environment variable (letters, digits, _), not the key itself`);
   }
   const key = env[name];
-  if (key === undefined || key === "") throw new ModelError(`models.${role}.key_env names ${name}, which is not set`);
+  if (key === undefined || key === "") throw new ModelRefusal(`models.${role}.key_env names ${name}, which is not set`);
   return key;
 }
 
@@ -217,6 +320,8 @@ export function parseReply(text: string, schema: Schema): Parsed {
 
 interface Call {
   role: Role;
+  /** The profile's sample count when the data is a profile payload, shown on the announce line. */
+  samples: number | undefined;
   cfg: ModelConfig;
   url: URL | null;
   key: string | undefined;
@@ -229,9 +334,11 @@ interface Call {
 const bytes = (s: string): number => Buffer.byteLength(s, "utf8");
 
 function announce(c: Call, model: string, sent: number): void {
-  if (c.opts.quiet === true) return;
+  const mode = c.opts.policy.privacy.mode;
+  if (c.opts.quiet === true && mode !== "profile-only") return;
   const write = c.opts.stderr ?? ((line: string) => process.stderr.write(`${line}\n`));
-  write(`${c.role} · ${c.cfg.backend} · ${model} · ${c.opts.policy.privacy.mode} · ${sent} bytes sent`);
+  const samples = c.samples === undefined ? "" : ` · samples ${c.samples}`;
+  write(`${c.role} · ${c.cfg.backend} · ${model} · ${mode}${samples} · ${sent} bytes sent`);
 }
 
 function endpointUrl(base: URL, path: string): string {
@@ -378,8 +485,11 @@ async function callClaude(c: Call): Promise<string> {
  */
 export async function ask<T>(role: Role, system: string, prompt: Prompt, schema: Schema, opts: AskOptions): Promise<T> {
   const cfg = opts.policy.models[role];
-  const url = resolveEndpoint(role, cfg, opts.policy.privacy.mode);
+  const mode = opts.policy.privacy.mode;
+  const url = resolveEndpoint(role, cfg, mode);
+  if (mode === "profile-only") assertProfilePayload(prompt.data);
   assertShortStrings(prompt.data);
+  const samples = mode === "profile-only" ? (prompt.data as ProfilePayload).profile.sampleCount : undefined;
   const key = readKey(role, cfg, opts.env ?? process.env);
   const transport = cfg.backend === "claude-cli" ? callClaude : cfg.backend === "anthropic" ? callAnthropic : callOpenAI;
   const timeoutMs = opts.timeoutMs ?? CALL_TIMEOUT_MS;
@@ -387,7 +497,7 @@ export async function ask<T>(role: Role, system: string, prompt: Prompt, schema:
   let feedback: string | undefined;
   for (let attempt = 0; attempt < 2; attempt++) {
     const user = renderPrompt(prompt, schema, feedback);
-    const reply = await transport({ role, cfg, url, key, system, user, opts, timeoutMs });
+    const reply = await transport({ role, samples, cfg, url, key, system, user, opts, timeoutMs });
     const parsed = parseReply(reply, schema);
     if (parsed.ok) return parsed.value as T;
     feedback = parsed.reason;

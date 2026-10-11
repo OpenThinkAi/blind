@@ -28,8 +28,20 @@ export interface Policy {
   sensitive: { classes: SensitiveClass[]; description: string; examples: string[] };
   keep: { terms: string[] };
   models: { analyst: ModelConfig; auditor: ModelConfig };
-  profile: { samples: number };
+  /**
+   * `samples` is always the count in force. `samplesExplicit` is false when blind.toml leaves
+   * `samples` unset, in which case it follows the mode: defaultSamples(privacy.mode).
+   */
+  profile: { samples: number; samplesExplicit: boolean };
   privacy: { mode: PrivacyMode };
+}
+
+/**
+ * Samples per column when blind.toml does not set `[profile] samples`: 5 while nothing leaves the
+ * machine, 0 (headers and statistics only) under profile-only, where the profile goes to a remote model.
+ */
+export function defaultSamples(mode: PrivacyMode): number {
+  return mode === "profile-only" ? 0 : 5;
 }
 
 export const DEFAULT_LOCAL_URL = "http://127.0.0.1:11434/v1";
@@ -46,7 +58,7 @@ export function defaultPolicy(): Policy {
     },
     keep: { terms: [] },
     models: { analyst: local(), auditor: local() },
-    profile: { samples: 5 },
+    profile: { samples: defaultSamples("local-only"), samplesExplicit: false },
     privacy: { mode: "local-only" },
   };
 }
@@ -90,7 +102,11 @@ export function renderPolicy(p: Policy): string {
     "",
     "[profile]",
     "# Sample values per column the analyst sees (each truncated to 120 characters). 0 = headers and stats only.",
-    `samples = ${p.profile.samples}`,
+    `# Unset, it is ${defaultSamples("local-only")} under local-only and none, and ${defaultSamples("profile-only")} under profile-only. Set it to override.`,
+    // Written out when set, or when it differs from the mode's default (so it is never silently changed).
+    p.profile.samplesExplicit || p.profile.samples !== defaultSamples(p.privacy.mode)
+      ? `samples = ${p.profile.samples}`
+      : `# samples = ${p.profile.samples}`,
     "",
     "[privacy]",
     "# local-only: refuse any non-loopback endpoint. profile-only: remote allowed, only the profile is sent.",
@@ -205,8 +221,10 @@ export function parsePolicy(text: string, source = POLICY_FILE): Policy {
   const keep = r.table(doc, "keep", "keep", ["terms"]);
   const models = r.table(doc, "models", "models", ["analyst", "auditor"]);
   const profile = r.table(doc, "profile", "profile", ["samples"]);
-  const samples = r.count(profile, "samples", "profile.samples");
+  const samplesExplicit = profile.samples !== undefined;
   const privacy = r.table(doc, "privacy", "privacy", ["mode"]);
+  const mode = r.oneOf(privacy, "mode", "privacy.mode", PRIVACY_MODES);
+  const samples = samplesExplicit ? r.count(profile, "samples", "profile.samples") : defaultSamples(mode);
 
   return {
     sensitive: {
@@ -216,8 +234,8 @@ export function parsePolicy(text: string, source = POLICY_FILE): Policy {
     },
     keep: { terms: r.strings(keep, "terms", "keep.terms") },
     models: { analyst: readModel(r, models, "analyst"), auditor: readModel(r, models, "auditor") },
-    profile: { samples },
-    privacy: { mode: r.oneOf(privacy, "mode", "privacy.mode", PRIVACY_MODES) },
+    profile: { samples, samplesExplicit },
+    privacy: { mode },
   };
 }
 

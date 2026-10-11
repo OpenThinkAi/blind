@@ -1,4 +1,4 @@
-// `blind audit <out>`: the file-system side of the mechanical audit. Reads the
+// `blind audit <out>`: the file-system side of the audit (mechanical, then semantic). Reads the
 // saved spec and the map, walks every entry of the output tree (hidden ones
 // included, symbolic links not followed), runs the audit and prints the
 // report as a table or JSON. Exit status is the contract: 0 clean,
@@ -14,6 +14,7 @@ import { BLIND_DIR } from "../init.ts";
 import { loadKeepTerms, PolicyError } from "../policy.ts";
 import type { Spec } from "../schema.ts";
 import { parseSpec, SchemaError } from "../validate.ts";
+import { addSemanticLayer } from "./semantic.ts";
 import { type AuditReport, auditTree, type Finding, type Status, type TreeEntry } from "./mechanical.ts";
 
 export interface AuditIO {
@@ -33,16 +34,23 @@ const AUDIT_HELP = [
   "value in the map and every enabled pattern match that is not a pseudonym. Host names under a",
   "domain in the blind.toml keep list are not reported: the policy keeps them.",
   "",
+  "Then the semantic layer, which does not rely on the spec: identifier-shaped tokens (hex of 6 or",
+  "more, 4 or more digits mixed with letters, runs of 10 or more digits), Title-Case phrases of two",
+  "or more words not in the keep list or the spec's vocabulary, and email and host shapes. Anything",
+  "that is a pseudonym is left out. Each is a candidate, listed once per file (at most 200 per file,",
+  "with a count of the rest).",
+  "",
   "Status: leak (a spec value survives), candidates (something to review: a variant or partial",
-  "match, a column the spec declares unknown or does not mention, an unanswered spec question, or a",
-  "part that could not be read), clean (none of these). Clean means only that this mechanical check",
-  "found nothing it knows to look for; it is not a guarantee that nothing identifying remains.",
+  "match, a semantic candidate, a column the spec declares unknown or does not mention, an",
+  "unanswered spec question, or a part that could not be read), clean (none of these). Clean means",
+  "only that these checks found nothing they look for; it is not a guarantee that nothing",
+  "identifying remains.",
   "Values in the report are masked: first characters, ***, length. Paths are printed as on disk.",
   "",
   "Options:",
   "      --map <path>  The map apply wrote (default .blind/map.json)",
   "      --json        Print the report as JSON",
-  "      --no-model    Mechanical layer only (this build has no model layer yet, so this is the default)",
+  "      --no-model    Mechanical and semantic layers only (this build has no model layer yet, so this is the default)",
   "  -h, --help        Show this help",
   "",
   "Exit status: 0 clean, 1 candidates, 2 leak, 3 the audit could not run (usage error or refusal; nothing audited).",
@@ -155,8 +163,9 @@ export function renderTable(r: AuditReport): string {
   if (r.status === "clean") {
     lines.push(
       `status: clean (${counts}; layers run: ${r.layers.join(", ")})`,
-      "No spec entity, map value or enabled pattern was found in any byte, name or archive member, and nothing was",
-      "left undecided. This checks only what the spec and map know about; it is not a guarantee that nothing identifying remains.",
+      "No spec entity, map value or enabled pattern was found in any byte, name or archive member, no identifier-,",
+      "name-, email- or host-shaped text was found that is not a pseudonym or kept, and nothing was left undecided.",
+      "These checks find only what they look for; it is not a guarantee that nothing identifying remains.",
     );
   } else lines.push(`status: ${r.status} (${counts}; layers run: ${r.layers.join(", ")})`);
   return `${lines.join("\n")}\n`;
@@ -193,8 +202,9 @@ export async function runAudit(argv: string[], io: AuditIO): Promise<number> {
     const map = loadMap(resolve(io.cwd, values.map ?? join(BLIND_DIR, MAP_FILE)));
     const entries = collectTree(resolve(io.cwd, positionals[0] as string));
     // Hosts the engine kept under a keep-list domain are policy, not leaks.
-    const report = auditTree(entries, spec, map, loadKeepTerms(io.cwd));
-    if (!values["no-model"]) io.err.write("blind audit: mechanical layer only; this build has no model layer\n");
+    const keep = loadKeepTerms(io.cwd);
+    const report = addSemanticLayer(auditTree(entries, spec, map, keep), entries, spec, map, { keep });
+    if (!values["no-model"]) io.err.write("blind audit: mechanical and semantic layers only; this build has no model layer\n");
     io.out.write(values.json ? `${JSON.stringify(report, null, 2)}\n` : renderTable(report));
     return EXIT[report.status];
   } catch (e) {

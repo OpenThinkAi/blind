@@ -236,7 +236,7 @@ pseudonyms stay the same.
 
 `blind audit <out>` reads `.blind/spec.json` and the map (`.blind/map.json`, or `--map <path>`)
 and checks the output tree as it is on disk, independently of how `blind apply` wrote it. This
-release runs the mechanical layer only (no model).
+release runs two layers, mechanical then semantic, and no model; the report lists the layers run.
 
 - **What is read.** Every entry under `<out>`, hidden ones included. Each file's raw bytes are read
   as Latin-1, UTF-8 and UTF-16 (both byte orders, both alignments), and each of those again with
@@ -258,12 +258,29 @@ release runs the mechanical layer only (no model).
   anything the audit could not read in full (undecodable or encrypted archive members, binary
   content, images, symbolic links, unreadable files).
 
+- **Semantic layer.** A candidate finder that does not rely on the spec's entities or the map. It
+  reads the same files, names and zip members (an XML member as its text, with runs joined so a
+  name split across runs is one phrase, and its attribute values) and reports as a `candidate`:
+  identifier-shaped tokens (a hex run of 6 or more with a digit and a letter; 4 or more digits mixed
+  with letters, such as `PRJ-48213`; a run of 10 or more digits, not the fraction of a decimal
+  number), Title-Case phrases of two or more words, and email and host shapes. Left out: anything
+  that is a pseudonym; values equal to a `blind.toml` keep term, a `vocabulary` entity form or a
+  value of a column the spec classifies as `vocabulary` (CSV/TSV and JSON); the spec's own headers
+  for that file; hosts under a keep-list domain; ISO 8601 timestamps; file extensions (`notes.md`
+  is not a host); and format structure in XML (namespace and schema URIs, revision and paragraph
+  ids, colours, fonts, content types). A Title-Case run is split at keep and vocabulary terms, and
+  a leading function word (`The`, `In`, ...) is dropped, so `The Spring Planning Review` with that
+  term in the vocabulary is explained. Candidates are listed once per value per file (the first
+  place, with how many places), at most 200 per file, then one line counting the rest. The layer
+  only adds candidates: it never removes or downgrades a mechanical finding.
+
 Status is `leak` if any leak, else `candidates` if any candidate, else `clean`. Exit status: 0
 clean, 1 candidates, 2 leak, 3 the audit could not run (usage error, or a missing or invalid spec
 or map; nothing audited). The report (a table, or `--json`) gives file, zip member, byte offset and
 line, class and a masked value: the first two characters (never more than half), `***`, and the
-length. `clean` means only that this check found nothing it knows to look for; it is not a
-guarantee that nothing identifying remains.
+length. `clean` needs zero leaks, zero candidates of either layer and zero declared unknowns. It
+means only that these checks found nothing they look for; it is not a guarantee that nothing
+identifying remains.
 
 ## Profile
 

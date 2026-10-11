@@ -48,7 +48,7 @@ export interface Finding {
   line: number | null;
   /** Entity class, map kind, `pattern:<name>`, `unknown`, or `unscanned`. */
   class: string;
-  source: "entity" | "map" | "pattern" | "spec" | "scan";
+  source: "entity" | "map" | "pattern" | "spec" | "scan" | "semantic";
   severity: Severity;
   /** First characters, `***`, then the length in characters; never the whole value. */
   masked: string;
@@ -67,7 +67,7 @@ export interface FileAudit {
 export interface AuditReport {
   version: 1;
   status: Status;
-  /** Layers that ran. Only `mechanical` exists in this build. */
+  /** Layers that ran, in order: `mechanical`, then `semantic` (src/audit/semantic.ts). */
   layers: string[];
   files: FileAudit[];
   /** Findings not tied to one file (unanswered spec questions). */
@@ -212,7 +212,7 @@ class NeedleIndex {
 
 // Pseudonym shapes, recognised by shape alone (and confirmed with isPseudonym), so pseudonyms from an
 // earlier map are still recognised.
-const SHAPED_RE =
+export const SHAPED_RE =
   /(?<![A-Za-z0-9_.-])(?:user_[0-9a-f]{4}@host-[0-9a-f]{4}(?:\.host-[0-9a-f]{4})*(?:\.[a-z]{2,63})?|host-[0-9a-f]{4}(?:\.host-[0-9a-f]{4})*(?:\.[a-z]{2,63})?|(?:Person|Org|Host|Id|Value|Loc)_[0-9A-F]{4}|(?:192\.0\.2|198\.51\.100|203\.0\.113)\.\d{1,3})/g;
 
 interface Hit {
@@ -376,7 +376,7 @@ function patternName(value: string, patterns: Record<PatternName, boolean>): Pat
 
 type PlacedHit = Hit & { byteStart: number; byteEnd: number };
 
-const SOURCE_RANK: Record<Finding["source"], number> = { entity: 0, map: 1, pattern: 2, spec: 3, scan: 4 };
+const SOURCE_RANK: Record<Finding["source"], number> = { entity: 0, map: 1, pattern: 2, spec: 3, scan: 4, semantic: 5 };
 const SEVERITY_RANK: Record<Severity, number> = { candidate: 0, leak: 1 };
 
 /**
@@ -558,14 +558,14 @@ function columnFindings(sink: PartSink, bytes: Uint8Array, rules: readonly Colum
 
 const lastSegment = (p: string): number => p.lastIndexOf("/") + 1;
 
-function statusOf(findings: readonly Finding[]): Status {
+export function statusOf(findings: readonly Finding[]): Status {
   if (findings.some((f) => f.severity === "leak")) return "leak";
   return findings.length > 0 ? "candidates" : "clean";
 }
 
 const IN_RANK: Record<Finding["in"], number> = { name: 0, link: 1, content: 2 };
 
-function compareFindings(a: Finding, b: Finding): number {
+export function compareFindings(a: Finding, b: Finding): number {
   return (
     cmp(a.file, b.file) ||
     cmp(a.part, b.part) ||

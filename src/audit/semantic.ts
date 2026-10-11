@@ -34,15 +34,12 @@ import { isPseudonym } from "../engine/pseudonym.ts";
 import { keepDomains, underKeptDomain } from "../engine/text.ts";
 import type { Spec } from "../schema.ts";
 import {
+  addLayer,
   type AuditReport,
-  compareFindings,
-  type FileAudit,
   type Finding,
   maskValue,
   MAX_ZIP_DEPTH,
   SHAPED_RE,
-  type Status,
-  statusOf,
   type TreeEntry,
 } from "./mechanical.ts";
 import { fold, stringView, unescapeView, type View, viewsOf, xmlBaseView } from "./views.ts";
@@ -582,33 +579,11 @@ export function semanticFindings(entries: readonly TreeEntry[], spec: Spec, map:
   return out;
 }
 
-const STATUS_RANK: Record<Status, number> = { clean: 0, candidates: 1, leak: 2 };
-
 /**
  * The report with the semantic layer added: "semantic" appended to the layers, its candidates
  * merged into each file (a file the mechanical layer had no line for is added), and every status
  * and count recomputed. Nothing already in the report is removed or downgraded.
  */
 export function addSemanticLayer(report: AuditReport, entries: readonly TreeEntry[], spec: Spec, map: BlindMap, opts: SemanticOptions): AuditReport {
-  const extra = semanticFindings(entries, spec, map, opts);
-  const kinds = new Map(entries.map((e) => [e.path, e.kind]));
-  const files = new Map<string, FileAudit>(report.files.map((f) => [f.path, { ...f, findings: [...f.findings] }]));
-  for (const [path, findings] of extra) {
-    const f = files.get(path) ?? { path, kind: kinds.get(path) ?? "file", status: "clean" as Status, findings: [] };
-    f.findings.push(...findings);
-    f.findings.sort(compareFindings);
-    f.status = statusOf(f.findings);
-    files.set(path, f);
-  }
-  const merged = [...files.values()].sort((a, b) => cmp(a.path, b.path));
-  const all = [...merged.flatMap((f) => f.findings), ...report.general];
-  const leaks = all.filter((f) => f.severity === "leak").length;
-  const status = merged.reduce<Status>((s, f) => (STATUS_RANK[f.status] > STATUS_RANK[s] ? f.status : s), statusOf(report.general));
-  return {
-    ...report,
-    status,
-    layers: [...report.layers, "semantic"],
-    files: merged,
-    summary: { files: report.summary.files, leaks, candidates: all.length - leaks },
-  };
+  return addLayer(report, "semantic", entries, semanticFindings(entries, spec, map, opts));
 }

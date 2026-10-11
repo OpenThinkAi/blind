@@ -14,7 +14,10 @@ these with hostile document content and a fake model that obeys any instruction 
 ## What reaches a model
 
 - **Only the profile and the policy.** The analyst is sent the corpus profile (`blind profile`
-  prints it) and the policy from `blind.toml`, and nothing else. Raw document text, the salt
+  prints it) and the policy from `blind.toml`, and nothing else. The model auditor (`blind audit`)
+  never sees the inputs: under `local-only`, where nothing leaves the machine, it is sent the
+  blinded output's text, in lines of at most 120 characters and chunks of at most 8 kB; under
+  `profile-only` it is sent only the output's profile and the policy, like the analyst. Raw document text, the salt
   (`.blind/salt`), the map and the spec's `seen` fingerprints are never sent. API keys are read
   from the variable `key_env` names and go only into request headers.
 - **Short strings only.** Any string or key in the data longer than 120 characters is refused
@@ -91,9 +94,11 @@ depend on a model.
 `blind audit` runs its mechanical layer from the output tree as it is on disk, the saved spec,
 the map and the `blind.toml` keep list. That layer (`src/audit/mechanical.ts` and the modules it
 imports) imports no model, analyst or network code, so no model reply, failure, refusal or
-privacy mode can change what it finds. This release runs the mechanical layer only; the planned
-model layer is designed to add candidates, never to remove a mechanical finding or turn a status
-into `clean`. If the analyst failed and the
+privacy mode can change what it finds; the semantic layer is model-free in the same way. The
+model layer (`src/audit/auditor.ts`, the only audit module that imports model code) runs after
+them and can only add candidates: its reply is held to a schema, a reply that says the output is
+clean changes nothing, and a rejected reply or failed call is reported as a candidate (that text
+was not checked by a model), never as `clean`. If the analyst failed and the
 spec came from the heuristic analyst (`--no-model`) or a human, the audit is the same check.
 `clean` means only that the check found nothing it knows to look for; it is not a guarantee that
 nothing identifying remains.

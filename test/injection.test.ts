@@ -349,11 +349,12 @@ describe("the mechanical audit does not depend on a model", () => {
     return [...seen].sort();
   }
 
-  test("the mechanical layer imports no model, analyst or network code", () => {
+  test.each(["audit/mechanical.ts", "audit/semantic.ts"])("%s imports no model, analyst, auditor or network code", (entry) => {
     const src = join(import.meta.dir, "../src");
-    const closure = importClosure(join(src, "audit/mechanical.ts"));
+    const closure = importClosure(join(src, entry));
     expect(closure.length).toBeGreaterThan(3);
     for (const f of closure) {
+      expect(f).not.toBe(join(src, "audit/auditor.ts"));
       expect(f).not.toBe(join(src, "model.ts"));
       expect(f.startsWith(join(src, "analyst"))).toBe(false);
       expect(readFileSync(f, "utf8")).not.toMatch(/\bfetch\(|Bun\.spawn|node:child_process|node:https?\b|node:net\b/);
@@ -370,40 +371,54 @@ describe("the mechanical audit does not depend on a model", () => {
     expect(await runApply(["in", "-o", "out"], { out: quiet.s, err: quiet.s, cwd: dir })).toBe(0);
     writeFileSync(join(dir, "out", "planted.txt"), "forwarded by avery.quill@example.com\n");
 
-    // Any model the audit could reach answers garbage, and is counted.
-    const realFetch = globalThis.fetch;
+    // The auditor model answers garbage, through the hooks runAudit passes to every model call.
     let calls = 0;
-    globalThis.fetch = Object.assign(async () => {
+    const garbageFetch: AskOptions["fetch"] = async () => {
       calls++;
       return new Response("\u0000<<garbage>>", { status: 200 });
-    }, { preconnect: realFetch.preconnect });
+    };
+    const spawn: SpawnFn = async () => {
+      calls++;
+      return { exitCode: 0, stdout: "\u0000<<garbage>>", stderr: "", timedOut: false };
+    };
+    type Report = {
+      status: string;
+      layers: string[];
+      files: { path: string; findings: { severity: string; source: string; class: string }[] }[];
+      general: { severity: string; source: string; class: string; reason: string }[];
+    };
     const audit = async () => {
       const out = sink();
       const err = sink();
-      const code = await runAudit(["out", "--json"], { out: out.s, err: err.s, cwd: dir });
-      return { code, report: JSON.parse(out.text()) as { status: string; files: { path: string; findings: { severity: string; source: string; class: string }[] }[] } };
+      const code = await runAudit(["out", "--json"], { out: out.s, err: err.s, cwd: dir, model: { fetch: garbageFetch, spawn, env: {} } });
+      return { code, report: JSON.parse(out.text()) as Report };
     };
-    try {
-      const withModels = await audit();
-      expect(withModels.code).toBe(2);
-      expect(withModels.report.status).toBe("leak");
-      const planted = withModels.report.files.find((f) => f.path === "planted.txt");
-      expect(planted?.findings).toEqual([
-        expect.objectContaining({ severity: "leak", source: "map", class: "email" }),
-        // The semantic layer (no model either) also points at the unexplained email shape.
-        expect.objectContaining({ severity: "candidate", source: "semantic", class: "semantic:email" }),
-      ]);
-      // The owner names the heuristic spec pseudonymised in staff.csv are replaced in notes.txt too (AGT-1779).
-      const notes = withModels.report.files.find((f) => f.path === "notes.txt");
-      expect(notes?.findings.filter((f) => f.severity === "leak")).toEqual([]);
+    const withModels = await audit();
+    expect(calls).toBeGreaterThan(0);
+    expect(withModels.code).toBe(2);
+    expect(withModels.report.status).toBe("leak");
+    expect(withModels.report.layers).toEqual(["mechanical", "semantic", "model"]);
+    const planted = withModels.report.files.find((f) => f.path === "planted.txt");
+    expect(planted?.findings).toEqual([
+      expect.objectContaining({ severity: "leak", source: "map", class: "email" }),
+      // The semantic layer (no model either) also points at the unexplained email shape.
+      expect.objectContaining({ severity: "candidate", source: "semantic", class: "semantic:email" }),
+    ]);
+    // The owner names the heuristic spec pseudonymised in staff.csv are replaced in notes.txt too (AGT-1779).
+    const notes = withModels.report.files.find((f) => f.path === "notes.txt");
+    expect(notes?.findings.filter((f) => f.severity === "leak")).toEqual([]);
+    // The garbage reply is rejected and reported as unchecked text, never as a clean answer.
+    expect(withModels.report.general).toEqual([expect.objectContaining({ severity: "candidate", source: "model", class: "model:unchecked" })]);
+    expect(withModels.report.general[0]?.reason).toContain("not checked by a model");
 
-      // The same report with models switched off entirely: the result does not depend on them.
-      writePolicy((p) => (p.privacy.mode = "none"));
-      const without = await audit();
-      expect(without).toEqual(withModels);
-    } finally {
-      globalThis.fetch = realFetch;
-    }
-    expect(calls).toBe(0);
+    // With models switched off entirely the other layers' findings are the same: they do not depend on a model.
+    writePolicy((p) => (p.privacy.mode = "none"));
+    const before = calls;
+    const without = await audit();
+    expect(calls).toBe(before);
+    expect(without.code).toBe(2);
+    expect(without.report.layers).toEqual(["mechanical", "semantic"]);
+    expect(without.report.files).toEqual(withModels.report.files);
+    expect(without.report.general).toEqual([]);
   });
 });

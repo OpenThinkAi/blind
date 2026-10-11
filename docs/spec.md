@@ -341,8 +341,8 @@ the same code as the commands themselves.
 ## How `blind audit` checks the output
 
 `blind audit <out>` reads `.blind/spec.json` and the map (`.blind/map.json`, or `--map <path>`)
-and checks the output tree as it is on disk, independently of how `blind apply` wrote it. This
-release runs two layers, mechanical then semantic, and no model; the report lists the layers run.
+and checks the output tree as it is on disk, independently of how `blind apply` wrote it. It runs
+up to three layers, mechanical, semantic, then model; the report lists the layers run.
 
 - **What is read.** Every entry under `<out>`, hidden ones included. Each file's raw bytes are read
   as Latin-1, UTF-8 and UTF-16 (both byte orders, both alignments), and each of those again with
@@ -387,6 +387,31 @@ release runs two layers, mechanical then semantic, and no model; the report list
   term in the vocabulary is explained. Candidates are listed once per value per file (the first
   place, with how many places), at most 200 per file, then one line counting the rest. The layer
   only adds candidates: it never removes or downgrades a mechanical finding.
+
+- **Model layer.** Runs unless `--no-model`, `privacy.mode = "none"`, or there is no `blind.toml`
+  (each said on stderr). The auditor model is `[models.auditor]` in `blind.toml`; when that table is
+  absent the analyst's backend is used with the auditor's own prompt, and the report and stderr say
+  so. Its system prompt casts it as the subject of the documents, trying to recognise itself. What
+  it is sent follows the privacy mode:
+  - `local-only`: the blinded output's text (never the inputs), read as the semantic layer reads it
+    (zip members recursively, XML as its text and attribute values), plus each file and member name,
+    cut into lines of at most 120 characters (at whitespace where possible) and sent in chunks of at
+    most 8 kB, each with the policy. Binary content is not sent and is listed under "not sent".
+  - `profile-only`: only the profile of the output tree (`blind profile <out>`, with that mode's
+    samples, outlines and speaker lists left out and names tokenised) and the policy, in one call.
+  The reply is `{"candidates": [{"line" | "file", "quote", "reason"}]}`: the line index sent (or
+  the file token), the quoted text (at most 120 characters), and a reason from `person`, `org`,
+  `host`, `email`, `id`, `location`, `context`. Each becomes a `candidate` with source `model` and
+  class `model:<reason>`, located at the quote (or at the line when the quote is not on it; under
+  `profile-only`, in the file the token names, without a position when the quote is not found). The
+  model can only add: an empty list, or any claim that the output is clean, changes no finding and
+  no status. A reply that names a line or file that was not sent is rejected whole, and that chunk
+  is not checked; a reply that fails the schema twice, or a call that fails, stops the layer. Each
+  is itself a candidate (`model:unchecked`, file `(model)`) saying which chunks were not checked,
+  so the report is not `clean`; the other layers' findings stand. A
+  call refused before sending (the privacy mode, endpoint or key setting) exits 3 and nothing is
+  printed. The JSON report's `model` field gives the backend, model, mode, what was sent, the
+  number of chunks and accepted answers, and what was not sent.
 
 Status is `leak` if any leak, else `candidates` if any candidate, else `clean`. Exit status: 0
 clean, 1 candidates, 2 leak, 3 the audit could not run (usage error, or a missing or invalid spec
@@ -593,6 +618,10 @@ or backend.
 | `local-only` (default) | Loopback endpoints only (127.0.0.0/8, `::1`, `localhost`). `claude-cli`, the hosted Anthropic API and any other host are refused with "privacy.mode is local-only". | The caller's data, every string at most 120 characters. |
 | `profile-only` | Remote endpoints allowed, over https. | Exactly the profile and the policy (classes, description split into pieces of at most 120 characters, examples, keep list). Anything else is refused. |
 | `none` | None. `blind plan` uses the heuristic analyst; `blind audit` runs its mechanical and semantic layers only. | Nothing. |
+
+`blind audit`'s model layer sends, under `local-only`, the blinded output's text as lines of at
+most 120 characters, and under `profile-only` only the output's profile (see "How `blind audit`
+checks the output").
 
 **Document text under `profile-only`.** The only document text a `profile-only` profile carries
 is what `sampleCount` bounds: `samples`, `sampleSentences` and `sampleLines`, at most `sampleCount`

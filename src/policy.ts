@@ -27,7 +27,12 @@ export interface ModelConfig {
 export interface Policy {
   sensitive: { classes: SensitiveClass[]; description: string; examples: string[] };
   keep: { terms: string[] };
-  models: { analyst: ModelConfig; auditor: ModelConfig };
+  /**
+   * `auditor` is always the config in force. `auditorExplicit` is false when blind.toml has no
+   * `[models.auditor]` table, in which case the auditor reuses the analyst's backend (with its own
+   * prompt) and `blind audit` says so.
+   */
+  models: { analyst: ModelConfig; auditor: ModelConfig; auditorExplicit: boolean };
   /**
    * `samples` is always the count in force. `samplesExplicit` is false when blind.toml leaves
    * `samples` unset, in which case it follows the mode: defaultSamples(privacy.mode).
@@ -57,7 +62,7 @@ export function defaultPolicy(): Policy {
       examples: ["Ada Example", "Example Widgets Ltd", "build01.corp.example.com", "ada@example.com", "ACCT-000123", "Springfield office"],
     },
     keep: { terms: [] },
-    models: { analyst: local(), auditor: local() },
+    models: { analyst: local(), auditor: local(), auditorExplicit: true },
     profile: { samples: defaultSamples("local-only"), samplesExplicit: false },
     privacy: { mode: "local-only" },
   };
@@ -98,7 +103,13 @@ export function renderPolicy(p: Policy): string {
     "# key_env: name of the environment variable holding the API key (empty = none).",
     ...modelSection("analyst", p.models.analyst),
     "",
-    ...modelSection("auditor", p.models.auditor),
+    ...(p.models.auditorExplicit
+      ? modelSection("auditor", p.models.auditor)
+      : [
+          "# [models.auditor] is not set: the auditor reuses the analyst's backend with its own prompt.",
+          "# Set it to give the auditor a separate backend; independence is the point of the auditor.",
+          ...modelSection("auditor", p.models.auditor).map((l) => `# ${l}`),
+        ]),
     "",
     "[profile]",
     "# Sample values per column the analyst sees (each truncated to 120 characters). 0 = headers and stats only.",
@@ -197,6 +208,13 @@ function readModel(r: Reader, models: Table, name: string): ModelConfig {
   };
 }
 
+/** `[models.analyst]` is required; without `[models.auditor]` the auditor reuses the analyst's config. */
+function readModels(r: Reader, models: Table): Policy["models"] {
+  const analyst = readModel(r, models, "analyst");
+  if (models.auditor === undefined) return { analyst, auditor: { ...analyst }, auditorExplicit: false };
+  return { analyst, auditor: readModel(r, models, "auditor"), auditorExplicit: true };
+}
+
 /** Parse and validate policy TOML. Throws PolicyError naming the offending key and expected type. */
 export function parsePolicy(text: string, source = POLICY_FILE): Policy {
   let doc: unknown;
@@ -233,7 +251,7 @@ export function parsePolicy(text: string, source = POLICY_FILE): Policy {
       examples: r.strings(sensitive, "examples", "sensitive.examples"),
     },
     keep: { terms: r.strings(keep, "terms", "keep.terms") },
-    models: { analyst: readModel(r, models, "analyst"), auditor: readModel(r, models, "auditor") },
+    models: readModels(r, models),
     profile: { samples, samplesExplicit },
     privacy: { mode },
   };

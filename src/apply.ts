@@ -6,7 +6,7 @@
 import { lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
-import { type ApplyResult, ApplyError, applySpec, type FileReport, type InputFile } from "./engine/apply.ts";
+import { type ApplyResult, ApplyError, applySpec, type FileReport, type InputFile, type SkippedFile } from "./engine/apply.ts";
 import { type BlindMap, MapError, readMap, writeMap } from "./engine/map.ts";
 import { NameError } from "./engine/names.ts";
 import { MIN_SALT_BYTES, PseudonymError } from "./engine/pseudonym.ts";
@@ -23,6 +23,8 @@ export interface ApplyIO {
   err: NodeJS.WritableStream;
   /** The corpus workspace: where blind.toml and .blind/ live. */
   cwd: string;
+  /** Called once the outputs are written, with the engine's result and every input not written. `blind bench` scores from it. */
+  onResult?: (result: ApplyResult, notWritten: readonly SkippedFile[]) => void;
 }
 
 const APPLY_HELP = [
@@ -261,6 +263,7 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
     io.out.write(renderReport(result));
     for (const i of collected.ignored) io.out.write(`ignored ${i.path}: ${i.reason}\n`);
     const skipped = [...collected.skipped, ...result.skipped];
+    io.onResult?.(result, skipped);
     for (const s of skipped) io.err.write(`blind apply: ${s.path}: ${s.reason}\n`);
     io.out.write(
       `wrote ${result.outputs.length} file${result.outputs.length === 1 ? "" : "s"} to ${toPosix(relative(io.cwd, outDir)) || "."}; map: ${toPosix(relative(io.cwd, mapPath))} (mode 0600; keep it secret)\n`,

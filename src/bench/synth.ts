@@ -8,12 +8,13 @@
 // so the same seed gives byte-identical files and oracle on every machine. No
 // clock, no unseeded randomness, no environment.
 //
-// `bun src/bench/synth.ts <dir> [--seed N] [--rows N]` writes a kit to <dir>;
-// see docs/bench.md.
+// `bun src/bench/synth.ts <dir> [--seed N] [--rows N]` writes a kit to <dir>,
+// which `blind bench <dir>` scores; see docs/bench.md.
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
+import type { Spec } from "../schema.ts";
 
 export const KIT_VERSION = 1;
 export const DEFAULT_SEED = 1739;
@@ -78,6 +79,8 @@ export interface Kit {
   /** Sorted by path. */
   files: KitFile[];
   oracle: Oracle;
+  /** The reviewed spec the kit is blinded with (see `kitSpec`). */
+  spec: Spec;
 }
 
 export interface KitOptions {
@@ -249,6 +252,33 @@ function orgMention(rng: Rng, o: CastOrg, oracle: OracleBuilder, file: string): 
   return text;
 }
 
+/**
+ * The reviewed spec for kit v1, as a reviewer would save it after `blind plan`: the organisation,
+ * person, host and ID columns blinded, the enums, money and dates kept, `client_scope_code` left a
+ * declared unknown, the cast as entities and the decoys as vocabulary. It depends on no seed: the
+ * headers and the cast are fixed.
+ */
+export function kitSpec(): Spec {
+  return {
+    version: 1,
+    columns: COLUMNS.map((c) =>
+      c.header === "client_scope_code"
+        ? { file: c.file, header: c.header, class: "unknown", treatment: "value", confidence: 0, source: "human" }
+        : { file: c.file, header: c.header, class: c.class, treatment: c.class === "vocabulary" ? "keep" : "blind", confidence: 1, source: "human" },
+    ),
+    entities: {
+      person: PEOPLE.map((p) => ({ canonical: p.canonical, aliases: [...p.aliases], parts: [p.given, p.surname] })),
+      org: ORGS.map((o) => ({ canonical: o.canonical, aliases: [o.acronym], parts: [o.short] })),
+      vocabulary: [
+        { canonical: "Jan.", aliases: [], parts: [] },
+        { canonical: "SAM", aliases: [], parts: [] },
+      ],
+    },
+    patterns: { ip: true, email: true, host: true, guid: true, mac: true },
+    questions: [],
+  };
+}
+
 /** Generate kit v1 for `seed`. Pure: same seed and options, same kit. */
 export function generateKit(seed: number = DEFAULT_SEED, options: KitOptions = {}): Kit {
   const rows = options.rows ?? DEFAULT_ROWS;
@@ -386,10 +416,14 @@ export function generateKit(seed: number = DEFAULT_SEED, options: KitOptions = {
   return {
     files,
     oracle: { version: KIT_VERSION, seed, rows, recurInProse: recur, columns: [...COLUMNS], values: oracle.values(), decoys: uniqueDecoys },
+    spec: kitSpec(),
   };
 }
 
-/** Writes `<dir>/input/<files>` and `<dir>/oracle.json`. The oracle sits outside the input on purpose. */
+/**
+ * Writes `<dir>/input/<files>`, `<dir>/oracle.json` and `<dir>/spec.json`, the layout `blind bench`
+ * reads. The oracle and the spec sit outside the input on purpose.
+ */
 export function writeKit(dir: string, kit: Kit): void {
   for (const f of kit.files) {
     const dest = join(dir, "input", ...f.path.split("/"));
@@ -397,6 +431,7 @@ export function writeKit(dir: string, kit: Kit): void {
     writeFileSync(dest, f.text);
   }
   writeFileSync(join(dir, "oracle.json"), `${JSON.stringify(kit.oracle, null, 2)}\n`);
+  writeFileSync(join(dir, "spec.json"), `${JSON.stringify(kit.spec, null, 2)}\n`);
 }
 
 if (import.meta.main) {

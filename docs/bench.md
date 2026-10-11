@@ -1,9 +1,11 @@
-# Synthetic kits
+# Kits and `blind bench`
 
 blind is tested on generated corpora, never on real data. `src/bench/synth.ts` builds a **kit**: a
-small set of input files with the shapes that make document blinding go wrong, plus an **oracle**
-that lists every sensitive value in those files with its class. A test or a benchmark blinds the
-input and then checks the output against the oracle.
+small set of input files with the shapes that make document blinding go wrong, an **oracle** that
+lists every sensitive value in those files with its class, and the reviewed **spec**. `blind bench`
+blinds the input once and scores the output against the oracle. You can build a kit from your own
+data the same way (see [A kit from your own data](#a-kit-from-your-own-data)); it never enters the
+repository.
 
 Everything in a kit is invented: the people and organisations are made up, every host and email
 domain is under `.example`, and every IP address is from the RFC 5737 documentation ranges.
@@ -25,12 +27,16 @@ This writes:
     notes/standup.txt
     sync.log
   oracle.json
+  spec.json
 ```
 
-The oracle sits next to `input/`, not inside it, so blinding `input/` never reads it.
+The oracle and the spec sit next to `input/`, not inside it, so blinding `input/` never reads them.
 
-From code, `generateKit(seed, { rows })` returns the files and the oracle in memory, and
-`writeKit(dir, kit)` writes them as above.
+From code, `generateKit(seed, { rows })` returns the files, the oracle and the spec in memory, and
+`writeKit(dir, kit)` writes them as above. The spec (`kitSpec()`) is the one a reviewer would save
+for kit v1: the organisation, person, host and ID columns blinded, `Status`, `Region`, `Amount` and
+`Opened` kept, `client_scope_code` left a declared unknown, the cast as entities (nicknames and
+misspellings as aliases, given names and surnames as parts) and the two decoys as vocabulary.
 
 ### Determinism
 
@@ -88,6 +94,96 @@ entities nor pattern matches.
 
 A blinded output passes the oracle when no `values[].value` occurs in it as a whole word, in any
 case, once the decoy texts (exact case) are set aside.
+
+## `blind bench`
+
+```sh
+bun src/bench/synth.ts /tmp/kit && blind bench /tmp/kit
+```
+
+The bench reads `<kit>/oracle.json`, `<kit>/spec.json` and, if present, `<kit>/blind.toml` (its keep
+list matters to apply and audit; the default policy is used otherwise). It makes a private temporary
+workspace (mode 0700) with that policy, a fresh salt and the spec (mode 0600), runs `blind apply` on
+`<kit>/input` and `blind audit` on the output once, scores, and deletes the workspace, the blinded
+copies and the map with it. Nothing in the kit is changed except the report it writes.
+
+No model is called. The audit runs its mechanical and semantic layers. `--plan` ignores `spec.json`
+and plans the spec with the heuristic analyst (`blind plan --no-model`), which scores the first try
+on an unseen corpus rather than the reviewed spec.
+
+### What it scores
+
+A value **matches** when it occurs as a whole word, in any case, once the decoy texts (exact case)
+are set aside: the rule in [The oracle](#the-oracle).
+
+| Score | Counts |
+|---|---|
+| **leaks** | Oracle values left anywhere in the output: every file's bytes in each decoding the audit reads (Latin-1, UTF-8, UTF-16, with escapes undone), XML text joined across runs, zip members and their names, file and folder names. One item per value per file, part and place (content or name). |
+| **damage** | Changes the oracle does not explain. A CSV/TSV cell that changed, unless it is a data cell of a column the spec blinds (`blind` or `value`, which includes declared unknowns) or the original cell holds an oracle value. Header and preamble rows count like kept cells. A file or folder name that changed and holds no oracle value. A decoy with fewer occurrences in the output than in the input. A table whose row or cell count changed. |
+| **honesty** | Files (and folders) the audit called `clean` that have a leak. |
+| **speed** | Wall time of apply and of audit, in `timing`. |
+
+Anything the bench cannot score is listed as **unscored**, never assumed fine: files apply did not
+write, damage in formats it does not compare yet (JSON, JSONL, XLSX and DOCX, so sheet renames are not
+scored yet either), archive members it cannot decode, symbolic links. Kit v1 has none of these.
+
+### Output
+
+A table with one row per leak, damage item, honesty item, unwritten file and unscored part, every
+value masked (first characters, `***`, length), then the scores and a last `speed:` line. The same
+report is written as JSON to `<kit>/bench-report.json` (or `--report <path>`; not inside `input/`):
+
+| Field | Meaning |
+|---|---|
+| `result` | `pass` or `fail`. |
+| `kit` | The oracle's `version`, `seed` and `rows` when it has them; input files and bytes; oracle values and decoys. |
+| `spec` | `kit` (the kit's spec.json) or `heuristic` (`--plan`). |
+| `apply`, `audit` | Exit codes; files written and not written; the audit's status, counts and layers. |
+| `leaks`, `damage`, `honesty` | `count` and `items` (masked). |
+| `unscored` | What could not be scored, and why. |
+| `timing` | `applyMs`, `auditMs`, `totalMs`. |
+
+For a fixed kit everything except `timing` is the same on every run: items are in a fixed order and
+no field depends on the salt.
+
+Exit status: **0** only when leaks, damage and honesty are all 0, every input was written and
+everything was scored; **1** otherwise; **2** when the bench could not run (a usage error, a missing
+or invalid oracle, spec or input, or apply or audit refused).
+
+`result: pass` means only that none of the values the oracle lists survived and nothing the oracle
+can check was damaged. It says nothing about sensitive values the oracle does not list.
+
+## A kit from your own data
+
+The bench is most useful on data like yours. Build the kit **outside the repository** (for example
+`~/blind-kits/<name>/`, never under a git checkout) and never commit it:
+
+1. Copy the documents into `<kit>/input/`.
+2. In a scratch workspace, run `blind init`, `blind plan <kit>/input`, review and correct the spec,
+   and copy `.blind/spec.json` to `<kit>/spec.json`. Copy `blind.toml` too if you changed the keep
+   list. Or skip this step and score the first try with `--plan`.
+3. Write `<kit>/oracle.json` by reading the inputs, not from blind's output, so the oracle does not
+   inherit blind's mistakes: every sensitive value as it is written, including nicknames,
+   misspellings and name parts.
+
+   ```json
+   {
+     "values": [
+       { "value": "Theodora Wrexley", "class": "person", "files": ["notes.md"] },
+       { "value": "Teddie", "class": "person" },
+       { "value": "4417", "class": "id" }
+     ],
+     "decoys": [{ "text": "May" }]
+   }
+   ```
+
+   `value` and `class` are required; `files` (where the value occurs) is for you, since a leak
+   counts wherever it is found. `decoys` are words that look like a name part but are not one in
+   context; they must survive.
+4. Run `blind bench <kit>`.
+
+The oracle and the spec hold the sensitive values in the clear: keep the kit as private as the
+documents. The report masks every value.
 
 ## The walking-skeleton test
 

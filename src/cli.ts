@@ -2,6 +2,7 @@ import pkg from "../package.json" with { type: "json" };
 import { processPlanIO, runPlan } from "./analyst/plan.ts";
 import { processApplyIO, runApply } from "./apply.ts";
 import { processAuditIO, runAudit } from "./audit/command.ts";
+import { processBenchIO, runBench } from "./bench/command.ts";
 import { processIO, runInit } from "./init.ts";
 import { runProfile } from "./profile/command.ts";
 
@@ -13,7 +14,7 @@ export const COMMANDS = [
   { name: "audit", usage: "audit <out>", summary: "Independently audit a blinded output tree" },
   { name: "run", usage: "run <inputs> -o <out>", summary: "plan, apply and audit in one pass" },
   { name: "reveal", usage: "reveal <file> --map <map.json>", summary: "Reverse a blinded file with its map" },
-  { name: "bench", usage: "bench <kit>", summary: "Evaluation harness on a synthetic kit" },
+  { name: "bench", usage: "bench <kit>", summary: "Score apply and audit against a kit's oracle" },
 ] as const;
 
 const HANDLERS: Partial<Record<(typeof COMMANDS)[number]["name"], (args: string[]) => Promise<number>>> = {
@@ -22,6 +23,7 @@ const HANDLERS: Partial<Record<(typeof COMMANDS)[number]["name"], (args: string[
   plan: (args) => runPlan(args, processPlanIO()),
   apply: (args) => runApply(args, processApplyIO()),
   audit: (args) => runAudit(args, processAuditIO()),
+  bench: (args) => runBench(args, processBenchIO()),
 };
 
 export function helpText(): string {

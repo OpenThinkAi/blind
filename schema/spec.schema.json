@@ -44,6 +44,18 @@
   },
   "$defs": {
     "nonEmpty": { "type": "string", "minLength": 1 },
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file"],
+      "oneOf": [{ "required": ["header"] }, { "required": ["jsonPath"] }],
+      "properties": {
+        "file": { "$ref": "#/$defs/nonEmpty" },
+        "sheet": { "$ref": "#/$defs/nonEmpty" },
+        "header": { "type": "string" },
+        "jsonPath": { "$ref": "#/$defs/nonEmpty" }
+      }
+    },
     "column": {
       "type": "object",
       "additionalProperties": false,
@@ -89,7 +101,8 @@
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/nonEmpty" }
         },
-        "answer": { "type": ["string", "null"] }
+        "answer": { "type": ["string", "null"] },
+        "about": { "$ref": "#/$defs/location" }
       }
     }
   }

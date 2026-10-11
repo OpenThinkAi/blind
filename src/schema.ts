@@ -37,6 +37,8 @@ export interface Question {
   options: string[];
   /** One of `options`, or null while unanswered. */
   answer: string | null;
+  /** The column the question decides. While unanswered, that column's rule stays `unknown`. */
+  about?: Location;
 }
 
 export interface Spec {

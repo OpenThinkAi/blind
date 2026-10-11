@@ -35,7 +35,7 @@ const PROFILE_HELP = [
 ].join("\n");
 
 /** Writes the profile through a 0600 temp file and a rename, so a reader never sees a partial file. */
-function writeProfile(cwd: string, profile: Profile): string {
+export function writeProfile(cwd: string, profile: Profile): string {
   const dir = join(cwd, BLIND_DIR);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const target = join(dir, PROFILE_FILE);

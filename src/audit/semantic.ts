@@ -45,7 +45,8 @@ import {
   statusOf,
   type TreeEntry,
 } from "./mechanical.ts";
-import { fold, stringView, unescapeView, type View, viewsOf } from "./views.ts";
+import { fold, stringView, unescapeView, type View, viewsOf, xmlBaseView } from "./views.ts";
+import { localName, looksLikeXml, ooxmlUriAttribute, walkXml } from "./xml.ts";
 import { looksLikeZip, readZip, ZipError } from "./zip.ts";
 
 /** Distinct candidates listed per file; the rest are counted in one extra finding. */
@@ -114,16 +115,18 @@ const STRUCTURAL_ATTRIBUTES = new Set([
 /** Elements whose every attribute is format structure, by local name: colours. */
 const STRUCTURAL_ELEMENTS = new Set(["color", "srgbClr", "sysClr", "fgColor", "bgColor", "shd", "highlight", "tabColor"]);
 
-function structuralAttribute(element: string, attr: string): boolean {
+/**
+ * Every position the mechanical layer skips (ooxmlUriAttribute: namespace, content-type and
+ * relationship-type URIs), and more: this layer also skips ids, fonts and colours, which are
+ * identifier-shaped but never identifying.
+ */
+function structuralAttribute(member: string, element: string, attr: string): boolean {
+  if (ooxmlUriAttribute(member, element, attr)) return true;
   const el = localName(element);
   const at = localName(attr);
-  if (attr === "xmlns" || attr.startsWith("xmlns:")) return true;
   if (at.startsWith("rsid") || el.startsWith("rsid")) return true;
-  if (el === "ext" && at === "uri") return true;
   return STRUCTURAL_ATTRIBUTES.has(at) || STRUCTURAL_ELEMENTS.has(el);
 }
-
-const localName = (qname: string): string => qname.slice(qname.indexOf(":") + 1);
 
 /** Folded word sequences of the keep and vocabulary terms, for whole-value and in-phrase matching. */
 class Terms {
@@ -231,11 +234,12 @@ function findCandidates(original: string, map: BlindMap, terms: Terms, kept: rea
     }
     for (const m of text.matchAll(HOST_RE)) {
       let host = m[0];
-      // A file extension is not a top-level domain: "db01.example.com.txt" names the host db01.example.com.
-      if (FILE_EXTENSIONS.has(host.slice(host.lastIndexOf(".") + 1).toLowerCase())) {
+      // A file extension is not a top-level domain: "db01.example.com.txt" names the host db01.example.com,
+      // and "document.xml.rels" names no host at all.
+      while (host.includes(".") && FILE_EXTENSIONS.has(host.slice(host.lastIndexOf(".") + 1).toLowerCase())) {
         host = host.slice(0, host.lastIndexOf("."));
-        if (!/\.[A-Za-z]{2,63}$/.test(host)) continue;
       }
+      if (!/\.[A-Za-z]{2,63}$/.test(host)) continue;
       const span: [number, number] = [m.index, m.index + host.length];
       if (masks.any(span[0], span[1])) continue;
       masks.add(span[0], span[1]);
@@ -310,18 +314,14 @@ const RUN_TEXT_ELEMENTS = new Set(["t", "delText", "instrText"]);
 /** Elements that end a run of joined text: paragraphs, cells, rows, breaks, tabs. */
 const BREAK_ELEMENTS = new Set(["p", "si", "c", "tc", "tr", "row", "br", "cr", "tab", "txbxContent", "comment", "is"]);
 
-function looksLikeXml(name: string, view: View): boolean {
-  if (/\.(?:xml|rels|vml)$/i.test(name)) return true;
-  return /^\uFEFF?\s*<\?xml[\s?]/.test(view.text.slice(0, 64));
-}
-
 /**
  * Two views of an XML document: its character data (text nodes, CDATA, comments; adjacent
  * run-text elements joined, everything else separated by a newline) and its attribute values
  * (one per line, structural attributes left out). Processing instructions and the doctype are
- * markup, not content.
+ * markup, not content. `member` is the document's path (in its zip, when it is a member), for
+ * the structural positions that depend on it.
  */
-export function xmlViews(v: View): View[] {
+export function xmlViews(v: View, member = ""): View[] {
   const t = v.text;
   let text = "";
   const textMap: number[] = [];
@@ -343,91 +343,31 @@ export function xmlViews(v: View): View[] {
     attrs += "\n";
     attrMap.push(at + s.length);
   };
-  const stack: string[] = [];
   /** True while the last text emitted came from a run-text element and nothing has broken the run since. */
   let joinable = false;
-  let i = 0;
-  while (i < t.length) {
-    const lt = t.indexOf("<", i);
-    const end = lt < 0 ? t.length : lt;
-    if (end > i) {
-      const chunk = t.slice(i, end);
-      if (chunk.trim() !== "") {
-        const inRun = RUN_TEXT_ELEMENTS.has(localName(stack[stack.length - 1] ?? ""));
-        if (!(inRun && joinable)) sep(i);
-        emitText(chunk, i);
-        joinable = inRun;
-      }
-    }
-    if (lt < 0) break;
-    if (t.startsWith("<!--", lt)) {
-      const close = t.indexOf("-->", lt + 4);
-      const stop = close < 0 ? t.length : close;
-      sep(lt);
-      emitText(t.slice(lt + 4, stop), lt + 4);
+  const runText = (start: number, end: number, parent: string | undefined) => {
+    const inRun = RUN_TEXT_ELEMENTS.has(localName(parent ?? ""));
+    if (!(inRun && joinable)) sep(start);
+    emitText(t.slice(start, end), start);
+    joinable = inRun;
+  };
+  walkXml(t, {
+    text(start, end, parent) {
+      if (t.slice(start, end).trim() !== "") runText(start, end, parent);
+    },
+    comment(start, end) {
+      sep(start - 4);
+      emitText(t.slice(start, end), start);
       joinable = false;
-      i = close < 0 ? t.length : close + 3;
-      continue;
-    }
-    if (t.startsWith("<![CDATA[", lt)) {
-      const close = t.indexOf("]]>", lt + 9);
-      const stop = close < 0 ? t.length : close;
-      const inRun = RUN_TEXT_ELEMENTS.has(localName(stack[stack.length - 1] ?? ""));
-      if (!(inRun && joinable)) sep(lt);
-      emitText(t.slice(lt + 9, stop), lt + 9);
-      joinable = inRun;
-      i = close < 0 ? t.length : close + 3;
-      continue;
-    }
-    if (t.startsWith("<?", lt) || t.startsWith("<!", lt)) {
-      const close = t.indexOf(">", lt);
-      i = close < 0 ? t.length : close + 1;
-      continue;
-    }
-    // A start, end or empty tag. Attribute values may contain ">" only when quoted.
-    let j = lt + 1;
-    const closing = t[j] === "/";
-    if (closing) j++;
-    const nameStart = j;
-    while (j < t.length && !/[\s/>]/.test(t[j] as string)) j++;
-    const name = t.slice(nameStart, j);
-    let selfClosing = false;
-    while (j < t.length && t[j] !== ">") {
-      if (t[j] === "/" && t[j + 1] === ">") {
-        selfClosing = true;
-        j++;
-        break;
-      }
-      if (/\s/.test(t[j] as string)) {
-        j++;
-        continue;
-      }
-      const an = j;
-      while (j < t.length && !/[\s=/>]/.test(t[j] as string)) j++;
-      const attr = t.slice(an, j);
-      while (j < t.length && /\s/.test(t[j] as string)) j++;
-      if (t[j] !== "=") continue;
-      j++;
-      while (j < t.length && /\s/.test(t[j] as string)) j++;
-      const q = t[j];
-      if (q === '"' || q === "'") {
-        const close = t.indexOf(q, j + 1);
-        const stop = close < 0 ? t.length : close;
-        if (!structuralAttribute(name, attr) && stop > j + 1) emitAttr(t.slice(j + 1, stop), j + 1);
-        j = close < 0 ? t.length : close + 1;
-      } else {
-        const vs = j;
-        while (j < t.length && !/[\s>]/.test(t[j] as string)) j++;
-        if (!structuralAttribute(name, attr) && j > vs) emitAttr(t.slice(vs, j), vs);
-      }
-    }
-    i = j + 1;
-    if (BREAK_ELEMENTS.has(localName(name))) joinable = false;
-    if (closing) {
-      const at = stack.lastIndexOf(name);
-      if (at >= 0) stack.length = at;
-    } else if (!selfClosing) stack.push(name);
-  }
+    },
+    cdata: runText,
+    attribute(element, attr, start, end) {
+      if (!structuralAttribute(member, element, attr) && end > start) emitAttr(t.slice(start, end), start);
+    },
+    tag(name) {
+      if (BREAK_ELEMENTS.has(localName(name))) joinable = false;
+    },
+  });
   const out: View[] = [];
   const mk = (encoding: string, s: string, m: number[]): View => ({ encoding, text: s, byteAt: (k) => v.byteAt(m[k] ?? t.length) });
   for (const [suffix, s, m] of [["text", text, textMap], ["attributes", attrs, attrMap]] as const) {
@@ -438,15 +378,6 @@ export function xmlViews(v: View): View[] {
     if (u !== null) out.push(u);
   }
   return out;
-}
-
-/** The view an XML document is read in: UTF-16 when it has that byte-order mark, else UTF-8 (Latin-1 for pure ASCII). */
-function xmlBaseView(bytes: Uint8Array): View {
-  const views = viewsOf(bytes);
-  const le = bytes[0] === 0xff && bytes[1] === 0xfe;
-  const be = bytes[0] === 0xfe && bytes[1] === 0xff;
-  const want = le ? "utf-16le" : be ? "utf-16be" : bytes.some((x) => x >= 0x80) ? "utf-8" : "latin-1";
-  return views.find((v) => v.encoding === want) as View;
 }
 
 // --- Walking the tree ------------------------------------------------------
@@ -526,7 +457,7 @@ function scanContent(w: Walk, name: string, part: string, bytes: Uint8Array, dep
     return;
   }
   const base = bytes.length > 0 ? xmlBaseView(bytes) : null;
-  if (base !== null && looksLikeXml(name, base)) scanViewsInto(w, part, "content", xmlViews(base));
+  if (base !== null && looksLikeXml(name, base.text)) scanViewsInto(w, part, "content", xmlViews(base, name));
   else scanViewsInto(w, part, "content", viewsOf(bytes));
 }
 

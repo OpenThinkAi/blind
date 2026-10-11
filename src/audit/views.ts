@@ -158,6 +158,15 @@ export function viewsOf(bytes: Uint8Array): View[] {
   return out;
 }
 
+/** The view an XML document is read in: UTF-16 when it has that byte-order mark, else UTF-8 (Latin-1 for pure ASCII). */
+export function xmlBaseView(bytes: Uint8Array): View {
+  const views = viewsOf(bytes);
+  const le = bytes[0] === 0xff && bytes[1] === 0xfe;
+  const be = bytes[0] === 0xfe && bytes[1] === 0xff;
+  const want = le ? "utf-16le" : be ? "utf-16be" : bytes.some((x) => x >= 0x80) ? "utf-8" : "latin-1";
+  return views.find((v) => v.encoding === want) as View;
+}
+
 /** A plain string (a file or member name) as a single view; offsets are code-unit offsets. */
 export function stringView(s: string): View[] {
   const v: View = { encoding: "name", text: s, byteAt: (i) => i };

@@ -30,7 +30,7 @@ export class SchemaError extends Error {
   }
 }
 
-type Schema = { readonly [keyword: string]: unknown };
+export type Schema = { readonly [keyword: string]: unknown };
 
 const ANNOTATIONS = new Set(["$schema", "$id", "$defs", "title", "description"]);
 const KEYWORDS = new Set([
@@ -194,7 +194,11 @@ function check(root: Schema, node: Schema, value: unknown, path: string, out: Sc
   }
 }
 
-function run(schema: Schema, value: unknown): SchemaIssue[] {
+/**
+ * Checks a JSON value against any schema written in the supported subset (the same
+ * subset schema/*.json use). Throws on a keyword the validator cannot enforce.
+ */
+export function validateSchema(schema: Schema, value: unknown): SchemaIssue[] {
   const issues: SchemaIssue[] = [];
   check(schema, schema, value, "$", issues);
   return issues;
@@ -206,7 +210,7 @@ function locationKey(loc: { file: string; sheet?: string; header?: string; jsonP
 
 /** Checks a JSON value against schema/spec.schema.json plus the rules a schema cannot state. */
 export function validateSpec(value: unknown): Validation<Spec> {
-  const issues = run(specSchema, value);
+  const issues = validateSchema(specSchema, value);
   if (issues.length > 0) return { ok: false, issues };
   const spec = value as Spec;
 
@@ -241,7 +245,7 @@ export function validateSpec(value: unknown): Validation<Spec> {
 
 /** Checks a JSON value against schema/profile.schema.json plus file references and the sample-count limit. */
 export function validateProfile(value: unknown): Validation<Profile> {
-  const issues = run(profileSchema, value);
+  const issues = validateSchema(profileSchema, value);
   if (issues.length > 0) return { ok: false, issues };
   const profile = value as Profile;
   const k = profile.sampleCount;

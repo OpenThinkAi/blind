@@ -31,9 +31,13 @@ export interface Span {
    * entity forms; for a pattern, a host under a keep-list domain.
    */
   cls: PseudoClass | null;
-  /** The value the pseudonym is derived from: the matched text for a pattern, the spec form for an entity. */
+  /**
+   * The value the pseudonym is derived from: the matched text for a pattern, the spec form for an
+   * entity, the value already given to the pseudonymizer for an extra form.
+   */
   value: string;
-  source: "pattern" | "entity";
+  /** `map`: an extra form, a value pseudonymised elsewhere (a column rule, an earlier map) found again here. */
+  source: "pattern" | "entity" | "map";
 }
 
 /** Code-unit order, never locale order. */
@@ -149,6 +153,7 @@ interface Form {
   rank: number;
   /** A vocabulary form: wins every length tie, so it shields its span from other forms. */
   shield: boolean;
+  source: "entity" | "map";
 }
 
 const WORDCHAR_RE = /[\p{L}\p{N}]/u;
@@ -167,7 +172,10 @@ const ENTITY_CLASSES = ["person", "org", "host", "email", "id", "location", "voc
 /** A literal value to match like an entity form, such as a cell value pseudonymised by a column rule. */
 export interface ExtraForm {
   cls: PseudoClass;
+  /** What the pseudonym is derived from: a value the pseudonymizer is given anyway. */
   value: string;
+  /** The text to match, under the case rule of its own shape; `value` when omitted. */
+  form?: string;
 }
 
 /** An index of every entity form in the spec, ready to scan text with. */
@@ -176,12 +184,13 @@ export class EntityMatcher {
   readonly empty: boolean;
 
   /**
-   * `extra` forms (cell values pseudonymised by column rules, for names) follow the same case
-   * rules, and rank after every spec entity class when lengths tie.
+   * `extra` forms (cell values pseudonymised by column rules, for names and recurrences) follow the
+   * same case rules, give spans with source `map`, and rank after every spec entity class when
+   * lengths tie. Of two extras with the same class and form, the first is kept: pass them sorted.
    */
   constructor(entities: Entities, extra: readonly ExtraForm[] = []) {
     const seen = new Set<string>();
-    const add = (key: string, cls: PseudoClass | null, raw: string, rank: number): void => {
+    const add = (key: string, cls: PseudoClass | null, raw: string, value: string, rank: number, source: Form["source"]): void => {
       const words = raw.trim().split(/\s+/).filter((w) => w !== "");
       if (words.length === 0) return;
       const dedupe = `${key}\0${words.join(" ")}`;
@@ -192,10 +201,11 @@ export class EntityMatcher {
         folded: words.map((w) => w.toLowerCase()),
         rule: caseRule(raw, words),
         cls,
-        value: raw,
+        value,
         length: words.join("").length,
         rank,
         shield: key === "vocabulary",
+        source,
       };
       const first = (words[0] as string)[0]?.toLowerCase() as string;
       const list = this.byFirst.get(first) ?? [];
@@ -205,10 +215,10 @@ export class EntityMatcher {
     for (const [rank, key] of ENTITY_CLASSES.entries()) {
       const cls: PseudoClass | null = key === "vocabulary" ? null : key;
       for (const e of entities[key] ?? []) {
-        for (const raw of [e.canonical, ...e.aliases, ...e.parts]) add(key, cls, raw, rank);
+        for (const raw of [e.canonical, ...e.aliases, ...e.parts]) add(key, cls, raw, raw, rank, "entity");
       }
     }
-    for (const x of extra) add(`extra:${x.cls}`, x.cls, x.value, ENTITY_CLASSES.length + PSEUDO_CLASSES.indexOf(x.cls));
+    for (const x of extra) add(`extra:${x.cls}`, x.cls, x.form ?? x.value, x.value, ENTITY_CLASSES.length + PSEUDO_CLASSES.indexOf(x.cls), "map");
     // Longest first; at equal length a vocabulary form wins (so "SAM" listed as vocabulary is not
     // taken for the person part "Sam"); then class order, then text, so the scan is order-independent.
     for (const list of this.byFirst.values()) {
@@ -261,7 +271,7 @@ export class EntityMatcher {
       for (const form of candidates ?? []) {
         const end = this.matchAt(text, pos, form);
         if (end < 0 || (block !== undefined && end > block.start)) continue;
-        out.push({ start: pos, end, cls: form.cls, value: form.value, source: "entity" });
+        out.push({ start: pos, end, cls: form.cls, value: form.value, source: form.source });
         pos = end;
         matched = true;
         break;

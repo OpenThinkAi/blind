@@ -158,13 +158,26 @@ listed and not written (exit 1).
 
 | Rule | Result |
 |---|---|
-| `treatment: keep` (any class) | Byte-identical. Cells that contain a spec entity or pattern match are left alone and reported as a warning. |
+| `treatment: keep` (any class) | Byte-identical, except that a value blinded elsewhere is replaced (see recurring values below). Cells that contain a spec entity or pattern match are left alone and reported as a warning. |
 | `treatment: blind`, class `person`/`org`/`host`/`email`/`id`/`location` | Every non-empty cell gets that class's pseudonym. |
 | `treatment: blind` with `unknown`/`vocabulary`, or `value` with any other class | Every non-empty cell gets a `Value_` pseudonym. |
 | `class: unknown, treatment: value`, or **no rule at all** | Fail closed. If distinct ratio ≥ 0.5 and (digit ratio ≥ 0.3, or dictionary-word ratio ≤ 0.3, or ≥ 80% of values are Title-Case multi-word), every cell gets a `Value_` pseudonym, reported as `unknown → pseudonymised`. Otherwise the column is kept (`unknown → kept (low cardinality)`, or `kept (not identifier-like)` for prose), but spec entities and patterns are still replaced inside its cells. |
 
 A rule that names a column the file does not have is an error, so a stale spec never quietly stops
 blinding a column. Rows above the header and the header row itself are treated as free text.
+
+**Recurring values.** Once every column is decided, each value a column rule pseudonymised, and each
+value an earlier map holds, is replaced with the same pseudonym wherever else it appears: in text
+files, header and preamble rows, cells kept as text or under `keep`, and JSON strings and keys. The
+value as written matches, and so does its canonical form when that differs by more than case ("Example
+Widgets" for "Example Widgets, Inc."). Matching is by whole token, with the entity case rules: a short
+all-capitals code only exactly, a single capitalised word only where the text is capitalised too,
+anything else in any case. The longest form wins at each position, and a spec entity wins a tie. Left
+out, so ordinary prose is not rewritten: values with fewer than 3 letters and digits (`42`, `N/A`),
+values made only of dictionary words (`open`, `Main Office`), spec vocabulary forms, values from
+columns classed `vocabulary`, and the host labels and email local parts of a blinded host or email.
+`blind audit` still reports any of these that survive, and spellings the case rules leave, so add
+them to the spec as entities if they must go.
 
 **JSON and JSONL.** Rules name a key path with `jsonPath` (see [key paths](#key-paths)); a `header`
 or `sheet` rule on a JSON file is an error, as is a rule for a key path the file does not have. The

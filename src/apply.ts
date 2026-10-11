@@ -149,6 +149,9 @@ export function renderReport(result: ApplyResult): string {
     if (f.entityReplacements + f.patternReplacements > 0) {
       lines.push(`  free text: ${f.entityReplacements} entity and ${f.patternReplacements} pattern replacements`);
     }
+    if (f.mappedReplacements > 0) {
+      lines.push(`  ${f.mappedReplacements} value${f.mappedReplacements === 1 ? "" : "s"} blinded in a column replaced again where ${f.mappedReplacements === 1 ? "it recurs" : "they recur"} outside it`);
+    }
     if (f.keptHosts > 0) {
       lines.push(`  kept ${f.keptHosts} host name${f.keptHosts === 1 ? "" : "s"} under a domain in the policy keep list`);
     }

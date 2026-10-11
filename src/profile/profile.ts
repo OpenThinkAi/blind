@@ -8,6 +8,7 @@ import { type Cooccurrence, type FileFormat, type Location, MAX_EXCERPT, type Pr
 import { profileJson, scanJsonFile } from "./json.ts";
 import { ParseError, parseTable, profileTable } from "./table.ts";
 import { profileText } from "./text.ts";
+import { tokeniseProfile } from "./tokens.ts";
 
 /** Formats this profiler reads, by lower-cased extension. */
 const PROFILED: Record<string, "csv" | "tsv" | "json" | "jsonl" | "text" | "markdown" | "log"> = {
@@ -246,7 +247,9 @@ export function buildProfile(inputs: readonly string[], k: number, cwd: string):
  * Fits a profile to the privacy mode. Under profile-only the profile may carry no document text
  * beyond what `sampleCount` bounds, so document outlines (first lines and headings) and transcript
  * speaker labels are emptied, and a note says how many were left out. Other modes are unchanged.
- * Headers, key paths and file paths are structure and stay.
+ * File paths, sheet names, value-like headers and flagged JSON key segments stay real here (the
+ * saved profile and spec name real locations); they are tokenised for each model call
+ * (tokeniseProfile in tokens.ts), and a note says so.
  */
 export function forPrivacyMode(result: ProfileResult, mode: PrivacyMode): ProfileResult {
   if (mode !== "profile-only") return result;
@@ -256,6 +259,13 @@ export function forPrivacyMode(result: ProfileResult, mode: PrivacyMode): Profil
   const notes = [...result.notes];
   if (outlines > 0) notes.push(`privacy.mode is profile-only: the outline of ${outlines} document(s) is left out`);
   if (speakers > 0) notes.push(`privacy.mode is profile-only: the speaker list of ${speakers} transcript(s) is left out`);
+  const { counts } = tokeniseProfile(profile);
+  if (counts.paths + counts.sheets + counts.tables + counts.keys > 0) {
+    notes.push(
+      `privacy.mode is profile-only: a model is sent ${counts.paths} file path(s), ${counts.sheets} sheet name(s), the headers of ${counts.tables} table(s) ` +
+        `and ${counts.keys} JSON key segment(s) as opaque tokens (file_1, sheet_1, col_1, key_1), mapped back to the real names locally`,
+    );
+  }
   return {
     ...result,
     profile: {

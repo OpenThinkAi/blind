@@ -6,7 +6,7 @@ import { PassThrough } from "node:stream";
 import { type PlanIO, runPlan } from "../../src/analyst/plan.ts";
 import type { AskOptions } from "../../src/model.ts";
 import { defaultPolicy, defaultSamples, type Policy, renderPolicy } from "../../src/policy.ts";
-import type { Spec } from "../../src/schema.ts";
+import type { Profile, Spec } from "../../src/schema.ts";
 import { parseSpec } from "../../src/validate.ts";
 
 // Synthetic corpus only (invented names, example.com, RFC 5737 IPs). No model is called:
@@ -78,12 +78,26 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-/** A fake OpenAI-compatible server that answers every chat call with `reply`. */
+/** The JSON quoted in the <data> block of a chat request body. */
+function dataOf(body: { messages: { content: string }[] }): { profile: { tables: { file: string; columns: { header: string }[] }[] } } {
+  const user = body.messages[1]?.content ?? "";
+  return JSON.parse(user.slice(user.indexOf("<data>\n") + 7, user.indexOf("\n</data>")));
+}
+
+/**
+ * A fake OpenAI-compatible server that answers every chat call with `reply`. Like a real analyst
+ * it names staff.csv as the profile it was sent does: under profile-only, by its file token.
+ */
 function fakeFetch(reply: () => unknown): AskOptions["fetch"] {
   return async (input, init) => {
     const body = JSON.parse(String(init?.body));
     sent.push({ url: String(input), body });
-    const content = typeof reply() === "string" ? (reply() as string) : JSON.stringify(reply());
+    const token = dataOf(body).profile.tables.find((t) => t.columns.some((c) => c.header === "Owner"))?.file ?? "staff.csv";
+    const answer = () => {
+      const r = reply();
+      return typeof r === "string" ? r : JSON.stringify(r).replaceAll('"file":"staff.csv"', `"file":${JSON.stringify(token)}`);
+    };
+    const content = answer();
     return new Response(JSON.stringify({ choices: [{ message: { content }, finish_reason: "stop" }] }), { status: 200 });
   };
 }
@@ -441,9 +455,10 @@ describe("the analyst's reply is rejected whole when it does not fit the profile
       const user = (sent[0]?.body as { messages: { content: string }[] }).messages[1]?.content ?? "";
       const data = JSON.parse(user.slice(user.indexOf("<data>\n") + 7, user.indexOf("\n</data>")));
       // The documents are still listed, with empty outlines.
+      // The documents are sent as file tokens (AGT-1782): memo.md, notes.txt, staff.csv in sorted order.
       expect(data.profile.documents.map((d: { file: string; outline: string[] }) => [d.file, d.outline])).toEqual([
-        ["memo.md", []],
-        ["notes.txt", []],
+        ["file_1", []],
+        ["file_2", []],
       ]);
       expect(r.out).toContain("note: privacy.mode is profile-only: the outline of 2 document(s) is left out");
       // The saved profile is the one that was sent.
@@ -483,6 +498,100 @@ describe("the analyst's reply is rejected whole when it does not fit the profile
     expect(r.code).toBe(2);
     expect(r.err).toContain("not loopback");
     expect(existsSync(join(dir, ".blind", "spec.json"))).toBe(false);
+  });
+});
+
+describe("profile-only tokens (AGT-1782)", () => {
+  // Invented names in a folder name, a file name, JSON keys and the first row of a headerless CSV.
+  // None is in the policy or the prompt, so any hit in a request body is a leak.
+  const NAMES = ["Avery Quill", "Marlo Fenwick", "Quorrin Labs", "Tessaly Brook", "Pell Varrick", "Ostrava Fieldworks", "staff", "notes"];
+  const corpus = () => {
+    mkdirSync(join(dir, "in", "Avery Quill"));
+    writeFileSync(join(dir, "in", "Avery Quill", "Marlo Fenwick review.csv"), "Tessaly Brook,Quorrin Labs,42\nPell Varrick,Ostrava Fieldworks,17\n");
+    writeFileSync(join(dir, "in", "team.json"), '{"Tessaly Brook": {"role": "lead"}, "Pell Varrick": {"role": "analyst"}}\n');
+  };
+  /** A fake analyst that answers about whatever locations it was sent, and asks about one of them. */
+  function echoAnalyst(): AskOptions["fetch"] {
+    return async (input, init) => {
+      const body = JSON.parse(String(init?.body));
+      sent.push({ url: String(input), body });
+      const data = dataOf(body) as unknown as { profile: Profile };
+      const columns = [
+        ...data.profile.tables.flatMap((t) => t.columns.map((c) => ({ file: t.file, header: c.header }))),
+        ...data.profile.jsonKeys.map((j) => ({ file: j.file, jsonPath: j.path })),
+      ].map((l) => ({ ...l, class: "person" as const, treatment: "blind" as const, confidence: 0.8, source: "analyst" as const }));
+      const asked = data.profile.jsonKeys[0];
+      const reply: Spec = {
+        version: 1,
+        columns,
+        entities: {},
+        patterns: { ip: true, email: true, host: true, guid: true, mac: false },
+        questions: asked === undefined ? [] : [{ id: "q1", text: `What is in ${asked.file}?`, options: ["blind", "keep"], answer: null, about: { file: asked.file, jsonPath: asked.path } }],
+      };
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(reply) }, finish_reason: "stop" }] }), { status: 200 });
+    };
+  }
+  const remote = (mode: "profile-only" | "local-only") =>
+    writePolicy((p) => {
+      p.privacy.mode = mode;
+      p.profile.samples = defaultSamples(mode);
+      if (mode === "profile-only") p.models.analyst.url = "https://analyst.example.com/v1";
+    });
+
+  test("sends none of the names in file, folder and key names or a headerless first row, and saves the real locations", async () => {
+    corpus();
+    remote("profile-only");
+    const r = await plan(["in"], echoAnalyst());
+    expect(r.code).toBe(0);
+    expect(sent).toHaveLength(1);
+    const body = JSON.stringify(sent.map((x) => x.body));
+    for (const name of NAMES) expect(body).not.toContain(name);
+    const data = dataOf(sent[0]?.body as { messages: { content: string }[] }) as unknown as { profile: Profile };
+    expect(data.profile.files.map((f) => f.path)).toEqual(["dir_1/file_1", "file_2", "file_3", "file_4"]);
+    expect(data.profile.tables.find((t) => t.file === "dir_1/file_1")?.columns.map((c) => c.header)).toEqual(["col_1", "col_2", "col_3"]);
+    expect(data.profile.jsonKeys.map((j) => j.path)).toEqual(['$["key_2"].role', '$["key_1"].role']);
+
+    const spec = savedSpec();
+    const review = "Avery Quill/Marlo Fenwick review.csv";
+    expect(spec.columns.map((c) => [c.file, c.header ?? c.jsonPath])).toEqual([
+      [review, "Tessaly Brook"],
+      [review, "Quorrin Labs"],
+      [review, "42"],
+      ["staff.csv", "Owner"],
+      ["staff.csv", "contact_addr"],
+      ["staff.csv", "box"],
+      ["staff.csv", "asset_tag"],
+      ["staff.csv", "Status"],
+      ["staff.csv", "ref_code"],
+      ["staff.csv", "Vendor"],
+      ["team.json", '$["Tessaly Brook"].role'],
+      ["team.json", '$["Pell Varrick"].role'],
+    ]);
+    expect(spec.questions[0]).toMatchObject({ text: 'What is in "team.json"?', about: { file: "team.json", jsonPath: '$["Tessaly Brook"].role' } });
+    // The saved profile keeps the real names; only what is sent is tokenised.
+    const saved = JSON.parse(readFileSync(join(dir, ".blind", "profile.json"), "utf8")) as Profile;
+    expect(saved.files.map((f) => f.path)).toContain(review);
+    expect(r.out).toContain("note: privacy.mode is profile-only: a model is sent 4 file path(s), 0 sheet name(s), the headers of 1 table(s) and 2 JSON key segment(s) as opaque tokens");
+  });
+
+  test("a reply naming a location that was not sent is rejected and nothing is saved", async () => {
+    corpus();
+    remote("profile-only");
+    // A real location the analyst could only have guessed (fakeFetch tokenises staff.csv only).
+    const guessed = await plan(["in"], fakeFetch(() => ({ ...proposal(), columns: [{ file: "team.json", jsonPath: '$["Tessaly Brook"].role', class: "person", treatment: "blind", confidence: 1, source: "analyst" }], questions: [] })));
+    expect(guessed.code).toBe(2);
+    expect(guessed.err).toContain("$.columns[0]: team.json");
+    expect(guessed.err).toContain("is not a location in the profile that was sent");
+    expect(existsSync(join(dir, ".blind", "spec.json"))).toBe(false);
+  });
+
+  test("local-only sends the real names, as before", async () => {
+    corpus();
+    remote("local-only");
+    expect((await plan(["in"], echoAnalyst())).code).toBe(0);
+    const data = dataOf(sent[0]?.body as { messages: { content: string }[] }) as unknown as { profile: Profile };
+    expect(data.profile.files.map((f) => f.path)).toEqual(["Avery Quill/Marlo Fenwick review.csv", "notes.txt", "staff.csv", "team.json"]);
+    expect(data.profile.jsonKeys.map((j) => j.path)).toEqual(['$["Tessaly Brook"].role', '$["Pell Varrick"].role']);
   });
 });
 

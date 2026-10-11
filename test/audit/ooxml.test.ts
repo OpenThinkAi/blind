@@ -65,6 +65,7 @@ describe("OOXML packages: namespace, content-type and relationship-type URIs are
     expect(text).toContain('ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"');
     expect(text).toContain('Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"');
     expect(text).toContain('mc:Ignorable="w14 w15 wp14"');
+    expect(text).toContain('fmtid="{D5CDD505-2E9C-101B-9397-08002B2CF9AE}"');
     expect(text).not.toContain("portal.example.com");
     const r = audit([file("memo.docx", bytes)], map);
     expect(findings(r)).toEqual([]);
@@ -127,6 +128,12 @@ describe("OOXML packages: namespace, content-type and relationship-type URIs are
     expect(leaks(audit([file("memo.docx", misplaced)], map)).map((f) => f.masked)).toEqual(["db***16", "db***16"]);
   });
 
+  test("a custom property's format id is structure; a GUID in its name or value is not", () => {
+    const { bytes, map } = blindedDocx();
+    const planted = plant(bytes, "docProps/custom.xml", (x) => x.replace("<vt:lpwstr>yes</vt:lpwstr>", "<vt:lpwstr>{D5CDD505-2E9C-101B-9397-08002B2CF9AE}</vt:lpwstr>"));
+    expect(leaks(audit([file("memo.docx", planted)], map)).map((f) => [f.part, f.class])).toEqual([["docProps/custom.xml", "pattern:guid"]]);
+  });
+
   test("a zip that is not an OOXML package gets no exemption", () => {
     const xml = '<?xml version="1.0"?><a xmlns="http://schemas.openxmlformats.org/x"/>';
     const r = audit([file("pack.zip", makeZip([{ name: "a.xml", data: xml }]))]);
@@ -163,6 +170,7 @@ describe("OOXML packages: namespace, content-type and relationship-type URIs are
       ["word/theme/theme1.xml", "a:ext", "uri"],
       ["word/settings.xml", "w:compatSetting", "w:uri"],
       ["word/document.xml", "a:graphicData", "uri"],
+      ["docProps/custom.xml", "property", "fmtid"],
     ];
     const no: [string, string, string][] = [
       ["word/_rels/document.xml.rels", "Relationship", "Target"],
@@ -174,6 +182,8 @@ describe("OOXML packages: namespace, content-type and relationship-type URIs are
       ["word/document.xml", "w:hyperlink", "uri"],
       ["word/document.xml", "wp:docPr", "descr"],
       ["word/document.xml", "w:p", "xmlnsx"],
+      ["docProps/custom.xml", "property", "name"],
+      ["word/document.xml", "property", "fmtid"],
     ];
     for (const [m, e, a] of yes) expect([m, e, a, ooxmlUriAttribute(m, e, a)]).toEqual([m, e, a, true]);
     for (const [m, e, a] of no) expect([m, e, a, ooxmlUriAttribute(m, e, a)]).toEqual([m, e, a, false]);

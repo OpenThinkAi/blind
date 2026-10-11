@@ -104,6 +104,9 @@ export function walkXml(t: string, h: XmlHandlers): void {
 /** The part every OOXML package has; its presence makes a zip an OOXML package. */
 export const CONTENT_TYPES_PART = "[Content_Types].xml";
 
+/** The custom document properties part. */
+const CUSTOM_PROPERTIES_PART = "docProps/custom.xml";
+
 /** Elements whose `uri` attribute names a namespace or extension, never content: extension lists, compatibility settings, graphic data. */
 const URI_ELEMENTS = new Set(["ext", "compatSetting", "graphicData"]);
 
@@ -115,7 +118,9 @@ const URI_ELEMENTS = new Set(["ext", "compatSetting", "graphicData"]);
  * - `ContentType` on `Default` and `Override` in `[Content_Types].xml`;
  * - `Type` on `Relationship` in a `.rels` member (a relationship's `Target` is NOT exempt);
  * - a namespaced `*:Ignorable` (markup compatibility: a list of namespace prefixes);
- * - `uri` (or `*:uri`) on `ext`, `compatSetting` and `graphicData` elements.
+ * - `uri` (or `*:uri`) on `ext`, `compatSetting` and `graphicData` elements;
+ * - `fmtid` on `property` in `docProps/custom.xml` (the property set's format id, a GUID naming
+ *   the format; the property's `name` and value are NOT exempt).
  *
  * Exemption is by position only, never by value: the same URI anywhere else (text, another
  * attribute, an external relationship's Target) is read as usual. Both audit layers skip these
@@ -128,5 +133,6 @@ export function ooxmlUriAttribute(member: string, element: string, attr: string)
   if (attr === "Type") return el === "Relationship" && /\.rels$/i.test(member);
   if (attr.includes(":") && localName(attr) === "Ignorable") return true;
   if (localName(attr) === "uri") return URI_ELEMENTS.has(el);
+  if (attr === "fmtid") return el === "property" && member === CUSTOM_PROPERTIES_PART;
   return false;
 }

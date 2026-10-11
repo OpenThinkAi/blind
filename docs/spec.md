@@ -314,7 +314,7 @@ release runs two layers, mechanical then semantic, and no model; the report list
   values in these attribute positions are format structure and are not read: namespace
   declarations (`xmlns`, `xmlns:*`), `ContentType` on `Default`/`Override` in `[Content_Types].xml`,
   `Type` on `Relationship` in a `.rels` member, `mc:Ignorable` prefix lists, and `uri` on `ext`,
-  `compatSetting` and `graphicData`. The exemption is by position in the parsed XML, never by value:
+  `compatSetting` and `graphicData`, and `fmtid` on `property` in `docProps/custom.xml`. The exemption is by position in the parsed XML, never by value:
   `schemas.openxmlformats.org` in document text or any other attribute is still reported, and so is
   an external relationship's `Target`. The semantic layer skips the same positions.
 - **Kept hosts.** A host name under a domain in the `blind.toml` keep list is not reported: the

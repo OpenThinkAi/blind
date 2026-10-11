@@ -46,6 +46,10 @@ const docProps = (): FixtureMember[] => [
     name: "docProps/app.xml",
     data: `${DECL}<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>writer</Application></Properties>`,
   },
+  {
+    name: "docProps/custom.xml",
+    data: `${DECL}<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><property fmtid="{D5CDD505-2E9C-101B-9397-08002B2CF9AE}" pid="2" name="Reviewed"><vt:lpwstr>yes</vt:lpwstr></property></Properties>`,
+  },
 ];
 
 export interface DocxOptions {
@@ -72,6 +76,7 @@ export function docxMembers(o: DocxOptions): FixtureMember[] {
         ["/word/settings.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"],
         ["/docProps/core.xml", "application/vnd.openxmlformats-package.core-properties+xml"],
         ["/docProps/app.xml", "application/vnd.openxmlformats-officedocument.extended-properties+xml"],
+        ["/docProps/custom.xml", "application/vnd.openxmlformats-officedocument.custom-properties+xml"],
       ]),
     },
     {
@@ -80,6 +85,7 @@ export function docxMembers(o: DocxOptions): FixtureMember[] {
         ["rId1", `${REL}/officeDocument`, "word/document.xml"],
         ["rId2", "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties", "docProps/core.xml"],
         ["rId3", `${REL}/extended-properties`, "docProps/app.xml"],
+        ["rId4", `${REL}/custom-properties`, "docProps/custom.xml"],
       ]),
     },
     { name: "word/_rels/document.xml.rels", data: rels(docRels) },
@@ -116,6 +122,7 @@ export function xlsxMembers(o: DocxOptions): FixtureMember[] {
         ["/xl/sharedStrings.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"],
         ["/docProps/core.xml", "application/vnd.openxmlformats-package.core-properties+xml"],
         ["/docProps/app.xml", "application/vnd.openxmlformats-officedocument.extended-properties+xml"],
+        ["/docProps/custom.xml", "application/vnd.openxmlformats-officedocument.custom-properties+xml"],
       ]),
     },
     {
@@ -124,6 +131,7 @@ export function xlsxMembers(o: DocxOptions): FixtureMember[] {
         ["rId1", `${REL}/officeDocument`, "xl/workbook.xml"],
         ["rId2", "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties", "docProps/core.xml"],
         ["rId3", `${REL}/extended-properties`, "docProps/app.xml"],
+        ["rId4", `${REL}/custom-properties`, "docProps/custom.xml"],
       ]),
     },
     {

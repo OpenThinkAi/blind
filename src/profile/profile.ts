@@ -297,7 +297,7 @@ export function buildProfile(inputs: readonly string[], k: number, cwd: string):
       // text file of timestamped speaker turns is also profiled as a document.
       const t = planTranscript(text);
       if ((format === "vtt" || format === "srt") && t === null) {
-        skipped.push({ path: f.path, reason: `not a ${format === "vtt" ? "WebVTT" : "SRT"} transcript (no cue timing found)` });
+        skipped.push({ path: f.path, reason: `not ${format === "vtt" ? "a WebVTT" : "an SRT"} transcript (no cue timing found)` });
         continue;
       }
       if (t !== null) addTranscript(f.path, t.entries);

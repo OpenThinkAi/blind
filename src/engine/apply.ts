@@ -572,7 +572,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       }
       const transcript = planTranscript(decoded.text) ?? undefined;
       if (format !== "text" && transcript === undefined) {
-        skipped.push({ path: input.path, reason: `not a ${format === "vtt" ? "WebVTT" : "SRT"} transcript (no ${format === "vtt" ? "WEBVTT header and " : "numbered "}cue timing found); not written` });
+        skipped.push({ path: input.path, reason: `not ${format === "vtt" ? "a WebVTT" : "an SRT"} transcript (no ${format === "vtt" ? "WEBVTT header and " : "numbered "}cue timing found); not written` });
         continue;
       }
       plans.push({ kind: "text", input, encoding: decoded.encoding, text: decoded.text, spans: [], transcript });

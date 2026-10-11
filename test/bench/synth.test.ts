@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ACCOUNTS_CSV, COLUMNS, DEFAULT_SEED, generateKit, mulberry32, NOTES_MD, writeKit } from "../../src/bench/synth.ts";
 import { parseTable } from "../../src/profile/table.ts";
+import { parseSpec } from "../../src/validate.ts";
 
 const digest = (x: unknown): string => createHash("sha256").update(JSON.stringify(x)).digest("hex");
 const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -20,11 +21,13 @@ describe("synthetic kit v1", () => {
     for (let i = 0; i < 5; i++) expect(a()).toBe(b());
   });
 
-  test("the generator uses no clock, no Math.random and nothing from the environment", () => {
+  test("src/bench uses no clock (but the bench timing seam), no Math.random and nothing from the environment", () => {
     const dir = join(import.meta.dir, "../../src/bench");
     for (const f of readdirSync(dir)) {
       const src = readFileSync(join(dir, f), "utf8");
-      expect({ f, bad: src.match(/Math\.random|Date\.now|new Date\(|performance\.now|randomUUID|randomBytes|process\.env/g) }).toEqual({ f, bad: null });
+      // The bench command's one clock read is its timing seam, which feeds only the report's `timing`.
+      const allowed = f === "command.ts" ? ["performance.now"] : [];
+      expect({ f, bad: [...(src.match(/Math\.random|Date\.now|new Date\(|performance\.now|randomUUID|randomBytes|process\.env/g) ?? [])] }).toEqual({ f, bad: allowed });
     }
   });
 
@@ -90,13 +93,14 @@ describe("synthetic kit v1", () => {
     expect(() => generateKit(1, { rows: 3 })).toThrow(RangeError);
   });
 
-  test("writeKit puts the oracle outside the input tree", () => {
+  test("writeKit puts the oracle and the spec outside the input tree", () => {
     const dir = mkdtempSync(join(tmpdir(), "blind-synth-"));
     try {
       const kit = generateKit();
       writeKit(dir, kit);
-      expect(readdirSync(dir).sort()).toEqual(["input", "oracle.json"]);
+      expect(readdirSync(dir).sort()).toEqual(["input", "oracle.json", "spec.json"]);
       expect(JSON.parse(readFileSync(join(dir, "oracle.json"), "utf8"))).toEqual(kit.oracle);
+      expect(parseSpec(readFileSync(join(dir, "spec.json"), "utf8"))).toEqual(kit.spec);
       for (const f of kit.files) expect(readFileSync(join(dir, "input", ...f.path.split("/")), "utf8")).toBe(f.text);
     } finally {
       rmSync(dir, { recursive: true, force: true });

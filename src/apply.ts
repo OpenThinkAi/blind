@@ -33,10 +33,11 @@ const APPLY_HELP = [
   "Applies the saved spec (.blind/spec.json) to the inputs and writes blinded copies under <out>.",
   "Inputs are files or directories; spec rules name files by their path relative to the input",
   "directory (or by file name for a file input). Handles CSV/TSV, JSON/JSONL (.json, .jsonl,",
-  ".ndjson), XLSX workbooks (rules name a column by sheet and header), text (.txt, .md, .log)",
-  "and DOCX; other files are reported and not written. File and",
-  "folder names are blinded too; the report lists each renamed file. Host names under a domain",
-  "in the blind.toml keep list are kept.",
+  ".ndjson), XLSX workbooks (rules name a column by sheet and header), text (.txt, .md, .log),",
+  "DOCX and VTT/SRT transcripts; other files are reported and not written. A text file or DOCX",
+  "that reads as a transcript (timestamp, speaker, text) is one: its speaker tags are always",
+  "replaced and its timing lines kept. File and folder names are blinded too; the report lists",
+  "each renamed file. Host names under a domain in the blind.toml keep list are kept.",
   "",
   "Options:",
   "  -o, --out <dir>       Output directory (must not overlap an input)",
@@ -167,6 +168,16 @@ export function renderReport(result: ApplyResult): string {
     }
     if ((f.metadataReplacements ?? 0) > 0) {
       lines.push(`  metadata: ${f.metadataReplacements} author, creator or company value${f.metadataReplacements === 1 ? "" : "s"} replaced`);
+    }
+    if ((f.speakerMentions ?? 0) > 0) {
+      lines.push(`  ${f.speakerMentions} transcript speaker name${f.speakerMentions === 1 ? "" : "s"} replaced`);
+    }
+    if (f.transcript !== undefined) {
+      const t = f.transcript;
+      const how = t.kind === "vtt" ? "WebVTT" : t.kind === "srt" ? "SRT" : "timestamped speaker paragraphs";
+      let line = `  transcript (${how}): ${t.speakers} speaker${t.speakers === 1 ? "" : "s"}; ${t.speakerTags} speaker tag${t.speakerTags === 1 ? "" : "s"} and ${t.spokenMentions} spoken mention${t.spokenMentions === 1 ? "" : "s"} replaced`;
+      if (t.keptTags > 0) line += `; ${t.keptTags} tag${t.keptTags === 1 ? "" : "s"} kept (keep list or spec vocabulary)`;
+      lines.push(line);
     }
     for (const w of f.warnings ?? []) lines.push(`  warning: ${w}`);
     if (f.keptHosts > 0) {

@@ -1,4 +1,4 @@
-// The engine for CSV/TSV, JSON/JSONL, plain text and DOCX (see docx.ts): applies a saved spec to in-memory
+// The engine for CSV/TSV, JSON/JSONL, plain text, DOCX (see docx.ts) and transcripts (transcript.ts): applies a saved spec to in-memory
 // files and returns the blinded bytes, a report per file, and the map. No file
 // system, no clock, no model: the output depends only on the inputs, the spec,
 // the salt and any earlier map.
@@ -34,6 +34,12 @@
 // cell changes only for such a value; spec entities and patterns in it are
 // still left as written and reported.
 //
+// Transcripts (src/engine/transcript.ts) are detected by content: a text file
+// (or a .vtt or .srt) that reads as WebVTT, SRT or timestamped speaker turns,
+// and a DOCX whose body paragraphs do. Their speaker tags are always replaced
+// with Person_ pseudonyms, the speakers' names, parts and misspellings join the
+// corpus-wide scanner as person forms, and timing lines stay byte-identical.
+//
 // Host matches under a keep-list domain are kept as written. Every output path
 // is blinded through src/engine/names.ts (patterns, entities and the column
 // values replaced above), planned with the cells and rendered after them.
@@ -48,13 +54,14 @@ import { isJsonNumber, type JsonFormat, JsonError, type JsonToken, quote, scanJs
 import type { BlindMap } from "./map.ts";
 import { type EntityEntry, Pseudonymizer } from "./pseudonym.ts";
 import { type ColumnOutcome, decide, outcomeOf } from "./columns.ts";
-import { DocxError, type DocxPlan, planDocx, renderDocx, scanDocx } from "./docx.ts";
+import { DocxError, type DocxPlan, docxParagraphs, planDocx, renderDocx, scanDocx } from "./docx.ts";
 import { NameRewriter, rewriteSpans } from "./names.ts";
 import { recurrenceForms, TextScanner } from "./recur.ts";
 import { EntityMatcher, type ExtraForm, keepDomains, type Span } from "./text.ts";
+import { entrySpans, keptSpeakers, planTranscript, shapeParagraphs, speakerForms, speakersOf, type TranscriptPlan, transcriptSpans } from "./transcript.ts";
 import { type Env, planXlsx, prepareXlsx, renderXlsx, XlsxError, type XlsxPlan, XlsxSpecError, xlsxValues, ZipError } from "./xlsx.ts";
 
-export type EngineFormat = "csv" | "tsv" | "json" | "jsonl" | "text" | "docx" | "xlsx";
+export type EngineFormat = "csv" | "tsv" | "json" | "jsonl" | "text" | "docx" | "xlsx" | "vtt" | "srt";
 
 const EXTENSIONS: Record<string, EngineFormat> = {
   ".csv": "csv",
@@ -70,6 +77,8 @@ const EXTENSIONS: Record<string, EngineFormat> = {
   ".log": "text",
   ".docx": "docx",
   ".xlsx": "xlsx",
+  ".vtt": "vtt",
+  ".srt": "srt",
 };
 
 /** The format this engine handles a path as, or null when it does not handle it. */
@@ -137,7 +146,24 @@ export interface FileReport {
   sheets?: { name: string; outputName: string; headerRow: number; noHeader: boolean }[];
   /** XLSX only: members that are not XML (images, binaries), copied as they are without being read. */
   unread?: string[];
+  /** Set when the file was read as a transcript. */
+  transcript?: TranscriptReport;
+  /** A file that is not a transcript: transcript speakers' names (or parts, or misspellings) replaced in it. */
+  speakerMentions?: number;
   changed: boolean;
+}
+
+export interface TranscriptReport {
+  /** How it was read: WebVTT, SRT, or timestamped speaker paragraphs in a text file or DOCX. */
+  kind: "vtt" | "srt" | "text" | "docx";
+  /** Distinct speakers. */
+  speakers: number;
+  /** Speaker tags and prefixes replaced. */
+  speakerTags: number;
+  /** Speaker tags left as written because the name is a keep-list term or a spec vocabulary form. */
+  keptTags: number;
+  /** Spoken speaker names, name parts and misspellings replaced. */
+  spokenMentions: number;
 }
 
 export interface SkippedFile {
@@ -206,6 +232,8 @@ interface TextPlan {
   text: string;
   /** Filled once every column is decided. */
   spans: Span[];
+  /** Set when the text reads as a transcript. */
+  transcript?: TranscriptPlan;
 }
 
 interface JsonPlan {
@@ -226,6 +254,8 @@ interface DocxFilePlan {
   kind: "docx";
   input: InputFile;
   docx: DocxPlan;
+  /** Set when the body paragraphs read as a transcript: its speakers, spoken text and speaker tags. */
+  transcript?: { speakers: string[]; spoken: string[]; tags: string[] };
 }
 
 interface WorkbookPlan {
@@ -457,6 +487,18 @@ function count(spans: readonly Span[], source: Span["source"]): number {
   return spans.filter((s) => s.cls !== null && s.source === source).length;
 }
 
+function transcriptReport(
+  kind: TranscriptReport["kind"],
+  speakers: readonly string[],
+  tags: readonly string[],
+  speakerReplacements: number,
+  kept: (name: string) => boolean,
+): TranscriptReport {
+  const keptTags = tags.filter(kept).length;
+  const speakerTags = tags.length - keptTags;
+  return { kind, speakers: speakers.length, speakerTags, keptTags, spokenMentions: Math.max(0, speakerReplacements - speakerTags) };
+}
+
 const keptHostCount = (spans: readonly Span[]): number => spans.filter((s) => s.cls === null && s.source === "pattern").length;
 
 export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyOptions): ApplyResult {
@@ -488,7 +530,18 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         throw new ApplyError(`${input.path}: the spec has column rules for a DOCX file; column rules apply to tables only`);
       }
       try {
-        plans.push({ kind: "docx", input, docx: planDocx(input.bytes) });
+        const docx = planDocx(input.bytes);
+        const plan: DocxFilePlan = { kind: "docx", input, docx };
+        if (shapeParagraphs(docxParagraphs(docx, docx.main === undefined ? "all" : "main")).shaped) {
+          // Speakers come from every part's entries, so a speaker named only in a header is found too.
+          const entries = shapeParagraphs(docxParagraphs(docx, "all")).entries;
+          plan.transcript = {
+            speakers: speakersOf(entries),
+            spoken: entries.map((e) => e.text),
+            tags: entries.flatMap((e) => (e.speaker === null ? [] : [e.speaker])),
+          };
+        }
+        plans.push(plan);
       } catch (e) {
         if (!(e instanceof DocxError)) throw e;
         skipped.push({ path: input.path, reason: `${e.message}; not written` });
@@ -513,11 +566,16 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       skipped.push({ path: input.path, reason: `cannot decode: ${e.message}; not written` });
       continue;
     }
-    if (format === "text") {
+    if (format === "text" || format === "vtt" || format === "srt") {
       if (rules.length > 0) {
-        throw new ApplyError(`${input.path}: the spec has column rules for a text file; column rules apply to tables only`);
+        throw new ApplyError(`${input.path}: the spec has column rules for a ${format === "text" ? "text" : "transcript"} file; column rules apply to tables only`);
       }
-      plans.push({ kind: "text", input, encoding: decoded.encoding, text: decoded.text, spans: [] });
+      const transcript = planTranscript(decoded.text) ?? undefined;
+      if (format !== "text" && transcript === undefined) {
+        skipped.push({ path: input.path, reason: `not a ${format === "vtt" ? "WebVTT" : "SRT"} transcript (no ${format === "vtt" ? "WEBVTT header and " : "numbered "}cue timing found); not written` });
+        continue;
+      }
+      plans.push({ kind: "text", input, encoding: decoded.encoding, text: decoded.text, spans: [], transcript });
       continue;
     }
     if (format === "json" || format === "jsonl") {
@@ -552,7 +610,26 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       }
     }
   }
-  const nameMatcher = new EntityMatcher(spec.entities, columnValues);
+  // Transcript speakers: person forms for names, content and recurrences alike.
+  const vocabulary = (spec.entities.vocabulary ?? []).flatMap((e) => [e.canonical, ...e.aliases, ...e.parts]);
+  const kept = keptSpeakers(opts.keep ?? [], vocabulary);
+  const speakers: string[] = [];
+  const spoken: string[] = [];
+  for (const p of plans) {
+    if (p.kind === "text" && p.transcript !== undefined) {
+      speakers.push(...speakersOf(p.transcript.entries));
+      spoken.push(...p.transcript.entries.map((e) => e.text));
+    } else if (p.kind === "docx" && p.transcript !== undefined) {
+      speakers.push(...p.transcript.speakers);
+      spoken.push(...p.transcript.spoken);
+    }
+  }
+  const voices = speakerForms(
+    speakers.filter((n) => !kept(n)),
+    spoken,
+    new Set(vocabulary.map((v) => v.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim())),
+  );
+  const nameMatcher = new EntityMatcher(spec.entities, [...columnValues, ...voices]);
   const names = new NameRewriter(nameMatcher, spec.patterns, keep);
   for (const p of plans) names.planPath(p.input.path);
 
@@ -563,10 +640,16 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     spec.entities,
     opts.map,
   );
-  const scanner = new TextScanner(spec.entities, spec.patterns, keep, forms);
+  // A speaker's form replaces a recurring value with the same text: it carries the speaker's pseudonym.
+  const voiced = new Set(voices.map((v) => `${v.cls}\0${v.form as string}`));
+  const scanForms = [...forms.filter((f) => !voiced.has(`${f.cls}\0${f.form ?? f.value}`)), ...voices].sort(
+    (a, b) => cmp(a.cls, b.cls) || cmp(a.form ?? a.value, b.form ?? b.value) || cmp(a.value, b.value),
+  );
+  const scanner = new TextScanner(spec.entities, spec.patterns, keep, scanForms);
+  const free = (t: string) => scanner.free(t);
   for (const p of plans) {
-    if (p.kind === "text") p.spans = scanner.free(p.text);
-    else if (p.kind === "docx") scanDocx(p.docx, (t) => scanner.free(t));
+    if (p.kind === "text") p.spans = p.transcript !== undefined ? transcriptSpans(p.text, p.transcript, free, kept) : scanner.free(p.text);
+    else if (p.kind === "docx") scanDocx(p.docx, p.transcript !== undefined ? (t) => entrySpans(t, free, kept) : free);
     else if (p.kind === "json") scanPending(p.pending, p.edits, scanner);
     else if (p.kind === "table") scanPending(p.pending, p.edits, scanner);
   }
@@ -689,6 +772,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         patternReplacements: r.patternReplacements,
         mappedReplacements: r.mappedReplacements,
         keptHosts: r.keptHosts,
+        ...(r.speakerReplacements > 0 ? { speakerMentions: r.speakerReplacements } : {}),
         sheets: p.plan.sheets.map((s) => ({ ...s, outputName: r.sheetNames.find((n) => n.from === s.name)?.to ?? s.name })),
         unread: r.members.filter((m) => m.kind === "other" && !m.name.endsWith("/")).map((m) => m.name),
         changed,
@@ -712,6 +796,9 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         keptHosts: r.keptHosts,
         metadataReplacements: r.metadataReplacements,
         warnings: p.docx.warnings,
+        ...(p.transcript === undefined
+          ? r.speakerReplacements > 0 ? { speakerMentions: r.speakerReplacements } : {}
+          : { transcript: transcriptReport("docx", p.transcript.speakers, p.transcript.tags, r.speakerReplacements, kept) }),
         changed: r.changed,
       });
       outputs.push({ path: outputPath, bytes: r.changed ? r.bytes : p.input.bytes });
@@ -721,9 +808,10 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     let report: FileReport;
     if (p.kind === "text") {
       text = rewriteSpans(p.text, p.spans, pz);
+      const t = p.transcript;
       report = {
         path: p.input.path,
-        format: "text",
+        format: t === undefined || t.kind === "text" ? "text" : t.kind,
         encoding: p.encoding,
         columns: [],
         outputPath: p.input.path,
@@ -731,6 +819,9 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         patternReplacements: count(p.spans, "pattern"),
         mappedReplacements: count(p.spans, "map"),
         keptHosts: keptHostCount(p.spans),
+        ...(t === undefined
+          ? count(p.spans, "speaker") > 0 ? { speakerMentions: count(p.spans, "speaker") } : {}
+          : { transcript: transcriptReport(t.kind, speakersOf(t.entries), t.tags.map((x) => x.name), count(p.spans, "speaker"), kept) }),
         changed: false,
       };
     } else if (p.kind === "json") {
@@ -786,6 +877,10 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         keptHosts,
         changed: false,
       };
+    }
+    if (p.kind !== "text") {
+      const mentions = [...p.edits.values()].reduce((n, e) => n + (e.kind === "spans" ? count(e.spans, "speaker") : 0), 0);
+      if (mentions > 0) report.speakerMentions = mentions;
     }
     report.changed = text !== p.text;
     report.outputPath = names.renamePath(p.input.path, pz);

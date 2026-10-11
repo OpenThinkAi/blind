@@ -55,6 +55,8 @@ export interface DocxPlan {
   units: Unit[];
   /** Host matches kept because they are under a keep-list domain. */
   keptHosts: number;
+  /** The main document part (the package's officeDocument relationship), when it names one. */
+  main?: string;
   /** Pseudonyms the render needs, for the caller to derive in sorted order. */
   requests: DocxRequest[];
   /** Every original value, for the set no pseudonym may equal. */
@@ -69,6 +71,8 @@ export interface DocxRender {
   patternReplacements: number;
   /** Values a column pass pseudonymised elsewhere in the corpus, found again here. */
   mappedReplacements: number;
+  /** Transcript speaker tags and spoken speaker names (see transcript.ts). */
+  speakerReplacements: number;
   keptHosts: number;
   /** Identity metadata values replaced as a whole. */
   metadataReplacements: number;
@@ -102,6 +106,8 @@ type Item = { node: Node } | { sep: string; role: Role };
 
 interface Unit {
   items: Item[];
+  /** Set on a paragraph's run text (not its field instructions): the member it is in. */
+  paragraph?: string;
 }
 
 const W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
@@ -304,6 +310,8 @@ export function planDocx(bytes: Uint8Array): DocxPlan {
       throw new DocxError(`part ${m.name} is not a part this handler knows and holds text it cannot blind`);
     }
     plan.kinds.set(m.name, kind);
+    // Parsed above, so this cannot throw.
+    if (m.name === "_rels/.rels") plan.main = mainPart(m.text);
     const nodes: Node[] = [];
     plan.nodes.set(m.name, nodes);
 
@@ -315,7 +323,7 @@ export function planDocx(bytes: Uint8Array): DocxPlan {
         if (localName(f.name) !== "p") continue;
         let p = paragraphs.get(f);
         if (p === undefined) {
-          p = { text: { items: [] }, instr: { items: [] } };
+          p = { text: { items: [], paragraph: m.name }, instr: { items: [] } };
           paragraphs.set(f, p);
           units.push(p.text, p.instr);
         }
@@ -370,6 +378,40 @@ export function planDocx(bytes: Uint8Array): DocxPlan {
   }
 
   return plan;
+}
+
+/** The target of the package relationship of type officeDocument, as a member name. */
+function mainPart(xml: string): string | undefined {
+  let main: string | undefined;
+  rewriteXml(xml, (v) => v, {
+    text: () => false,
+    attribute: () => false,
+    visit: (el) => {
+      if (main !== undefined || localName(el.name) !== "Relationship" || el.attrs.get("TargetMode") === "External") return;
+      if (!/\/officeDocument$/.test(el.attrs.get("Type") ?? "")) return;
+      main = (el.attrs.get("Target") ?? "").replace(/^\//, "");
+    },
+  });
+  return main;
+}
+
+/**
+ * The run text of every paragraph, as accepted (deletions left out), in document order: of the
+ * main document part only (`main`), or of every part (`all`). Transcript detection reads these.
+ */
+export function docxParagraphs(plan: DocxPlan, which: "main" | "all"): string[] {
+  const out: string[] = [];
+  for (const unit of plan.units) {
+    if (unit.paragraph === undefined || (which === "main" && unit.paragraph !== plan.main)) continue;
+    let text = "";
+    for (const item of unit.items) {
+      if ("node" in item) {
+        if (item.node.role !== "del") text += item.node.value;
+      } else if (item.role !== "del") text += item.sep;
+    }
+    out.push(text);
+  }
+  return out;
 }
 
 /**
@@ -479,6 +521,7 @@ export function renderDocx(plan: DocxPlan, pz: Pseudonymizer): DocxRender {
     entityReplacements: plan.edits.filter((e) => e.source === "entity").length,
     patternReplacements: plan.edits.filter((e) => e.source === "pattern").length,
     mappedReplacements: plan.edits.filter((e) => e.source === "map").length,
+    speakerReplacements: plan.edits.filter((e) => e.source === "speaker").length,
     keptHosts: plan.keptHosts,
     metadataReplacements,
   };

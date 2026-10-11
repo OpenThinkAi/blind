@@ -152,7 +152,9 @@ plan (exit 2) before anything is profiled or sent.
 nothing written) if either is missing or the spec is invalid. Spec `file` values are paths relative
 to an input directory, or the file name for a file named directly. This release handles CSV/TSV,
 JSON and JSONL (`.json`, `.jsonl`, `.ndjson`), XLSX workbooks (`.xlsx`), text (`.txt`, `.md`,
-`.log`) and DOCX (`.docx`); any other file is listed and not written (exit 1).
+`.log`), DOCX (`.docx`) and WebVTT and SRT transcripts (`.vtt`, `.srt`); any other file is listed
+and not written (exit 1). Transcripts are found by content, not by name (see
+[transcripts](#transcripts-in-apply) below).
 
 **Table columns.** The header row is found the same way `blind profile` finds it, so spec headers always match: the earliest of the first 20 rows that fills more than half the table's width and is mostly non-numeric text, or row 1 if no row qualifies.
 
@@ -237,6 +239,42 @@ rewritten at the XML level, so everything not blinded is copied byte for byte:
 - Images are copied unchanged and listed as a warning. A package that cannot be read, has a part
   this handler does not know that holds text, or embeds another file (an OLE object, a chart's
   workbook, macros) is listed and not written (exit 1).
+
+<a id="transcripts-in-apply"></a>**Transcripts.** A file is a transcript by its content:
+
+- **WebVTT**: a `WEBVTT` first line and at least one cue timing line (`00:00:01.000 --> 00:00:04.000`).
+- **SRT**: a numbered cue with a timing line first, and at least 80% of the blank-line-separated
+  blocks are such cues.
+- **Text and DOCX**: at least 80% of the non-empty paragraphs (and at least two) are timestamp,
+  speaker, text entries: `[00:00:03] Avery Quill: text`, `00:03 Avery Quill` with the text on the
+  next line or in the next paragraph, `00:00:03.120 --> 00:00:05.480` then the speaker then the text,
+  or `Avery Quill   0:03` (the speaker first, as a Teams transcript saved as Word has it). For a
+  text file, a paragraph is a run of non-blank lines, also split before every line that starts with
+  a timestamp; for a DOCX, it is a body paragraph (as accepted, when it has tracked changes).
+
+A `.vtt` or `.srt` file that is none of these is listed and not written (exit 1). A text file or
+DOCX that is not transcript-shaped is blinded as ordinary text or DOCX. In a transcript:
+
+- Every speaker tag or prefix is replaced with that speaker's `Person_` pseudonym, even when the spec
+  does not list the speaker: VTT voice tags (`<v Avery Quill>`), caption prefixes (`Avery Quill:`,
+  `- Avery:`, `>> Avery:`) and the speaker of a timestamped paragraph. A caption prefix made only of
+  dictionary words (`Note:`) is not read as a speaker. A tag equal to a keep-list term or a spec
+  `vocabulary` form is kept and counted in the report.
+- One speaker, one pseudonym: the speaker's name, each capitalised part of it (given name, surname),
+  and every capitalised spoken word within one edit of a part of four or more letters (`Avary` for
+  `Avery`) are matched like recurring values, in every file of the corpus (a speaker named in a CSV
+  cell or another document gets the same pseudonym there). A part or misspelling that fits two
+  speakers gets its own pseudonym. Parts and misspellings the recurring-value rules leave out (fewer
+  than 3 letters, dictionary words such as `May`, vocabulary forms) are not matched; the tag is
+  still replaced.
+- GUIDs in VTT cue identifiers (Teams writes `<guid>/12-0`) are replaced with GUID-shaped
+  pseudonyms even when the spec's `guid` pattern is off.
+- Cue timing lines (with their settings), SRT cue numbers, inline VTT timestamps (`<00:00:02.000>`)
+  and the timestamps of text and DOCX entries are not changed, byte for byte. Everything else
+  (the header, NOTE blocks, cue identifiers and spoken text) is free text.
+
+The report says how the file was read and counts its speakers, the speaker tags and spoken mentions
+replaced, and any tags kept; a file that is not a transcript reports the speaker names replaced in it.
 
 **File and folder names.** Every folder name and every file name (without its extension) in the
 output tree is rewritten like free text: enabled patterns, spec entities, and also every cell value
@@ -505,7 +543,7 @@ Every input file. Each entry:
 | Field | Type | Meaning |
 |---|---|---|
 | `path` | string, non-empty, unique | Path relative to the input root. Example: `"staff.csv"`. Every `file` elsewhere in the profile must be one of these. |
-| `format` | `csv` \| `tsv` \| `json` \| `jsonl` \| `xlsx` \| `docx` \| `text` \| `markdown` \| `log` \| `vtt` \| `srt` | The file's container format. A transcript-shaped DOCX or text file keeps `docx` or `text` here and also appears under `transcripts`. |
+| `format` | `csv` \| `tsv` \| `json` \| `jsonl` \| `xlsx` \| `docx` \| `text` \| `markdown` \| `log` \| `vtt` \| `srt` | The file's container format. `vtt` and `srt` are decided by content, so a `.txt` file holding WebVTT is `vtt`. A transcript-shaped DOCX or text file keeps `docx` or `text` here and also appears under `transcripts`. |
 | `size` | integer, 0 or more | Size in bytes. Example: `2048`. |
 
 ### `tables`
@@ -575,8 +613,8 @@ One entry per transcript (VTT, SRT, or a DOCX or text file detected as transcrip
 | Field | Type | Meaning |
 |---|---|---|
 | `file` | string, non-empty | The file. |
-| `speakers` | array of strings, each at most 120 characters | Speaker labels as written. Empty under `profile-only`. |
-| `sampleLines` | array of strings, each at most 120 characters, at most `sampleCount` items | Example lines. |
+| `speakers` | array of strings, each at most 120 characters | Speaker names as written, in order of first appearance, at most 100 (a note says when more were left out). Empty under `profile-only`. The heuristic analyst proposes each as a `person` entity, with its name parts. |
+| `sampleLines` | array of strings, each at most 120 characters, at most `sampleCount` items | Example turns, `Speaker: text`, spread evenly through the transcript. |
 
 ### `cooccurrence`
 
@@ -590,7 +628,8 @@ Pairs of locations that share values, which suggests they hold the same kind of 
 ### How `blind profile` builds it
 
 `blind profile <inputs...>` reads CSV (`.csv`), TSV (`.tsv`, `.tab`), JSON (`.json`), JSONL
-(`.jsonl`, `.ndjson`), XLSX workbooks (`.xlsx`), plain text (`.txt`, `.text`), Markdown (`.md`, `.markdown`) and logs (`.log`), writes `.blind/profile.json` (mode
+(`.jsonl`, `.ndjson`), XLSX workbooks (`.xlsx`), plain text (`.txt`, `.text`), Markdown (`.md`, `.markdown`), logs (`.log`),
+WebVTT (`.vtt`) and SRT (`.srt`) transcripts, and DOCX (`.docx`) files that are transcript-shaped, writes `.blind/profile.json` (mode
 0600) and prints it as a table; `--json` prints the JSON instead. `k` is `[profile] samples` in
 `blind.toml`, or `--samples N`. When `samples` is unset, `k` follows `[privacy] mode`: 5 under
 `local-only` and `none`, 0 (headers and statistics only) under `profile-only`.
@@ -620,6 +659,12 @@ Pairs of locations that share values, which suggests they hold the same kind of 
   code is skipped), at most 50 entries. Sample sentences are up to `k` distinct sentences spread
   evenly through the document; for logs, each line is one sample. Under `profile-only` the outline
   is left out (an empty array) and a note says how many documents it was left out of.
+- **Transcripts.** Found by content, as `blind apply` finds them
+  ([transcripts](#transcripts-in-apply)). A VTT, SRT or transcript-shaped text or DOCX file gets a
+  `transcripts` entry; a transcript-shaped text file is also profiled as a document. A `.vtt` or
+  `.srt` file that is not a transcript, and a DOCX that is not transcript-shaped, are listed under
+  "not profiled". Under `profile-only` the speaker list is left out (an empty array) and a note
+  says how many transcripts it was left out of.
 - **Co-occurrence.** Every pair of table columns or JSON key paths, in the same or different files, whose distinct
   values (compared case-insensitively, trimmed) overlap by more than half of the smaller column's
   distinct values.

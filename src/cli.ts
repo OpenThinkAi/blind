@@ -1,5 +1,6 @@
 import pkg from "../package.json" with { type: "json" };
 import { processIO, runInit } from "./init.ts";
+import { runProfile } from "./profile/command.ts";
 
 export const COMMANDS = [
   { name: "init", usage: "init [dir]", summary: "Write blind.toml (policy) and .blind/ (salt)" },
@@ -14,6 +15,7 @@ export const COMMANDS = [
 
 const HANDLERS: Partial<Record<(typeof COMMANDS)[number]["name"], (args: string[]) => Promise<number>>> = {
   init: (args) => runInit(args, processIO()),
+  profile: (args) => runProfile(args, processIO()),
 };
 
 export function helpText(): string {

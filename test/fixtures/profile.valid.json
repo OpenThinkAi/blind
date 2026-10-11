@@ -16,7 +16,7 @@
           "header": "Owner",
           "stats": {
             "count": 40, "distinctRatio": 0.6, "digitRatio": 0, "dictionaryRatio": 0.05, "meanLength": 11.2,
-            "detectorRates": { "ip": 0, "email": 0, "host": 0, "guid": 0, "mac": 0 },
+            "detectorRates": { "ip": 0, "email": 0, "host": 0, "guid": 0, "mac": 0, "numericId": 0 },
             "samples": ["Avery Quill", "Robin Example", "Sam Placeholder"]
           }
         },
@@ -24,7 +24,7 @@
           "header": "Server IP",
           "stats": {
             "count": 40, "distinctRatio": 0.9, "digitRatio": 0.8, "dictionaryRatio": 0, "meanLength": 11,
-            "detectorRates": { "ip": 1, "email": 0, "host": 0, "guid": 0, "mac": 0 },
+            "detectorRates": { "ip": 1, "email": 0, "host": 0, "guid": 0, "mac": 0, "numericId": 0 },
             "samples": ["192.0.2.10", "198.51.100.7"]
           }
         }
@@ -37,7 +37,7 @@
       "path": "$.items[*].ref_code",
       "stats": {
         "count": 12, "distinctRatio": 1, "digitRatio": 0.5, "dictionaryRatio": 0, "meanLength": 8,
-        "detectorRates": { "ip": 0, "email": 0, "host": 0, "guid": 0, "mac": 0 },
+        "detectorRates": { "ip": 0, "email": 0, "host": 0, "guid": 0, "mac": 0, "numericId": 0 },
         "samples": ["PRJ-0001", "PRJ-0002"]
       }
     }

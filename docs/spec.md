@@ -125,7 +125,7 @@ Things the analyst could not decide and is asking you. An array, possibly empty.
           "header": "Owner",
           "stats": {
             "count": 40, "distinctRatio": 0.6, "digitRatio": 0, "dictionaryRatio": 0.05, "meanLength": 11.2,
-            "detectorRates": { "ip": 0, "email": 0, "host": 0, "guid": 0, "mac": 0 },
+            "detectorRates": { "ip": 0, "email": 0, "host": 0, "guid": 0, "mac": 0, "numericId": 0 },
             "samples": ["Avery Quill", "Robin Example", "Sam Placeholder"]
           }
         }
@@ -205,7 +205,7 @@ Shared by table columns and JSON keys. All fields required.
 | `digitRatio` | number, 0 to 1 | Share of characters that are digits. Example: `0.8`. |
 | `dictionaryRatio` | number, 0 to 1 | Share of words found in the dictionary. Example: `0.05`. |
 | `meanLength` | number, 0 or more | Mean value length in characters. Example: `11.2`. |
-| `detectorRates` | object `{ ip, email, host, guid, mac }`, each 0 to 1 | Share of values each shape detector matched. All five keys required. |
+| `detectorRates` | object `{ ip, email, host, guid, mac, numericId }`, each 0 to 1 | Share of values each shape detector matched. All six keys required. `ip` (IPv4), `email`, `host`, `guid` and `mac` count values that contain the shape; `numericId` counts values that are wholly an optional short letter prefix and 4 or more digits (`004417`, `ACCT-000123`). |
 | `samples` | array of strings, each at most 120 characters, at most `sampleCount` items | Example values, quoted as data. |
 
 ### `documents`
@@ -236,3 +236,33 @@ Pairs of locations that share values, which suggests they hold the same kind of 
 |---|---|---|
 | `a`, `b` | location | Each `{ file, sheet?, header }` for a table column or `{ file, jsonPath }` for a JSON key; exactly one of `header` and `jsonPath`. |
 | `shared` | integer, 1 or more | Number of distinct values present in both. Example: `7`. |
+
+### How `blind profile` builds it
+
+`blind profile <inputs...>` reads CSV (`.csv`), TSV (`.tsv`, `.tab`), plain text (`.txt`,
+`.text`), Markdown (`.md`, `.markdown`) and logs (`.log`), writes `.blind/profile.json` (mode
+0600) and prints it as a table; `--json` prints the JSON instead. `k` is `[profile] samples` in
+`blind.toml`, or `--samples N`.
+
+- **Paths.** Directories are walked recursively in sorted order; `path` is relative to the input
+  directory, or the file name for a file named directly. Hidden entries, symbolic links, files in
+  other formats, files that are not valid UTF-8 and CSV files that do not parse are left out of the
+  profile, listed under "not profiled", and the command exits 1. blind's own `.blind/` and
+  `blind.toml` are skipped without comment.
+- **Long paths.** `path` is never truncated, because the spec and the engine need it exact. A file
+  whose profile path is over 120 characters is left out and listed under "not profiled" instead.
+  Every other document-derived string (headers, samples, outline, sentences) is cut as below.
+- **Header row.** The earliest of the first 20 rows that fills more than half the table's width
+  and whose filled cells are mostly text (contain a letter and are not a number). Rows above it,
+  such as a title, are ignored. When no row qualifies, row 1 is used and a note says so.
+- **Statistics.** Over the non-empty cells below the header. Words are runs of two or more letters,
+  looked up in a small built-in English word list. Ratios are rounded to four decimals.
+- **Samples.** Up to `k` distinct values per column, spread evenly through the column in file order
+  (no randomness, so the same corpus gives the same profile). Every excerpt has whitespace collapsed
+  and is cut to 120 characters, ending in `…` when cut.
+- **Documents.** The outline is the first non-empty line, then, for Markdown, each heading (fenced
+  code is skipped), at most 50 entries. Sample sentences are up to `k` distinct sentences spread
+  evenly through the document; for logs, each line is one sample.
+- **Co-occurrence.** Every pair of table columns, in the same or different files, whose distinct
+  values (compared case-insensitively, trimmed) overlap by more than half of the smaller column's
+  distinct values.

@@ -57,13 +57,16 @@ export interface ProfileFile {
   size: number;
 }
 
+/** Profile detectors: the spec's shape patterns plus `numericId`, which has no free-text pattern. */
+export type DetectorName = PatternName | "numericId";
+
 export interface ValueStats {
   count: number;
   distinctRatio: number;
   digitRatio: number;
   dictionaryRatio: number;
   meanLength: number;
-  detectorRates: Record<PatternName, number>;
+  detectorRates: Record<DetectorName, number>;
   /** At most `Profile.sampleCount` values, each at most 120 characters. */
   samples: string[];
 }

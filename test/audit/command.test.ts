@@ -52,9 +52,9 @@ describe("blind audit", () => {
   test("a clean output tree exits 0 and says what clean does and does not mean", async () => {
     const r = await audit("out");
     expect(r.code).toBe(0);
-    expect(r.out).toContain("status: clean (2 files; 0 leaks, 0 candidates; layers run: mechanical)");
+    expect(r.out).toContain("status: clean (2 files; 0 leaks, 0 candidates; layers run: mechanical, semantic)");
     expect(r.out).toContain("not a guarantee");
-    expect(r.err).toContain("mechanical layer only");
+    expect(r.err).toContain("mechanical and semantic layers only");
   });
 
   test("--no-model runs the mechanical layer without the note", async () => {
@@ -84,6 +84,23 @@ describe("blind audit", () => {
     expect(r.out).toContain("candidates  extra.txt");
   });
 
+  test("a semantic candidate (an unexplained hex ID or organisation name) exits 1; the keep list explains a phrase", async () => {
+    writeFileSync(join(dir, "out", "extra.txt"), "Build a3fbc2de for Northwind Harbor.\n");
+    const r = await audit("out", "--json");
+    expect(r.code).toBe(1);
+    const report = JSON.parse(r.out);
+    expect(report.layers).toEqual(["mechanical", "semantic"]);
+    expect(report.files.find((f: { path: string }) => f.path === "extra.txt").findings.map((f: { class: string }) => f.class)).toEqual([
+      "semantic:hex",
+      "semantic:phrase",
+    ]);
+    writeFileSync(join(dir, "out", "extra.txt"), "Sent to Northwind Harbor.\n");
+    const policy = defaultPolicy();
+    policy.keep.terms = ["Northwind Harbor"];
+    writeFileSync(join(dir, "blind.toml"), renderPolicy(policy));
+    expect((await audit("out")).code).toBe(0);
+  });
+
   test("a leak exits 2, with a masked value and its location", async () => {
     writeFileSync(join(dir, "out", "extra.zip"), makeZip([{ name: "doc.xml", data: "<t>Avery Quill</t>" }]));
     const r = await audit("out", "--json");
@@ -92,6 +109,7 @@ describe("blind audit", () => {
     expect(report.status).toBe("leak");
     expect(report.files.find((f: { path: string }) => f.path === "extra.zip").findings).toEqual([
       expect.objectContaining({ part: "doc.xml", offset: 3, line: 1, class: "person", masked: "Av***11", severity: "leak" }),
+      expect.objectContaining({ part: "doc.xml", offset: 3, class: "semantic:phrase", source: "semantic", severity: "candidate" }),
     ]);
     expect(r.out).not.toContain("Avery Quill");
   });

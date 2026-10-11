@@ -37,7 +37,8 @@ Field names are camelCase. All examples below are synthetic.
   },
   "patterns": { "ip": true, "email": true, "host": true, "guid": true, "mac": false },
   "questions": [
-    { "id": "q1", "text": "Values under ref_code look like internal project IDs. Hide them?", "options": ["blind", "keep"], "answer": null }
+    { "id": "q1", "text": "Values under ref_code look like internal project IDs. Hide them?", "options": ["blind", "keep"], "answer": null,
+      "about": { "file": "tickets.json", "jsonPath": "$.items[*].ref_code" } }
   ]
 }
 ```
@@ -103,6 +104,17 @@ Things the analyst could not decide and is asking you. An array, possibly empty.
 | `text` | string, non-empty | yes | The question. Example: `"Values under ref_code look like internal project IDs. Hide them?"`. |
 | `options` | array of 2 or more distinct non-empty strings | yes | The allowed answers. Example: `["blind", "keep"]`. |
 | `answer` | one of `options`, or `null` | yes | Your answer; `null` while unanswered. |
+| `about` | object: `file`, optional `sheet`, and exactly one of `header` and `jsonPath` | no | The column the question decides. While the question is unanswered, `blind plan` keeps that column `unknown`/`value`. Its options are then drawn from `blind`, `keep`, `value` and the class names. |
+
+`blind plan --answer q1=<option>` records the answer and, for a question with `about`, rewrites
+that column's rule as your decision (`source: "human"`, `confidence: 1`):
+
+| Answer | Column rule becomes |
+|---|---|
+| `blind` | treatment `blind`, class unchanged (an `unknown` column gets `Value_` pseudonyms) |
+| `value` | treatment `value`; on an `unknown` column, treatment `blind`, so it is always pseudonymised |
+| `keep` | treatment `keep`; an `unknown` column becomes `vocabulary` |
+| a class name | that class, treatment `blind` if the policy calls it sensitive, otherwise `keep` |
 
 ## How `blind apply` uses the spec
 

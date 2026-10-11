@@ -1,4 +1,5 @@
 import pkg from "../package.json" with { type: "json" };
+import { processPlanIO, runPlan } from "./analyst/plan.ts";
 import { processApplyIO, runApply } from "./apply.ts";
 import { processIO, runInit } from "./init.ts";
 import { runProfile } from "./profile/command.ts";
@@ -17,6 +18,7 @@ export const COMMANDS = [
 const HANDLERS: Partial<Record<(typeof COMMANDS)[number]["name"], (args: string[]) => Promise<number>>> = {
   init: (args) => runInit(args, processIO()),
   profile: (args) => runProfile(args, processIO()),
+  plan: (args) => runPlan(args, processPlanIO()),
   apply: (args) => runApply(args, processApplyIO()),
 };
 

@@ -104,6 +104,43 @@ Things the analyst could not decide and is asking you. An array, possibly empty.
 | `options` | array of 2 or more distinct non-empty strings | yes | The allowed answers. Example: `["blind", "keep"]`. |
 | `answer` | one of `options`, or `null` | yes | Your answer; `null` while unanswered. |
 
+## How `blind apply` uses the spec
+
+`blind apply <inputs> -o <out>` reads `.blind/spec.json` and `.blind/salt` and refuses (exit 2,
+nothing written) if either is missing or the spec is invalid. Spec `file` values are paths relative
+to an input directory, or the file name for a file named directly. This release handles CSV/TSV and
+text (`.txt`, `.md`, `.log`); any other file is listed and not written (exit 1).
+
+**Table columns.** The header row is found the same way `blind profile` finds it, so spec headers always match: the earliest of the first 20 rows that fills more than half the table's width and is mostly non-numeric text, or row 1 if no row qualifies.
+
+| Rule | Result |
+|---|---|
+| `treatment: keep` (any class) | Byte-identical. Cells that contain a spec entity or pattern match are left alone and reported as a warning. |
+| `treatment: blind`, class `person`/`org`/`host`/`email`/`id`/`location` | Every non-empty cell gets that class's pseudonym. |
+| `treatment: blind` with `unknown`/`vocabulary`, or `value` with any other class | Every non-empty cell gets a `Value_` pseudonym. |
+| `class: unknown, treatment: value`, or **no rule at all** | Fail closed. If distinct ratio ≥ 0.5 and (digit ratio ≥ 0.3, or dictionary-word ratio ≤ 0.3, or ≥ 80% of values are Title-Case multi-word), every cell gets a `Value_` pseudonym, reported as `unknown → pseudonymised`. Otherwise the column is kept (`unknown → kept (low cardinality)`, or `kept (not identifier-like)` for prose), but spec entities and patterns are still replaced inside its cells. |
+
+A rule that names a column the file does not have is an error, so a stale spec never quietly stops
+blinding a column. Rows above the header and the header row itself are treated as free text.
+
+**Free text** (text files, and the non-blinded cells above). Enabled `patterns` are matched first,
+and each match is replaced whole. Then every entity `canonical`, alias and part is replaced, longest
+form first and whole words only. All forms of one entity share one pseudonym. Case rules depend on
+how the form is written:
+
+- An acronym (no lowercase letters, at most 6 letters, such as `EXW`) matches exactly.
+- A single capitalised word (such as `Avery` or `May`) matches only where the text is capitalised,
+  so `may` is left alone.
+- Anything else matches case-insensitively, with any run of whitespace between words.
+
+`vocabulary` entities are kept as written and shield their words from other entity forms.
+
+**Output.** Delimiter, quoting, line endings and encoding (UTF-8 with or without BOM, UTF-16 with
+BOM, otherwise 8-bit bytes) are preserved, and a file with nothing to replace is copied byte for
+byte. The reversal map goes to `.blind/map.json`, or to `--map-out <path>`, created with mode 0600.
+It may not sit inside the output or an input. An existing map at that path is reused, so earlier
+pseudonyms stay the same.
+
 ## Profile
 
 ```json

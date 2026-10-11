@@ -93,13 +93,29 @@ describe("determinism", () => {
     }
   });
 
-  test("engine modules import only node:crypto, node:fs and each other", () => {
+  // Deterministic leaf modules the engine shares with the profiler (header rule, word list), so the
+  // two agree on what a header and a dictionary word are.
+  const SHARED = ["node:crypto", "node:fs", "../schema.ts", "../profile/table.ts", "../profile/words.ts"];
+  const SHARED_IMPORTS: Record<string, string[]> = {
+    "../profile/table.ts": ["../schema.ts", "./stats.ts"],
+    "../profile/stats.ts": ["../schema.ts", "./words.ts"],
+    "../profile/words.ts": [],
+  };
+
+  test("engine modules import only node:crypto, node:fs, each other and shared deterministic leaves", () => {
     const dir = join(import.meta.dir, "../../src/engine");
     for (const f of readdirSync(dir).sort()) {
       const src = readFileSync(join(dir, f), "utf8");
       for (const m of src.matchAll(/from\s+"([^"]+)"/g)) {
-        expect(["node:crypto", "node:fs"].includes(m[1] as string) || /^\.\/[a-z]+\.ts$/.test(m[1] as string)).toBe(true);
+        const spec = m[1] as string;
+        expect(SHARED.includes(spec) || /^\.\/[a-z]+\.ts$/.test(spec)).toBe(true);
       }
+    }
+    // The shared modules reach only each other and the spec types, which import nothing.
+    expect(readFileSync(join(dir, "../schema.ts"), "utf8")).not.toMatch(/\bimport\b|\brequire\(/);
+    for (const [mod, allowed] of Object.entries(SHARED_IMPORTS)) {
+      const src = readFileSync(join(dir, mod), "utf8");
+      for (const m of src.matchAll(/from\s+"([^"]+)"/g)) expect(allowed).toContain(m[1] as string);
     }
   });
 });

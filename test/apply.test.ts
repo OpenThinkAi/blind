@@ -84,12 +84,23 @@ describe("blind apply", () => {
     expect(read("c", "staff.csv")).toBe(read("a", "staff.csv"));
   });
 
+  test("JSON is blinded by key path and reported per key", async () => {
+    const spec = { ...SPEC, columns: [...SPEC.columns, { file: "sub/t.json", jsonPath: "$.items[*].owner", class: "person", treatment: "blind", confidence: 1, source: "human" }] };
+    writeFileSync(join(dir, ".blind", "spec.json"), JSON.stringify(spec));
+    writeFileSync(join(dir, "in", "sub", "t.json"), '{\n  "items": [{"owner": "Avery Quill"}, {"owner": "Robin Example"}]\n}\n');
+    const r = await apply("in", "-o", "out");
+    expect(r.code).toBe(0);
+    expect(read("out", "sub", "t.json")).toMatch(/^\{\n {2}"items": \[\{"owner": "Person_[0-9A-F]{4}"\}, \{"owner": "Person_[0-9A-F]{4}"\}\]\n\}\n$/);
+    expect(r.out).toContain("sub/t.json (json, utf8)");
+    expect(r.out).toContain('key "$.items[*].owner": person/blind → blinded, 2 values changed');
+  });
+
   test("unsupported files are listed and not written; exit 1", async () => {
-    writeFileSync(join(dir, "in", "data.json"), '{"owner":"Avery Quill"}');
+    writeFileSync(join(dir, "in", "data.pdf"), "%PDF-1.7 Avery Quill");
     const r = await apply("in", "-o", "out");
     expect(r.code).toBe(1);
-    expect(existsSync(join(dir, "out", "data.json"))).toBe(false);
-    expect(r.err).toContain("data.json: format not supported");
+    expect(existsSync(join(dir, "out", "data.pdf"))).toBe(false);
+    expect(r.err).toContain("data.pdf: format not supported");
   });
 
   test("blind's own files inside an input are never copied", async () => {

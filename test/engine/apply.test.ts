@@ -368,9 +368,9 @@ describe("determinism", () => {
 
 describe("refusals and skips", () => {
   test("unsupported formats are reported and not written", () => {
-    const res = run([file("data.json", "{}"), file("n.txt", "x")]);
+    const res = run([file("data.pdf", "%PDF"), file("n.txt", "x")]);
     expect(res.outputs.map((o) => o.path)).toEqual(["n.txt"]);
-    expect(res.skipped).toEqual([{ path: "data.json", reason: expect.stringContaining("not written") }]);
+    expect(res.skipped).toEqual([{ path: "data.pdf", reason: expect.stringContaining("not written") }]);
   });
 
   test("malformed CSV is reported and not written", () => {
@@ -412,7 +412,9 @@ describe("engineFormat", () => {
     ["a.txt", "text"],
     ["a.md", "text"],
     ["a.log", "text"],
-    ["a.json", null],
+    ["a.json", "json"],
+    ["a.jsonl", "jsonl"],
+    ["A.NDJSON", "jsonl"],
     ["a.xlsx", null],
     ["Makefile", null],
     [".csv", null],

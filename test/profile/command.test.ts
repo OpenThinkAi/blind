@@ -121,8 +121,9 @@ describe("buildProfile", () => {
   });
 
   test("unsupported, hidden, undecodable and unparsable files are reported, not dropped silently", () => {
-    put("kit/a.json", "{}");
+    put("kit/a.vtt", "WEBVTT\n");
     put("kit/b.bin", "x");
+    put("kit/broken.json", '{"a": ');
     put("kit/.hidden.csv", "a\n1\n");
     put("kit/latin1.txt", new Uint8Array([0x63, 0x61, 0x66, 0xe9]));
     put("kit/broken.csv", 'a,b\n"open\n');
@@ -132,9 +133,10 @@ describe("buildProfile", () => {
     expect(profile.files.map((f) => f.path)).toEqual(["ok.txt"]);
     expect(skipped).toEqual([
       { path: ".hidden.csv", reason: "hidden" },
-      { path: "a.json", reason: "json is not profiled yet" },
+      { path: "a.vtt", reason: "vtt is not profiled yet" },
       { path: "b.bin", reason: "unsupported file type .bin" },
       { path: "broken.csv", reason: "cannot parse: unterminated quoted field starting on line 2" },
+      { path: "broken.json", reason: "cannot parse: unexpected end of input at line 1, column 7" },
       { path: "latin1.txt", reason: "not valid UTF-8" },
       { path: "link.txt", reason: "symbolic link (not followed)" },
     ]);
@@ -225,11 +227,11 @@ describe("blind profile", () => {
 
   test("not-profiled files are listed and the exit status is 1", async () => {
     policy(5);
-    put("kit/a.json", "{}");
+    put("kit/a.vtt", "WEBVTT\n");
     put("kit/b.csv", "Name\nAvery\n");
     const r = await profile("kit");
     expect(r.code).toBe(1);
-    expect(r.out).toContain('"a.json": json is not profiled yet');
+    expect(r.out).toContain('"a.vtt": vtt is not profiled yet');
     expect(r.err).toContain("1 file(s) not profiled");
     expect(written().files.map((f) => f.path)).toEqual(["b.csv"]);
   });

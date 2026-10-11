@@ -19,9 +19,10 @@ export interface ProfileIO {
 const PROFILE_HELP = [
   "Usage: blind profile <inputs...> [--samples N] [--json]",
   "",
-  "Profiles CSV, TSV, plain text, Markdown and log files (directories are walked) and writes",
-  ".blind/profile.json (mode 0600). The profile is the only thing a model ever sees; this command",
-  "prints it so you can check exactly what would leave the machine. Samples are cut to 120 characters.",
+  "Profiles CSV, TSV, JSON, JSONL, plain text, Markdown and log files (directories are walked) and",
+  "writes .blind/profile.json (mode 0600). Every JSON key path is profiled like a table column.",
+  "The profile is the only thing a model ever sees; this command prints it so you can check exactly",
+  "what would leave the machine. Samples are cut to 120 characters.",
   "Run it in the directory that holds blind.toml.",
   "",
   "Options:",
@@ -65,6 +66,16 @@ function table(rows: string[][]): string[] {
   return rows.map((r) => `  ${r.map((cell, c) => (c === r.length - 1 ? cell : cell.padEnd(widths[c] ?? 0))).join("  ")}`.trimEnd());
 }
 
+const statCells = (s: ValueStats): string[] => [
+  String(s.count),
+  fixed(s.distinctRatio),
+  fixed(s.digitRatio),
+  fixed(s.dictionaryRatio),
+  s.meanLength.toFixed(1),
+  detectors(s),
+  s.samples.map(q).join(", "),
+];
+
 const where = (l: Location): string => `${l.file} ${q(l.header ?? l.jsonPath ?? "")}`;
 
 /** The human-readable profile. Every document-derived string is printed JSON-quoted, as data. */
@@ -80,16 +91,24 @@ export function renderProfile(p: Profile, skipped: readonly Skipped[], notes: re
     out.push(
       ...table([
         ["column", "count", "distinct", "digits", "words", "length", "detectors", "samples"],
-        ...t.columns.map((c) => [
-          q(c.header),
-          String(c.stats.count),
-          fixed(c.stats.distinctRatio),
-          fixed(c.stats.digitRatio),
-          fixed(c.stats.dictionaryRatio),
-          c.stats.meanLength.toFixed(1),
-          detectors(c.stats),
-          c.stats.samples.map(q).join(", "),
-        ]),
+        ...t.columns.map((c) => [q(c.header), ...statCells(c.stats)]),
+      ]),
+      "",
+    );
+  }
+  // JSON and JSONL files, each with its key paths.
+  for (const f of p.files) {
+    if (f.format !== "json" && f.format !== "jsonl") continue;
+    const group = p.jsonKeys.filter((j) => j.file === f.path);
+    out.push(head(f.path));
+    if (group.length === 0) {
+      out.push("  no key paths", "");
+      continue;
+    }
+    out.push(
+      ...table([
+        ["key path", "count", "distinct", "digits", "words", "length", "detectors", "samples"],
+        ...group.map((j) => [q(j.path), ...statCells(j.stats)]),
       ]),
       "",
     );

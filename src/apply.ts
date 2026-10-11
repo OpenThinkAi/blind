@@ -29,8 +29,8 @@ const APPLY_HELP = [
   "",
   "Applies the saved spec (.blind/spec.json) to the inputs and writes blinded copies under <out>.",
   "Inputs are files or directories; spec rules name files by their path relative to the input",
-  "directory (or by file name for a file input). Handles CSV/TSV and text (.txt, .md, .log);",
-  "other files are reported and not written.",
+  "directory (or by file name for a file input). Handles CSV/TSV, JSON/JSONL (.json, .jsonl,",
+  ".ndjson) and text (.txt, .md, .log); other files are reported and not written.",
   "",
   "Options:",
   "  -o, --out <dir>       Output directory (must not overlap an input)",
@@ -130,15 +130,16 @@ export function renderReport(result: ApplyResult): string {
     if (f.headerRow !== undefined) head.push(f.noHeader ? "no header row found, row 1 used" : `header row ${f.headerRow}`);
     lines.push(`${f.path} (${head.join(", ")})${f.changed ? "" : ": unchanged"}`);
     for (const c of f.columns) {
-      const label = c.header === "" ? `column ${c.index + 1} (blank header)` : JSON.stringify(c.header);
+      const label = c.jsonPath !== undefined ? `key ${JSON.stringify(c.jsonPath)}` : c.header === "" ? `column ${c.index + 1} (blank header)` : JSON.stringify(c.header);
+      const unit = c.jsonPath !== undefined ? "value" : "cell";
       const unknown = c.outcome.startsWith("unknown-");
       let line = `  ${label}: ${unknown ? "unknown" : `${c.class}/${c.treatment}`} → ${OUTCOME_TEXT[c.outcome]}`;
-      if (c.changed > 0) line += `, ${c.changed} cell${c.changed === 1 ? "" : "s"} changed`;
+      if (c.changed > 0) line += `, ${c.changed} ${unit}${c.changed === 1 ? "" : "s"} changed`;
       if (unknown) line += c.treatment === null ? " (no spec rule)" : ` (spec: ${c.class}/${c.treatment})`;
       lines.push(line);
       if (c.flagged > 0) {
         lines.push(
-          `    warning: ${c.flagged} kept cell${c.flagged === 1 ? "" : "s"} contain a spec entity or a pattern match and were left unchanged as the spec says; review this rule`,
+          `    warning: ${c.flagged} kept ${unit}${c.flagged === 1 ? "" : "s"} contain a spec entity or a pattern match and were left unchanged as the spec says; review this rule`,
         );
       }
     }

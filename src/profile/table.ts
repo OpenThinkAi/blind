@@ -58,7 +58,7 @@ export interface TableResult {
   valueSets: Set<string>[];
 }
 
-const fold = (v: string): string => v.normalize("NFKC").trim().toLowerCase();
+export const fold = (v: string): string => v.normalize("NFKC").trim().toLowerCase();
 
 /** Profiles one parsed table. Rows above the header are skipped; blank rows below it are ignored. */
 export function profileTable(file: string, rows: readonly string[][], k: number): TableResult {

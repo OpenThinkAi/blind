@@ -1,4 +1,4 @@
-// The engine for CSV/TSV and plain text: applies a saved spec to in-memory
+// The engine for CSV/TSV, JSON/JSONL and plain text: applies a saved spec to in-memory
 // files and returns the blinded bytes, a report per file, and the map. No file
 // system, no clock, no model: the output depends only on the inputs, the spec,
 // the salt and any earlier map.
@@ -18,6 +18,13 @@
 //   pseudonyms; the rest are kept, with spec entities and patterns still
 //   replaced inside their cells.
 // Rows above the header and the header row itself are treated as free text.
+//
+// JSON and JSONL: every key path is a column (see json.ts), with the same
+// treatments. Strings and numbers are values, a number as written, so the
+// string "9123" and the number 9123 get the same pseudonym; true, false and
+// null are left alone. Keys that are record identifiers are the values of
+// their `.*~` path; other keys are free text, like a header row. Edits are
+// spliced into the original text, so layout and key order never change.
 
 import type { ColumnRule, EntityClassName, Spec, Treatment } from "../schema.ts";
 import type { PseudoClass } from "./canonical.ts";
@@ -25,17 +32,21 @@ import type { PseudoClass } from "./canonical.ts";
 import { detectHeaderRow } from "../profile/table.ts";
 import { type Cell, CsvError, parseCsv, renderCell, type Row, serializeCsv, sniffDelimiter } from "./csv.ts";
 import { decode, type Encoding, EncodingError, encode } from "./encoding.ts";
+import { isJsonNumber, type JsonFormat, JsonError, type JsonToken, quote, scanJson, scanJsonl, stringOffsets } from "./json.ts";
 import type { BlindMap } from "./map.ts";
 import { type EntityEntry, Pseudonymizer } from "./pseudonym.ts";
 import { type ColumnStats, columnStats, isIdentifierLike, THRESHOLDS } from "./stats.ts";
 import { EntityMatcher, findSpans, type Span } from "./text.ts";
 
-export type EngineFormat = "csv" | "tsv" | "text";
+export type EngineFormat = "csv" | "tsv" | "json" | "jsonl" | "text";
 
 const EXTENSIONS: Record<string, EngineFormat> = {
   ".csv": "csv",
   ".tsv": "tsv",
   ".tab": "tsv",
+  ".json": "json",
+  ".jsonl": "jsonl",
+  ".ndjson": "jsonl",
   ".txt": "text",
   ".text": "text",
   ".md": "text",
@@ -67,9 +78,12 @@ export type ColumnOutcome =
   | "unknown-kept-empty";
 
 export interface ColumnReport {
-  /** 0-based column index. */
+  /** 0-based column index (for JSON, the key path's position in first-seen order). */
   index: number;
+  /** "" for a JSON key path. */
   header: string;
+  /** JSON/JSONL only: the key path. */
+  jsonPath?: string;
   class: EntityClassName;
   /** null when the spec has no rule for the column. */
   treatment: Treatment | null;
@@ -152,7 +166,19 @@ interface TextPlan {
   spans: Span[];
 }
 
-type Plan = TablePlan | TextPlan;
+interface JsonPlan {
+  kind: "json";
+  format: JsonFormat;
+  input: InputFile;
+  encoding: Encoding;
+  text: string;
+  tokens: JsonToken[];
+  /** Keyed by token index. */
+  edits: Map<number, CellEdit>;
+  columns: ColumnReport[];
+}
+
+type Plan = TablePlan | TextPlan | JsonPlan;
 
 type ColumnAction = { kind: "keep" } | { kind: "pseudo"; cls: PseudoClass } | { kind: "free" };
 
@@ -161,6 +187,14 @@ function ruleAction(rule: ColumnRule): ColumnAction | "heuristic" {
   if (rule.treatment === "blind" && SENSITIVE.has(rule.class)) return { kind: "pseudo", cls: rule.class as PseudoClass };
   if (rule.treatment === "value" && rule.class === "unknown") return "heuristic";
   return { kind: "pseudo", cls: "value" };
+}
+
+/** What a column gets: its rule's action, or for no rule (or unknown/value) the fail-closed identifier-like test. */
+function decide(rule: ColumnRule | undefined, values: readonly string[]): { action: ColumnAction; stats: ColumnStats | undefined } {
+  const planned = rule === undefined ? "heuristic" : ruleAction(rule);
+  if (planned !== "heuristic") return { action: planned, stats: undefined };
+  const stats = columnStats(values);
+  return { action: isIdentifierLike(stats) ? { kind: "pseudo", cls: "value" } : { kind: "free" }, stats };
 }
 
 function outcomeOf(action: ColumnAction, stats: ColumnStats | undefined): ColumnOutcome {
@@ -210,15 +244,7 @@ function planTable(
   for (let col = 0; col < width; col++) {
     const header = headers[col] as string;
     const rule = rules.find((r) => (r.header as string).trim() === header.trim());
-    const planned = rule === undefined ? "heuristic" : ruleAction(rule);
-    const values = data.map((r) => r.cells[col]?.value ?? "");
-    const heuristic = planned === "heuristic";
-    const stats = heuristic ? columnStats(values) : undefined;
-    const action: ColumnAction = heuristic
-      ? isIdentifierLike(stats as ColumnStats)
-        ? { kind: "pseudo", cls: "value" }
-        : { kind: "free" }
-      : planned;
+    const { action, stats } = decide(rule, data.map((r) => r.cells[col]?.value ?? ""));
     let flagged = 0;
     data.forEach((row, i) => {
       const cell = row.cells[col];
@@ -250,6 +276,127 @@ function planTable(
     });
   }
   return { kind: "table", format, input, encoding, text, delim, rows, headerRow, noHeader: rows.length > 0 && detected === null, edits, columns };
+}
+
+function planJson(
+  input: InputFile,
+  encoding: Encoding,
+  text: string,
+  format: JsonFormat,
+  rules: readonly ColumnRule[],
+  spanner: (s: string) => Span[],
+): JsonPlan {
+  const tokens = format === "json" ? scanJson(text) : scanJsonl(text);
+  // Key paths in first-seen order, with the tokens under each (literals too, so a path holding only nulls still exists).
+  const byPath = new Map<string, number[]>();
+  tokens.forEach((t, i) => {
+    if (t.column === null) return;
+    const list = byPath.get(t.column) ?? [];
+    list.push(i);
+    byPath.set(t.column, list);
+  });
+  for (const rule of rules) {
+    if (rule.jsonPath === undefined || rule.sheet !== undefined) {
+      throw new ApplyError(`${input.path}: a spec rule uses ${rule.sheet !== undefined ? "sheet" : "header"}, but this is a ${format.toUpperCase()} file; name the key by its jsonPath`);
+    }
+    if (!byPath.has(rule.jsonPath)) {
+      throw new ApplyError(`${input.path}: the spec has a rule for key path ${JSON.stringify(rule.jsonPath)}, which is not in the file; fix the rule or re-plan`);
+    }
+  }
+
+  const edits = new Map<number, CellEdit>();
+  const columns: ColumnReport[] = [];
+  for (const [path, indices] of byPath) {
+    const rule = rules.find((r) => r.jsonPath === path);
+    const valued = indices.filter((i) => (tokens[i] as JsonToken).kind !== "literal");
+    const { action, stats } = decide(rule, valued.map((i) => (tokens[i] as JsonToken).value));
+    let flagged = 0;
+    for (const i of valued) {
+      const value = (tokens[i] as JsonToken).value;
+      if (value.trim() === "") continue;
+      if (action.kind === "pseudo") edits.set(i, { kind: "pseudo", cls: action.cls });
+      else {
+        const spans = spanner(value);
+        if (action.kind === "keep") {
+          if (hasSensitive(spans)) flagged++;
+        } else if (spans.length > 0) edits.set(i, { kind: "spans", spans });
+      }
+    }
+    columns.push({
+      index: columns.length,
+      header: "",
+      jsonPath: path,
+      class: rule?.class ?? "unknown",
+      treatment: rule?.treatment ?? null,
+      outcome: outcomeOf(action, stats),
+      changed: 0,
+      flagged,
+    });
+  }
+  // Structural keys (field names) are free text, like a table's header row.
+  tokens.forEach((t, i) => {
+    if (t.kind !== "key" || t.column !== null) return;
+    const spans = spanner(t.value);
+    if (spans.length > 0) edits.set(i, { kind: "spans", spans });
+  });
+  return { kind: "json", format, input, encoding, text, tokens, edits, columns };
+}
+
+/** A string literal with the spans replaced; every untouched character keeps its original escaping. */
+function spliceString(raw: string, spans: readonly Span[], pz: Pseudonymizer): string {
+  const offs = stringOffsets(raw);
+  const at = (i: number): number => offs[i] as number;
+  let out = '"';
+  let pos = 0;
+  for (const s of spans) {
+    out += raw.slice(at(pos), at(s.start));
+    out += s.cls === null ? raw.slice(at(s.start), at(s.end)) : quote(pz.pseudonym(s.cls, s.value)).slice(1, -1);
+    pos = s.end;
+  }
+  return `${out}${raw.slice(at(pos), raw.length - 1)}"`;
+}
+
+function renderJson(p: JsonPlan, pz: Pseudonymizer): { text: string; entityReplacements: number; patternReplacements: number } {
+  const byPath = new Map(p.columns.map((c) => [c.jsonPath as string, c]));
+  // Per object, each output key and the input key it came from: two input keys must never become one.
+  const keys = new Map<number, Map<string, string>>();
+  let entityReplacements = 0;
+  let patternReplacements = 0;
+  let out = "";
+  let at = 0;
+  p.tokens.forEach((t, i) => {
+    const edit = p.edits.get(i);
+    let value = t.value;
+    if (edit !== undefined) {
+      if (edit.kind === "pseudo") value = pz.pseudonym(edit.cls, t.value);
+      else {
+        value = rewrite(t.value, edit.spans, pz);
+        entityReplacements += count(edit.spans, "entity");
+        patternReplacements += count(edit.spans, "pattern");
+      }
+      if (value !== t.value) {
+        const raw = p.text.slice(t.start, t.end);
+        // A number stays a bare number when its replacement is one; otherwise it becomes a string.
+        const written =
+          t.kind === "number" ? (isJsonNumber(value) ? value : quote(value)) : edit.kind === "pseudo" ? quote(value) : spliceString(raw, edit.spans, pz);
+        out += p.text.slice(at, t.start) + written;
+        at = t.end;
+        if (t.column !== null) (byPath.get(t.column) as ColumnReport).changed++;
+      }
+    }
+    if (t.kind === "key") {
+      const seen = keys.get(t.object as number) ?? new Map<string, string>();
+      const from = seen.get(value);
+      if (from !== undefined && from !== t.value) {
+        throw new ApplyError(
+          `${p.input.path}: blinding would give two keys of one object the same name${t.column === null ? "" : ` (key path ${JSON.stringify(t.column)})`}; change the rule for those keys so they stay distinct`,
+        );
+      }
+      seen.set(value, t.value);
+      keys.set(t.object as number, seen);
+    }
+  });
+  return { text: out + p.text.slice(at), entityReplacements, patternReplacements };
 }
 
 /** Tokens of a text, for the set of real values no pseudonym may equal. */
@@ -311,6 +458,15 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       plans.push({ kind: "text", input, encoding: decoded.encoding, text: decoded.text, spans: spanner(decoded.text) });
       continue;
     }
+    if (format === "json" || format === "jsonl") {
+      try {
+        plans.push(planJson(input, decoded.encoding, decoded.text, format, rules, spanner));
+      } catch (e) {
+        if (!(e instanceof JsonError)) throw e;
+        skipped.push({ path: input.path, reason: `malformed ${format.toUpperCase()}: ${e.message}; not written` });
+      }
+      continue;
+    }
     try {
       plans.push(planTable(input, decoded.encoding, decoded.text, format, rules, spanner));
     } catch (e) {
@@ -323,7 +479,13 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   const avoid = new Set<string>();
   for (const p of plans) {
     if (p.kind === "text") for (const t of tokens(p.text)) avoid.add(t);
-    else {
+    else if (p.kind === "json") {
+      for (const t of p.tokens) {
+        if (t.kind === "literal") continue;
+        avoid.add(t.value.trim());
+        for (const w of tokens(t.value)) avoid.add(w);
+      }
+    } else {
       for (const row of p.rows) {
         for (const cell of row.cells) {
           avoid.add(cell.value.trim());
@@ -345,6 +507,14 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   for (const p of plans) {
     if (p.kind === "text") {
       for (const s of p.spans) if (s.cls !== null) want(s.cls, s.value);
+      continue;
+    }
+    if (p.kind === "json") {
+      for (const [i, edit] of p.edits) {
+        if (edit.kind === "spans") {
+          for (const s of edit.spans) if (s.cls !== null) want(s.cls, s.value);
+        } else want(edit.cls, (p.tokens[i] as JsonToken).value);
+      }
       continue;
     }
     for (const [key, edit] of p.edits) {
@@ -376,6 +546,18 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         columns: [],
         entityReplacements: count(p.spans, "entity"),
         patternReplacements: count(p.spans, "pattern"),
+        changed: false,
+      };
+    } else if (p.kind === "json") {
+      const r = renderJson(p, pz);
+      text = r.text;
+      report = {
+        path: p.input.path,
+        format: p.format,
+        encoding: p.encoding,
+        columns: p.columns,
+        entityReplacements: r.entityReplacements,
+        patternReplacements: r.patternReplacements,
         changed: false,
       };
     } else {

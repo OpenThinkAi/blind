@@ -4,12 +4,16 @@ import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { basename, extname, join, relative, resolve, sep } from "node:path";
 import { BLIND_DIR } from "../init.ts";
 import { POLICY_FILE } from "../policy.ts";
-import { type Cooccurrence, type FileFormat, MAX_EXCERPT, type Profile, type ProfileDocument, type ProfileFile, type ProfileTable } from "../schema.ts";
+import { type Cooccurrence, type FileFormat, type Location, MAX_EXCERPT, type Profile, type ProfileDocument, type ProfileFile, type ProfileJsonKey, type ProfileTable } from "../schema.ts";
+import { profileJson, scanJsonFile } from "./json.ts";
 import { ParseError, parseTable, profileTable } from "./table.ts";
 import { profileText } from "./text.ts";
 
 /** Formats this profiler reads, by lower-cased extension. */
-const PROFILED: Record<string, "csv" | "tsv" | "text" | "markdown" | "log"> = {
+const PROFILED: Record<string, "csv" | "tsv" | "json" | "jsonl" | "text" | "markdown" | "log"> = {
+  ".json": "json",
+  ".jsonl": "jsonl",
+  ".ndjson": "jsonl",
   ".csv": "csv",
   ".tsv": "tsv",
   ".tab": "tsv",
@@ -22,9 +26,6 @@ const PROFILED: Record<string, "csv" | "tsv" | "text" | "markdown" | "log"> = {
 
 /** Formats blind knows but this profiler cannot read yet. */
 const NOT_YET: Record<string, FileFormat> = {
-  ".json": "json",
-  ".jsonl": "jsonl",
-  ".ndjson": "jsonl",
   ".xlsx": "xlsx",
   ".docx": "docx",
   ".vtt": "vtt",
@@ -114,10 +115,20 @@ interface TableColumns {
   valueSets: Set<string>[];
 }
 
-function cooccurrence(tables: readonly TableColumns[]): Cooccurrence[] {
-  const cols = tables.flatMap((t) =>
+/** A table column or JSON key path and its folded distinct values. */
+interface ValueColumn {
+  loc: Location;
+  values: Set<string>;
+}
+
+function tableColumns(tables: readonly TableColumns[]): ValueColumn[] {
+  return tables.flatMap((t) =>
     t.table.columns.map((c, i) => ({ loc: { file: t.table.file, header: c.header }, values: t.valueSets[i] ?? new Set<string>() })),
   );
+}
+
+/** Every pair of locations, table columns first and then JSON key paths, each in profile order. */
+function cooccurrence(cols: readonly ValueColumn[]): Cooccurrence[] {
   const out: Cooccurrence[] = [];
   for (let i = 0; i < cols.length; i++) {
     for (let j = i + 1; j < cols.length; j++) {
@@ -135,7 +146,7 @@ function cooccurrence(tables: readonly TableColumns[]): Cooccurrence[] {
 }
 
 /**
- * Profiles CSV, TSV, plain text, Markdown and log files under `inputs` (resolved against `cwd`),
+ * Profiles CSV, TSV, JSON, JSONL, plain text, Markdown and log files under `inputs` (resolved against `cwd`),
  * carrying at most `k` samples per column or document. Files in formats this profiler cannot read,
  * and files that fail to decode or parse, are left out of the profile and listed in `skipped`.
  */
@@ -145,6 +156,8 @@ export function buildProfile(inputs: readonly string[], k: number, cwd: string):
   const files: ProfileFile[] = [];
   const tables: TableColumns[] = [];
   const documents: ProfileDocument[] = [];
+  const jsonKeys: ProfileJsonKey[] = [];
+  const jsonColumns: ValueColumn[] = [];
 
   for (const f of collect(inputs, cwd, skipped)) {
     // Paths are the one profile string not cut to an excerpt: the spec and engine need them exact.
@@ -190,6 +203,23 @@ export function buildProfile(inputs: readonly string[], k: number, cwd: string):
       const result = profileTable(f.path, rows, k);
       if (result.noHeader) notes.push(`${f.path}: no header row detected; row 1 used as the header`);
       tables.push(result);
+    } else if (format === "json" || format === "jsonl") {
+      let result;
+      try {
+        result = profileJson(f.path, scanJsonFile(text, format), k);
+      } catch (e) {
+        if (!(e instanceof ParseError)) throw e;
+        skipped.push({ path: f.path, reason: `cannot parse: ${e.message}` });
+        continue;
+      }
+      // Key paths, like file paths, are never cut: the spec names them exactly.
+      const long = result.keys.find((j) => [...j.path].length > MAX_EXCERPT);
+      if (long !== undefined) {
+        skipped.push({ path: f.path, reason: `a key path is ${[...long.path].length} characters, over the ${MAX_EXCERPT}-character limit` });
+        continue;
+      }
+      jsonKeys.push(...result.keys);
+      result.keys.forEach((j, i) => jsonColumns.push({ loc: { file: j.file, jsonPath: j.path }, values: result.valueSets[i] ?? new Set<string>() }));
     } else {
       documents.push(profileText(f.path, text, format, k));
     }
@@ -202,10 +232,10 @@ export function buildProfile(inputs: readonly string[], k: number, cwd: string):
       sampleCount: k,
       files,
       tables: tables.map((t) => t.table),
-      jsonKeys: [],
+      jsonKeys,
       documents,
       transcripts: [],
-      cooccurrence: cooccurrence(tables),
+      cooccurrence: cooccurrence([...tableColumns(tables), ...jsonColumns]),
     },
     skipped: skipped.sort((a, b) => byCodeUnit(a.path, b.path)),
     notes,

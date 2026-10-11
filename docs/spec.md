@@ -108,8 +108,9 @@ Things the analyst could not decide and is asking you. An array, possibly empty.
 
 `blind apply <inputs> -o <out>` reads `.blind/spec.json` and `.blind/salt` and refuses (exit 2,
 nothing written) if either is missing or the spec is invalid. Spec `file` values are paths relative
-to an input directory, or the file name for a file named directly. This release handles CSV/TSV and
-text (`.txt`, `.md`, `.log`); any other file is listed and not written (exit 1).
+to an input directory, or the file name for a file named directly. This release handles CSV/TSV,
+JSON and JSONL (`.json`, `.jsonl`, `.ndjson`) and text (`.txt`, `.md`, `.log`); any other file is
+listed and not written (exit 1).
 
 **Table columns.** The header row is found the same way `blind profile` finds it, so spec headers always match: the earliest of the first 20 rows that fills more than half the table's width and is mostly non-numeric text, or row 1 if no row qualifies.
 
@@ -122,6 +123,24 @@ text (`.txt`, `.md`, `.log`); any other file is listed and not written (exit 1).
 
 A rule that names a column the file does not have is an error, so a stale spec never quietly stops
 blinding a column. Rows above the header and the header row itself are treated as free text.
+
+**JSON and JSONL.** Rules name a key path with `jsonPath` (see [key paths](#key-paths)); a `header`
+or `sheet` rule on a JSON file is an error, as is a rule for a key path the file does not have. The
+table above applies to each key path's values as it does to a column's cells:
+
+- Strings and numbers are values. A number counts as written, so the string `"9123"` and the number
+  `9123` under one key path get the same pseudonym (a numeric ID stays numeric). A number whose
+  pseudonym is not a number (`Person_A7F3`, `Value_2C9E`) is written as a JSON string. `true`,
+  `false` and `null` are never changed.
+- Keys that are record identifiers are the values of their `.*~` key path and are rewritten like any
+  other value, so an ID used as a key and the same ID used as a value get the same pseudonym. If
+  blinding would give two keys of one object the same name, apply refuses (exit 2, nothing written).
+- Other keys (field names) are free text, like a table's header row.
+
+Edits are spliced into the original text: indentation, spacing, separators, key order, the escaping
+of untouched characters and the trailing newline are unchanged, and JSONL stays one record per line.
+A file that does not parse (strict RFC 8259; for JSONL, each non-blank line) is listed and not
+written (exit 1).
 
 **Free text** (text files, and the non-blinded cells above). Enabled `patterns` are matched first,
 and each match is replaced whole. Then every entity `canonical`, alias and part is replaced, longest
@@ -223,13 +242,28 @@ One entry per table (a CSV/TSV file or a worksheet).
 
 ### `jsonKeys`
 
-One entry per JSON or JSONL key path.
+One entry per JSON or JSONL key path, in the order first seen in the file.
 
 | Field | Type | Meaning |
 |---|---|---|
 | `file` | string, non-empty | The file. |
 | `path` | string, non-empty | The key path. Example: `"$.items[*].ref_code"`. |
 | `stats` | stats | Statistics over the values at that path. |
+
+#### Key paths
+
+- `$` is the document root; in JSONL, the root of each line, so every record shares its key paths.
+- `.name` for a key made of letters, digits and `_` that does not start with a digit; any other key
+  is written `["key"]`, JSON-quoted (`$["first name"]`).
+- `[*]` is every element of an array, so an array of scalars is one column (`$.records[*].tags[*]`).
+- A key that is itself a record identifier is written `.*`, so an object keyed by record IDs is one
+  set of columns rather than one per record (`$.users.*.name`), and its keys are the column `.*~`
+  (`$.users.*~`). A key is a record identifier when it is all digits, has 4 or more digits
+  (`u-1001`, a date), is hex of 6 or more with a digit (`a3f9c2`), or is a GUID, an email address
+  or an IPv4 address. Field names such as `sha256` or `line1` are not.
+
+Strings and numbers (as written) are the values a key path's statistics are computed over; `true`,
+`false` and `null` are not counted, but the key path is still listed.
 
 ### stats
 
@@ -276,20 +310,22 @@ Pairs of locations that share values, which suggests they hold the same kind of 
 
 ### How `blind profile` builds it
 
-`blind profile <inputs...>` reads CSV (`.csv`), TSV (`.tsv`, `.tab`), plain text (`.txt`,
-`.text`), Markdown (`.md`, `.markdown`) and logs (`.log`), writes `.blind/profile.json` (mode
+`blind profile <inputs...>` reads CSV (`.csv`), TSV (`.tsv`, `.tab`), JSON (`.json`), JSONL
+(`.jsonl`, `.ndjson`), plain text (`.txt`, `.text`), Markdown (`.md`, `.markdown`) and logs (`.log`), writes `.blind/profile.json` (mode
 0600) and prints it as a table; `--json` prints the JSON instead. `k` is `[profile] samples` in
 `blind.toml`, or `--samples N`. When `samples` is unset, `k` follows `[privacy] mode`: 5 under
 `local-only` and `none`, 0 (headers and statistics only) under `profile-only`.
 
 - **Paths.** Directories are walked recursively in sorted order; `path` is relative to the input
   directory, or the file name for a file named directly. Hidden entries, symbolic links, files in
-  other formats, files that are not valid UTF-8 and CSV files that do not parse are left out of the
+  other formats, files that are not valid UTF-8 and CSV or JSON files that do not parse are left out of the
   profile, listed under "not profiled", and the command exits 1. blind's own `.blind/` and
   `blind.toml` are skipped without comment.
 - **Long paths.** `path` is never truncated, because the spec and the engine need it exact. A file
   whose profile path is over 120 characters is left out and listed under "not profiled" instead.
   Every other document-derived string (headers, samples, outline, sentences) is cut as below.
+- **Key paths.** JSON key paths, like file paths, are never truncated; a JSON file with a key path
+  over 120 characters is left out and listed under "not profiled".
 - **Header row.** The earliest of the first 20 rows that fills more than half the table's width
   and whose filled cells are mostly text (contain a letter and are not a number). Rows above it,
   such as a title, are ignored. When no row qualifies, row 1 is used and a note says so.
@@ -301,7 +337,7 @@ Pairs of locations that share values, which suggests they hold the same kind of 
 - **Documents.** The outline is the first non-empty line, then, for Markdown, each heading (fenced
   code is skipped), at most 50 entries. Sample sentences are up to `k` distinct sentences spread
   evenly through the document; for logs, each line is one sample.
-- **Co-occurrence.** Every pair of table columns, in the same or different files, whose distinct
+- **Co-occurrence.** Every pair of table columns or JSON key paths, in the same or different files, whose distinct
   values (compared case-insensitively, trimmed) overlap by more than half of the smaller column's
   distinct values.
 

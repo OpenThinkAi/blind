@@ -120,13 +120,14 @@
         "detectorRates": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["ip", "email", "host", "guid", "mac"],
+          "required": ["ip", "email", "host", "guid", "mac", "numericId"],
           "properties": {
             "ip": { "$ref": "#/$defs/ratio" },
             "email": { "$ref": "#/$defs/ratio" },
             "host": { "$ref": "#/$defs/ratio" },
             "guid": { "$ref": "#/$defs/ratio" },
-            "mac": { "$ref": "#/$defs/ratio" }
+            "mac": { "$ref": "#/$defs/ratio" },
+            "numericId": { "$ref": "#/$defs/ratio" }
           }
         },
         "samples": { "$ref": "#/$defs/excerpts" }

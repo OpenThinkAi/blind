@@ -8,12 +8,15 @@ import { runAudit } from "../../src/audit/command.ts";
 import { type AuditReport, auditTree, blankOoxmlUris, type TreeEntry } from "../../src/audit/mechanical.ts";
 import { addSemanticLayer, xmlViews } from "../../src/audit/semantic.ts";
 import { xmlBaseView } from "../../src/audit/views.ts";
-import { ooxmlUriAttribute, walkXml } from "../../src/audit/xml.ts";
+import { type OfficeIdGroup, officeIdAttribute, ooxmlUriAttribute, walkXml } from "../../src/audit/xml.ts";
 import { readZip } from "../../src/audit/zip.ts";
 import { applySpec } from "../../src/engine/apply.ts";
+import { planDocx } from "../../src/engine/docx.ts";
+import { officeLinkAttribute } from "../../src/formats/officeids.ts";
+import { readWorkbook } from "../../src/formats/xlsx.ts";
 import type { BlindMap } from "../../src/engine/map.ts";
 import type { Spec } from "../../src/schema.ts";
-import { docxMembers, xlsxMembers } from "./ooxmlfixture.ts";
+import { docxMembers, OFFICE_IDS, xlsxMembers } from "./ooxmlfixture.ts";
 import { type FixtureMember, makeZip } from "./zipfixture.ts";
 
 // Synthetic only: invented names, example.com hosts.
@@ -240,5 +243,180 @@ describe("blind audit on a DOCX written by blind apply", () => {
     writeFileSync(path, plant(readFileSync(path), "word/document.xml", (x) => x.replace("met the team", "met db01.example.com")));
     const leaky = io();
     expect(await runAudit(["out", "--no-model"], { out: leaky.out, err: leaky.err, cwd: dir })).toBe(2);
+  });
+});
+
+describe("Office structural IDs: template ids are structure, linking ids are rewritten (AGT-1791)", () => {
+  const T = OFFICE_IDS.template;
+  const L = OFFICE_IDS.linking;
+  const texts = (zip: Uint8Array): Map<string, string> =>
+    new Map(readZip(zip).map((m) => [m.name, Buffer.from(m.bytes ?? new Uint8Array()).toString("utf8")]));
+  const attr = (xml: string, name: string): string[] => [...xml.matchAll(new RegExp(`${name}="([^"]*)"`, "g"))].map((m) => m[1] as string);
+  const apply = (path: string, members: FixtureMember[]) => {
+    const r = applySpec([{ path, bytes: makeZip(members) }], SPEC, { salt: SALT });
+    const out = r.outputs[0];
+    if (out === undefined) throw new Error(`no output for ${path}`);
+    return { bytes: out.bytes, map: r.map };
+  };
+  const linkingValues = Object.values(L).filter((v) => v !== L.uidLastSave && v !== L.sheetUid);
+
+  test("a DOCX shaped like Word output, through blind apply, audits clean; no linking id survives", () => {
+    const { bytes, map } = apply("memo.docx", docxMembers({ body: "Avery Quill met the team", officeIds: true }));
+    const out = texts(bytes);
+    const all = [...out.values()].join("\n");
+    for (const v of linkingValues) expect([v, all.includes(v)]).toEqual([v, false]);
+    // Fixed template ids are copied.
+    expect(all).toContain(`id="${T.themeId}" vid="${T.themeVid}"`);
+    expect(all).toContain(`<w:tmpl w:val="${T.listTemplate}"/>`);
+    // Same shapes: hex stays 8 upper-case digits (paragraph ids under 0x80000000), GUIDs keep their braces and case.
+    const doc = out.get("word/document.xml") as string;
+    for (const v of [...attr(doc, "w14:paraId"), ...attr(doc, "w14:textId"), ...attr(doc, "w:rsidR"), ...attr(doc, "wp14:anchorId")]) {
+      expect(v).toMatch(/^[0-9A-F]{8}$/);
+    }
+    for (const v of attr(doc, "w14:paraId")) expect(Number.parseInt(v, 16)).toBeLessThan(0x80000000);
+    const settings = out.get("word/settings.xml") as string;
+    expect(attr(settings, "w15:val")[0]).toMatch(/^\{[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\}$/);
+    // References still resolve: one value, one replacement, across parts.
+    expect(attr(doc, "w:storeItemID")).toEqual(attr(out.get("customXml/itemProps1.xml") as string, "ds:itemID"));
+    expect(attr(doc, "w:rsidR")[0]).toBe(attr(settings, "w:val").find((_, i) => i === 1) as string);
+    expect(new Set(attr(doc, "w14:textId")).size).toBe(1);
+    expect(attr(doc, "wp14:anchorId")).toEqual(attr(doc, "wp14:editId"));
+    // The package still reads as a DOCX.
+    expect(() => planDocx(bytes)).not.toThrow();
+    // No leak, and nothing from an id: the one candidate is the theme's Title-Case name ("Office Theme").
+    const r = audit([file("memo.docx", bytes)], map);
+    expect(leaks(r)).toEqual([]);
+    expect(findings(r).map((f) => [f.part, f.class, f.masked])).toEqual([["word/theme/theme1.xml", "semantic:phrase", "Of***12"]]);
+  });
+
+  test("an XLSX shaped like Excel output, through blind apply, audits clean; no linking id survives", () => {
+    const { bytes, map } = apply("book.xlsx", xlsxMembers({ body: "Avery Quill", officeIds: true }));
+    const out = texts(bytes);
+    const all = [...out.values()].join("\n");
+    for (const v of [...linkingValues, L.sheetUid, L.uidLastSave]) expect([v, all.includes(v)]).toEqual([v, false]);
+    expect(all).toContain(`id="${T.themeId}" vid="${T.themeVid}"`);
+    const sheet = out.get("xl/worksheets/sheet1.xml") as string;
+    const workbook = out.get("xl/workbook.xml") as string;
+    const guid = /^\{[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\}$/;
+    expect(attr(sheet, "xr:uid")).toHaveLength(2);
+    for (const v of attr(sheet, "xr:uid")) expect(v).toMatch(guid);
+    // The x14:id text and the x14:cfRule it points at get the same replacement.
+    const cfText = /<x14:id>([^<]*)<\/x14:id>/.exec(sheet)?.[1];
+    expect(cfText).toMatch(guid);
+    expect(attr(sheet, " id")).toEqual([cfText as string]);
+    expect(attr(workbook, "documentId")[0]).toMatch(/^8_\{[0-9A-F-]{36}\}$/);
+    expect(attr(workbook, "xr10:uidLastSave")[0]).toMatch(guid);
+    // Every GUID the engine wrote is a pseudonym in the map.
+    for (const v of [...attr(sheet, "xr:uid"), cfText as string]) expect(map.entries.some((e) => `{${e.pseudonym.toUpperCase()}}` === v)).toBe(true);
+    expect(readWorkbook(bytes).sheets.map((s) => s.name)).toHaveLength(1);
+    const r = audit([file("book.xlsx", bytes)], map);
+    expect(leaks(r)).toEqual([]);
+    expect(findings(r).map((f) => [f.part, f.class, f.masked])).toEqual([["xl/theme/theme1.xml", "semantic:phrase", "Of***12"]]);
+  });
+
+  test("before apply, a template id is not reported, but every linking GUID still is a leak", () => {
+    for (const [path, members, guids] of [
+      ["memo.docx", docxMembers({ body: "open", officeIds: true }), [L.docId15, L.store, L.store, L.creationId]],
+      ["book.xlsx", xlsxMembers({ body: "open", officeIds: true }), [L.documentGuid, L.uidLastSave, L.sheetUid, L.cfRule, L.validationUid, L.cfRule]],
+    ] as const) {
+      const r = audit([file(path, makeZip(members))]);
+      const hits = leaks(r);
+      expect(hits.every((f) => f.class === "pattern:guid")).toBe(true);
+      expect(hits.map((f) => f.masked).sort()).toEqual(guids.map((g) => `${g.slice(1, 3)}***36`).sort());
+      expect(hits.some((f) => f.part.includes("theme"))).toBe(false);
+    }
+  });
+
+  test("a GUID planted in DOCX body text or an XLSX cell is still a leak", () => {
+    const docx = apply("memo.docx", docxMembers({ body: "Avery Quill met the team", officeIds: true }));
+    const inBody = plant(docx.bytes, "word/document.xml", (x) => x.replace("met the team", `met ${T.themeId}`));
+    expect(leaks(audit([file("memo.docx", inBody)], docx.map)).map((f) => [f.part, f.class])).toEqual([["word/document.xml", "pattern:guid"]]);
+    const xlsx = apply("book.xlsx", xlsxMembers({ body: "Avery Quill", officeIds: true }));
+    const inCell = plant(xlsx.bytes, "xl/worksheets/sheet1.xml", (x) => x.replace(/(<is><t>)[^<]*/, `$1${T.themeVid}`));
+    expect(leaks(audit([file("book.xlsx", inCell)], xlsx.map)).map((f) => [f.part, f.class])).toEqual([["xl/worksheets/sheet1.xml", "pattern:guid"]]);
+    // An original linking GUID put back where the engine replaced it is a leak too: the map knows it.
+    const restored = plant(xlsx.bytes, "xl/worksheets/sheet1.xml", (x) => x.replace(/(<worksheet[^>]* xr:uid=")[^"]*/, `$1${L.sheetUid}`));
+    expect(leaks(audit([file("book.xlsx", restored)], xlsx.map)).map((f) => [f.part, f.source])).toEqual([["xl/worksheets/sheet1.xml", "map"]]);
+  });
+
+  test("the template exemption is by position: the theme GUID in another attribute or member is reported", () => {
+    const { bytes, map } = apply("memo.docx", docxMembers({ body: "open", officeIds: true }));
+    const otherAttr = plant(bytes, "word/theme/theme1.xml", (x) => x.replace('name="Office Theme" id=', `name="${T.themeId}" id=`));
+    const otherMember = plant(bytes, "word/settings.xml", (x) => x.replace("<w:zoom", `<thm15:themeFamily xmlns:thm15="urn:x" id="${T.themeId}"/><w:zoom`));
+    for (const [zip, part] of [
+      [otherAttr, "word/theme/theme1.xml"],
+      [otherMember, "word/settings.xml"],
+    ] as const) {
+      expect(leaks(audit([file("memo.docx", zip)], map)).map((f) => [f.part, f.class])).toEqual([[part, "pattern:guid"]]);
+    }
+  });
+
+  test("blind apply is deterministic over Office ids", () => {
+    const members = docxMembers({ body: "Avery Quill", officeIds: true });
+    expect(apply("memo.docx", members).bytes).toEqual(apply("memo.docx", members).bytes);
+    const book = xlsxMembers({ body: "Avery Quill", officeIds: true });
+    expect(apply("book.xlsx", book).bytes).toEqual(apply("book.xlsx", book).bytes);
+  });
+
+  test("officeIdAttribute names the template and linking positions", () => {
+    const cases: [string, string, string, OfficeIdGroup | null][] = [
+      ["word/theme/theme1.xml", "thm15:themeFamily", "id", "template"],
+      ["xl/theme/theme1.xml", "thm15:themeFamily", "vid", "template"],
+      ["word/numbering.xml", "w:tmpl", "w:val", "template"],
+      ["word/document.xml", "w:p", "w:rsidR", "linking"],
+      ["word/document.xml", "w:tr", "w:rsidTr", "linking"],
+      ["word/settings.xml", "w:rsid", "w:val", "linking"],
+      ["word/settings.xml", "w:rsidRoot", "w:val", "linking"],
+      ["word/document.xml", "w:p", "w14:paraId", "linking"],
+      ["word/document.xml", "w:p", "w14:textId", "linking"],
+      ["word/commentsExtended.xml", "w15:commentEx", "w15:paraIdParent", "linking"],
+      ["word/commentsIds.xml", "w16cid:commentId", "w16cid:durableId", "linking"],
+      ["word/document.xml", "wp:anchor", "wp14:editId", "linking"],
+      ["word/settings.xml", "w14:docId", "w14:val", "linking"],
+      ["word/settings.xml", "w15:docId", "w15:val", "linking"],
+      ["word/numbering.xml", "w:nsid", "w:val", "linking"],
+      ["word/glossary/document.xml", "w:guid", "w:val", "linking"],
+      ["xl/charts/chart1.xml", "c16:uniqueId", "val", "linking"],
+      ["xl/worksheets/sheet1.xml", "worksheet", "xr:uid", "linking"],
+      ["xl/tables/table1.xml", "tableColumn", "xr3:uid", "linking"],
+      ["xl/workbook.xml", "xr:revisionPtr", "documentId", "linking"],
+      ["xl/workbook.xml", "xr:revisionPtr", "xr10:uidLastSave", "linking"],
+      ["xl/threadedComments/threadedComment1.xml", "threadedComment", "personId", "linking"],
+      ["xl/persons/person.xml", "person", "id", "linking"],
+      ["xl/worksheets/sheet1.xml", "x14:cfRule", "id", "linking"],
+      ["word/document.xml", "a16:creationId", "id", "linking"],
+      ["customXml/itemProps1.xml", "ds:datastoreItem", "ds:itemID", "linking"],
+      ["word/document.xml", "w:dataBinding", "w:storeItemID", "linking"],
+      // Not these.
+      ["word/document.xml", "thm15:themeFamily", "id", null],
+      ["word/theme/theme1.xml", "thm15:themeFamily", "name", null],
+      ["word/document.xml", "w:p", "rsidR", null],
+      ["word/document.xml", "w:p", "uid", null],
+      ["word/document.xml", "w:t", "w:val", null],
+      ["word/document.xml", "wp:docPr", "id", null],
+      ["xl/persons/person.xml", "person", "displayName", null],
+      ["xl/persons/person.xml", "person", "userId", null],
+      ["word/document.xml", "w:dataBinding", "w:xpath", null],
+    ];
+    for (const [m, e, a, want] of cases) expect([m, e, a, officeIdAttribute(m, e, a)]).toEqual([m, e, a, want]);
+    // The engine keeps its own list (the audit does not trust it); the two agree on what is a linking id.
+    for (const [m, e, a, want] of cases) expect([e, a, officeLinkAttribute(e, a) !== null]).toEqual([e, a, want === "linking"]);
+  });
+
+  test("the semantic layer skips every Office id position, and the mechanical layer blanks only the template ones", () => {
+    for (const m of [...docxMembers({ body: "x", officeIds: true }), ...xlsxMembers({ body: "x", officeIds: true })]) {
+      const bytes = Buffer.from(m.data as string, "utf8");
+      const view = xmlBaseView(bytes);
+      const attrs = xmlViews(view, m.name).find((v) => v.encoding.endsWith("+xml-attributes"))?.text.split("\n") ?? [];
+      const blanked = Buffer.from(blankOoxmlUris(m.name, bytes)).toString("utf8");
+      walkXml(view.text, {
+        attribute(element, a, start, end) {
+          const group = officeIdAttribute(m.name, element, a);
+          if (group === null || end === start) return;
+          expect(attrs).not.toContain(view.text.slice(start, end));
+          expect(blanked.slice(start, end).trim() === "").toBe(group === "template");
+        },
+      });
+    }
   });
 });

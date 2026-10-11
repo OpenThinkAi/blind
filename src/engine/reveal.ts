@@ -428,6 +428,10 @@ function revealXlsx(bytes: Uint8Array, rv: Revealer): RevealedFile {
       case "text":
       case "header":
         return text(value);
+      case "officeId":
+      case "documentId":
+        // Office's linking IDs stay as blinding wrote them: they are not reversed.
+        return value;
     }
   };
 

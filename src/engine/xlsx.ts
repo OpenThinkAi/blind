@@ -42,6 +42,7 @@ import type { ColumnReport } from "./apply.ts";
 import { PSEUDO_CLASSES, type PseudoClass } from "./canonical.ts";
 import { type ColumnAction, decide, outcomeOf } from "./columns.ts";
 import type { NameSlot } from "./names.ts";
+import { type HexNamer, rewriteOfficeId } from "./officeid.ts";
 import type { TextScanner } from "./recur.ts";
 import type { ExtraForm, Span } from "./text.ts";
 
@@ -95,6 +96,8 @@ export interface XlsxPlan {
   pending: Pending[];
   /** Filled by prepareXlsx. */
   requests: { cls: PseudoClass; value: string }[];
+  /** Hex linking IDs the render needs (src/engine/officeid.ts), for the caller to derive in sorted order. */
+  hexIds: string[];
 }
 
 const NUMBER = /^(-?)(\d+)(?:\.(\d+))?([Ee][+-]?\d+)?$/;
@@ -215,7 +218,7 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
     }
     return [...list].sort((a, b) => rank(a) - rank(b))[0] as Action;
   });
-  return { wb, cells, strings, columns, sheets, columnValues, mapped, pending, requests: [] };
+  return { wb, cells, strings, columns, sheets, columnValues, mapped, pending, requests: [], hexIds: [] };
 }
 
 /** Every value in the workbook that no pseudonym may equal. */
@@ -307,14 +310,16 @@ export function prepareXlsx(path: string, bytes: Uint8Array, p: XlsxPlan, env: E
       return value;
     },
   };
-  walk(path, bytes, p, env, recorder, false);
+  const hexIds: string[] = [];
+  walk(path, bytes, p, env, recorder, { hex: (v) => (hexIds.push(v), v) }, false);
   p.requests = requests;
+  p.hexIds = hexIds;
   return null;
 }
 
 /** Step 3. Throws XlsxSpecError when blinded names would collide. */
-export function renderXlsx(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer): Rendered {
-  return walk(path, bytes, p, env, pz, true);
+export function renderXlsx(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer, ids: HexNamer): Rendered {
+  return walk(path, bytes, p, env, pz, ids, true);
 }
 
 function digitsOf(v: string): { sign: string; int: string; frac: string; exp: string } {
@@ -329,7 +334,7 @@ function renumber(v: string, pz: Namer): string {
   return `${sign}${d.slice(0, int.length)}${frac === "" ? "" : `.${d.slice(int.length)}`}${exp}`;
 }
 
-function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer, render: boolean): Rendered {
+function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer, ids: HexNamer, render: boolean): Rendered {
   let entityReplacements = 0;
   let patternReplacements = 0;
   let mappedReplacements = 0;
@@ -538,6 +543,10 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
           return numbers.get(value) ?? value;
         case "cache":
           return NUMBER.test(value) ? (numbers.get(value) ?? value) : (sheetEq(value) ?? free(value));
+        case "officeId":
+          return rewriteOfficeId("id", value, pz, ids);
+        case "documentId":
+          return rewriteOfficeId("documentId", value, pz, ids);
       }
     },
     (member) => {

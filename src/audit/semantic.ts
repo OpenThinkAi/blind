@@ -43,7 +43,7 @@ import {
   type TreeEntry,
 } from "./mechanical.ts";
 import { fold, stringView, unescapeView, type View, viewsOf, xmlBaseView } from "./views.ts";
-import { localName, looksLikeXml, ooxmlUriAttribute, walkXml } from "./xml.ts";
+import { localName, looksLikeXml, officeIdAttribute, ooxmlUriAttribute, walkXml } from "./xml.ts";
 import { looksLikeZip, readZip, ZipError } from "./zip.ts";
 
 /** Distinct candidates listed per file; the rest are counted in one extra finding. */
@@ -114,11 +114,12 @@ const STRUCTURAL_ELEMENTS = new Set(["color", "srgbClr", "sysClr", "fgColor", "b
 
 /**
  * Every position the mechanical layer skips (ooxmlUriAttribute: namespace, content-type and
- * relationship-type URIs), and more: this layer also skips ids, fonts and colours, which are
- * identifier-shaped but never identifying.
+ * relationship-type URIs; officeIdAttribute "template": fixed template IDs), and more: this layer
+ * also skips Office's linking IDs (officeIdAttribute "linking", which the engine replaces), ids,
+ * fonts and colours, which are identifier-shaped but never identifying.
  */
 function structuralAttribute(member: string, element: string, attr: string): boolean {
-  if (ooxmlUriAttribute(member, element, attr)) return true;
+  if (ooxmlUriAttribute(member, element, attr) || officeIdAttribute(member, element, attr) !== null) return true;
   const el = localName(element);
   const at = localName(attr);
   if (at.startsWith("rsid") || el.startsWith("rsid")) return true;

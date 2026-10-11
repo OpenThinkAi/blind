@@ -97,10 +97,12 @@ describe("determinism", () => {
   // workbook reader), so the two agree on what a header, a dictionary word and a sheet are.
   const SHARED = [
     "node:crypto", "node:fs", "../schema.ts", "../profile/table.ts", "../profile/words.ts", "../formats/ooxml.ts", "../formats/xlsx.ts",
+    "../formats/officeids.ts",
   ];
   const SHARED_IMPORTS: Record<string, string[]> = {
     "../formats/ooxml.ts": ["node:zlib"],
-    "../formats/xlsx.ts": ["./ooxml.ts"],
+    "../formats/xlsx.ts": ["./ooxml.ts", "./officeids.ts"],
+    "../formats/officeids.ts": ["./ooxml.ts"],
     "../profile/table.ts": ["../schema.ts", "./stats.ts", "../engine/csv.ts"],
     "../profile/stats.ts": ["../schema.ts", "./words.ts"],
     "../profile/words.ts": [],

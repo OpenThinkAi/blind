@@ -28,13 +28,20 @@
 // content-control text, document variables, mail-merge strings, field
 // instructions, external hyperlink targets) is free text.
 //
+// Office's own linking IDs (edit-session rsids, paragraph, text and durable ids, document and
+// list ids, data store ids: src/formats/officeids.ts) are rewritten wherever they are, so the
+// blinded package cannot be matched back to the original by them (src/engine/officeid.ts). Fixed
+// template IDs (a theme family's id) are copied.
+//
 // Fail closed. The package is not written when a part cannot be read, when a
 // part outside the vocabularies below holds character data, or when it embeds
 // a file (an OLE object, a workbook behind a chart, macros) that this handler
 // cannot open. Images are copied unchanged and reported.
 
 import { type Frame, localName, readOoxml, type RewriteRules, rewriteOoxml, rewriteXml, XmlError } from "../formats/ooxml.ts";
+import { type LinkShape, officeLinkAttribute } from "../formats/officeids.ts";
 import type { PseudoClass } from "./canonical.ts";
+import { type HexNamer, rewriteOfficeId } from "./officeid.ts";
 import type { Pseudonymizer } from "./pseudonym.ts";
 import type { Span } from "./text.ts";
 
@@ -61,6 +68,8 @@ export interface DocxPlan {
   requests: DocxRequest[];
   /** Every original value, for the set no pseudonym may equal. */
   values: string[];
+  /** Hex linking IDs the render needs, for the caller to derive in sorted order. */
+  hexIds: string[];
   warnings: string[];
 }
 
@@ -91,6 +100,8 @@ interface Node {
   role: Role;
   /** Set for a value replaced as a whole. */
   whole?: PseudoClass;
+  /** Set for an Office linking ID, rewritten by its shape. */
+  link?: LinkShape;
   /** Planned changes, in this node's own offsets. */
   blanks: [number, number][];
   inserts: { at: number; edit: Edit }[];
@@ -221,8 +232,23 @@ const WHOLE_PROPERTIES = new Map<PartKind, ReadonlyMap<string, PseudoClass>>([
   ["app", new Map([["Manager", "person"], ["Company", "org"]])],
 ]);
 
-/** The text nodes and attributes offered in a part of `kind`; shared with reveal, so it restores exactly what blinding rewrites. */
+/**
+ * The text nodes and attributes offered in a part of `kind`; shared with reveal, so it restores
+ * exactly what blinding rewrites as text. Office linking ID positions are left out: blinding
+ * offers them separately (blindRules) and reveal leaves them as written.
+ */
 export function rulesFor(kind: PartKind, visit?: RewriteRules["visit"]): RewriteRules {
+  const rules = kindRules(kind, visit);
+  return { ...rules, attribute: (el, attr, parents) => officeLinkAttribute(el.name, attr) === null && rules.attribute(el, attr, parents) };
+}
+
+/** What blinding offers in a part of `kind`: rulesFor, plus every Office linking ID position. */
+function blindRules(kind: PartKind, visit?: RewriteRules["visit"]): RewriteRules {
+  const rules = kindRules(kind, visit);
+  return { ...rules, attribute: (el, attr, parents) => officeLinkAttribute(el.name, attr) !== null || rules.attribute(el, attr, parents) };
+}
+
+function kindRules(kind: PartKind, visit?: RewriteRules["visit"]): RewriteRules {
   const none = () => false;
   switch (kind) {
     case "word":
@@ -282,7 +308,7 @@ export function planDocx(bytes: Uint8Array): DocxPlan {
   } catch (e) {
     throw new DocxError(`not a readable DOCX package (${(e as Error).message})`);
   }
-  const plan: DocxPlan = { bytes, nodes: new Map(), kinds: new Map(), edits: [], wholes: [], units: [], keptHosts: 0, requests: [], values: [], warnings: [] };
+  const plan: DocxPlan = { bytes, nodes: new Map(), kinds: new Map(), edits: [], wholes: [], units: [], keptHosts: 0, requests: [], values: [], hexIds: [], warnings: [] };
 
   const images: string[] = [];
   for (const m of members) {
@@ -295,6 +321,8 @@ export function planDocx(bytes: Uint8Array): DocxPlan {
   }
 
   const units = plan.units;
+  const recorder = { pseudonym: (cls: PseudoClass, value: string) => (plan.requests.push({ cls, value }), value) };
+  const hexRecorder: HexNamer = { hex: (value) => (plan.hexIds.push(value), value) };
   for (const m of members) {
     if (m.kind === "other") continue;
     if (m.kind === "error") throw new DocxError(`part ${m.name} cannot be read (${m.error})`);
@@ -354,6 +382,12 @@ export function planDocx(bytes: Uint8Array): DocxPlan {
           const node: Node = { value, role: roleOf(ctx.element, ctx.parents), blanks: [], inserts: [] };
           nodes.push(node);
           plan.values.push(value);
+          const link = ctx.attribute === undefined ? null : officeLinkAttribute(ctx.element.name, ctx.attribute);
+          if (link !== null) {
+            node.link = link;
+            rewriteOfficeId(link, value, recorder, hexRecorder);
+            return value;
+          }
           const n = localName(ctx.element.name);
           const cls = ctx.attribute !== undefined ? (kind === "word" ? WHOLE_ATTRIBUTES.get(localName(ctx.attribute)) : undefined) : whole?.get(n);
           if (cls !== undefined) {
@@ -369,7 +403,7 @@ export function planDocx(bytes: Uint8Array): DocxPlan {
           else units.push({ items: [{ node }] });
           return value;
         },
-        rulesFor(kind, kind === "word" ? visit : undefined),
+        blindRules(kind, kind === "word" ? visit : undefined),
       );
     } catch (e) {
       if (e instanceof XmlError) throw new DocxError(`part ${m.name} cannot be read (${e.message})`);
@@ -473,7 +507,8 @@ function planUnit(unit: Unit, spanner: (s: string) => Span[], plan: DocxPlan): v
 }
 
 /** A node's value with its planned blanks removed and pseudonyms inserted. */
-function renderNode(node: Node, pz: Pseudonymizer): string {
+function renderNode(node: Node, pz: Pseudonymizer, ids: HexNamer): string {
+  if (node.link !== undefined) return rewriteOfficeId(node.link, node.value, pz, ids);
   if (node.whole !== undefined) {
     const core = node.value.trim();
     if (core === "") return node.value;
@@ -496,8 +531,8 @@ function renderNode(node: Node, pz: Pseudonymizer): string {
   return out;
 }
 
-/** Write the planned edits. Every pseudonym in `plan.requests` must already be derived. */
-export function renderDocx(plan: DocxPlan, pz: Pseudonymizer): DocxRender {
+/** Write the planned edits. Every pseudonym in `plan.requests` and hex id in `plan.hexIds` must already be derived. */
+export function renderDocx(plan: DocxPlan, pz: Pseudonymizer, ids: HexNamer): DocxRender {
   const next = new Map<string, number>();
   const result = rewriteOoxml(
     plan.bytes,
@@ -507,14 +542,14 @@ export function renderDocx(plan: DocxPlan, pz: Pseudonymizer): DocxRender {
       const node = plan.nodes.get(ctx.member)?.[k];
       // The render pass sees the same values in the same order as the plan, or it stops.
       if (node === undefined || node.value !== value) throw new Error(`docx render: ${ctx.member} changed between plan and render`);
-      return renderNode(node, pz);
+      return renderNode(node, pz, ids);
     },
-    (member) => rulesFor(plan.kinds.get(member) ?? "inert"),
+    (member) => blindRules(plan.kinds.get(member) ?? "inert"),
   );
   const failed = result.members.find((m) => m.kind === "error");
   if (failed !== undefined && failed.kind === "error") throw new DocxError(`part ${failed.name} cannot be written (${failed.error})`);
   let metadataReplacements = 0;
-  for (const n of plan.wholes) if (renderNode(n, pz) !== n.value) metadataReplacements++;
+  for (const n of plan.wholes) if (renderNode(n, pz, ids) !== n.value) metadataReplacements++;
   return {
     bytes: result.bytes,
     changed: result.members.some((m) => m.kind === "xml" && m.changed),

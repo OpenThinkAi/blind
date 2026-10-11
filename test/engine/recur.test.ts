@@ -161,6 +161,18 @@ describe("applySpec: values blinded in a column are replaced where they recur", 
     expect(r.files.find((f) => f.path === "tickets.csv")?.columns.find((c) => c.header === "Summary")?.changed).toBe(2);
   });
 
+  test("values an unknown or unmentioned column pseudonymised as identifier-like recur too", () => {
+    const staff = "Owner,Badge\nAvery Quill,BX-1001\nRobin Example,BX-1002\nJo Sample,BX-1003\nKit Placeholder,BX-1004\n";
+    const notes = "Avery Quill met Robin Example about BX-1003.\n";
+    const s = spec({ columns: [rule("staff.csv", "Owner", "unknown", "value")] });
+    const res = applySpec([file("staff.csv", staff), file("notes.txt", notes)], s, { salt: SALT });
+    const cols = res.files.find((f) => f.path === "staff.csv")?.columns.map((c) => c.outcome);
+    expect(cols).toEqual(["unknown-pseudonymised", "unknown-pseudonymised"]);
+    expect(out(res, "notes.txt")).toBe(
+      `${pseudonymOf(res, "Avery Quill")} met ${pseudonymOf(res, "Robin Example")} about ${pseudonymOf(res, "BX-1003")}.\n`,
+    );
+  });
+
   test("a value from a vocabulary column does not recur", () => {
     const s = spec({
       columns: [rule("tags.csv", "Tag", "vocabulary", "blind"), rule("tags.csv", "Note", "vocabulary", "keep")],

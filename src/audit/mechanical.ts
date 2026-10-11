@@ -256,9 +256,9 @@ const SHAPED_ANY_RE = new RegExp(SHAPED_RE.source.replace("(?<![A-Za-z0-9_.-])",
  * engine reads it, so "backup_db01.example.com" is checked as a host. Hosts under a keep-list
  * domain are dropped: the engine keeps them because the policy says to.
  */
-function patternSpans(text: string, ctx: Context, name: boolean): Span[] {
+function patternSpans(text: string, ctx: Context, isName: boolean): Span[] {
   const spans = findPatternSpans(text, ctx.spec.patterns, ctx.keep);
-  if (name && text.includes("_")) {
+  if (isName && text.includes("_")) {
     let offset = 0;
     for (const piece of text.split("_")) {
       for (const s of findPatternSpans(piece, ctx.spec.patterns, ctx.keep)) {
@@ -273,7 +273,7 @@ function patternSpans(text: string, ctx: Context, name: boolean): Span[] {
 }
 
 /** Findings in one view: needle survivors outside pseudonym and vocabulary text, and non-pseudonym pattern matches. */
-function scanView(view: View, ctx: Context, name: boolean): Hit[] {
+function scanView(view: View, ctx: Context, isName: boolean): Hit[] {
   const text = view.text;
   const f = foldWithMap(text);
   const srcEnd = (foldedEnd: number): number => {
@@ -353,7 +353,7 @@ function scanView(view: View, ctx: Context, name: boolean): Hit[] {
     if (exactCase) push(start, end, { ...base, severity: "leak", reason: `${what} survives` });
     else push(start, end, { ...base, severity: "candidate", reason: `${what}, in another case, accent or width` });
   }
-  for (const s of ascii ? patternSpans(text, ctx, name) : []) {
+  for (const s of ascii ? patternSpans(text, ctx, isName) : []) {
     if (isPseudonym(s.value, ctx.map) || masked(s.start, s.end) || onlyPseudonyms(s.start, s.end)) continue;
     const name = patternName(s.value, ctx.spec.patterns);
     push(s.start, s.end, { class: `pattern:${name}`, source: "pattern", severity: "leak", reason: `${name} pattern match that is not a pseudonym` });
@@ -386,10 +386,10 @@ const SEVERITY_RANK: Record<Severity, number> = { candidate: 0, leak: 1 };
  * longer value. The most severe hit is kept first, then the longest, then spec entities before map
  * values before patterns, then the earliest view.
  */
-function scanViews(views: readonly View[], ctx: Context, name = false): PlacedHit[] {
+function scanViews(views: readonly View[], ctx: Context, isName = false): PlacedHit[] {
   const all: PlacedHit[] = [];
   for (const v of views) {
-    for (const h of scanView(v, ctx, name)) all.push({ ...h, byteStart: v.byteAt(h.start), byteEnd: v.byteAt(h.end) });
+    for (const h of scanView(v, ctx, isName)) all.push({ ...h, byteStart: v.byteAt(h.start), byteEnd: v.byteAt(h.end) });
   }
   // Stable sort: equal hits keep view order.
   const ranked = all

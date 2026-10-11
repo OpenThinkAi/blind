@@ -16,7 +16,7 @@ export interface MapEntry {
   kind: MapKind;
   /** Canonical form the pseudonym is keyed on. */
   canonical: string;
-  /** First surface form seen; what `reveal` restores. */
+  /** Smallest surface form seen (code-unit order, so call order never matters); what `reveal` restores. */
   value: string;
   pseudonym: string;
 }

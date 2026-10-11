@@ -148,7 +148,7 @@ export interface FileReport {
   unread?: string[];
   /** Set when the file was read as a transcript. */
   transcript?: TranscriptReport;
-  /** A file that is not a transcript: transcript speakers' names (or parts, or misspellings) replaced in it. */
+  /** Any file that is not a transcript (text, table, JSON, XLSX, DOCX): transcript speakers' names (or parts, or misspellings) replaced in it. */
   speakerMentions?: number;
   changed: boolean;
 }
@@ -499,6 +499,13 @@ function transcriptReport(
   return { kind, speakers: speakers.length, speakerTags, keptTags, spokenMentions: Math.max(0, speakerReplacements - speakerTags) };
 }
 
+/** A text file's speaker counts: its transcript report, or the speaker names replaced in it. */
+function textSpeakers(spans: readonly Span[], t: TranscriptPlan | undefined, kept: (name: string) => boolean): Pick<FileReport, "transcript" | "speakerMentions"> {
+  const n = count(spans, "speaker");
+  if (t === undefined) return n > 0 ? { speakerMentions: n } : {};
+  return { transcript: transcriptReport(t.kind, speakersOf(t.entries), t.tags.map((x) => x.name), n, kept) };
+}
+
 const keptHostCount = (spans: readonly Span[]): number => spans.filter((s) => s.cls === null && s.source === "pattern").length;
 
 export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyOptions): ApplyResult {
@@ -572,7 +579,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       }
       const transcript = planTranscript(decoded.text) ?? undefined;
       if (format !== "text" && transcript === undefined) {
-        skipped.push({ path: input.path, reason: `not ${format === "vtt" ? "a WebVTT" : "an SRT"} transcript (no ${format === "vtt" ? "WEBVTT header and " : "numbered "}cue timing found); not written` });
+        skipped.push({ path: input.path, reason: `not ${format === "vtt" ? "a WebVTT" : "an SRT"} transcript (no cue timing found); not written` });
         continue;
       }
       plans.push({ kind: "text", input, encoding: decoded.encoding, text: decoded.text, spans: [], transcript });
@@ -819,9 +826,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         patternReplacements: count(p.spans, "pattern"),
         mappedReplacements: count(p.spans, "map"),
         keptHosts: keptHostCount(p.spans),
-        ...(t === undefined
-          ? count(p.spans, "speaker") > 0 ? { speakerMentions: count(p.spans, "speaker") } : {}
-          : { transcript: transcriptReport(t.kind, speakersOf(t.entries), t.tags.map((x) => x.name), count(p.spans, "speaker"), kept) }),
+        ...textSpeakers(p.spans, t, kept),
         changed: false,
       };
     } else if (p.kind === "json") {

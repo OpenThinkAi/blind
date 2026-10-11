@@ -354,6 +354,8 @@ export function forPrivacyMode(result: ProfileResult, mode: PrivacyMode): Profil
     profile: {
       ...profile,
       documents: profile.documents.map((d) => ({ ...d, outline: [] })),
+      // Every transcript's speakers (VTT, SRT, and transcript-shaped text and DOCX, AGT-1749) are
+      // names with no sampleCount bound: always emptied here, and refused by assertProfilePayload.
       transcripts: profile.transcripts.map((t) => ({ ...t, speakers: [] })),
     },
     notes,

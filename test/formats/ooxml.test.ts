@@ -252,3 +252,39 @@ describe("rewriteXml", () => {
     expect(() => rewriteXml("<a><t>x</t></a>", () => "\u0001")).toThrow(/cannot represent/);
   });
 });
+
+describe("rewriteXml hooks", () => {
+  const none: RewriteRules = { text: () => false, attribute: () => false };
+
+  test("runs offers each non-blank text run of mixed content, CDATA included, and re-encodes only changed runs", () => {
+    const seen: string[] = [];
+    const out = rewriteXml(
+      "<a>Dana &amp; co<b>keep</b>  <![CDATA[Pell <x>]]><c/>tail</a>",
+      (v, ctx) => (seen.push(`${ctx.element.name}:${v}`), v === "tail" ? "tail" : v.toUpperCase()),
+      { ...none, runs: (el) => el.name === "a" },
+    );
+    expect(seen).toEqual(["a:Dana & co", "a:Pell <x>", "a:tail"]);
+    expect(out).toBe("<a>DANA &amp; CO<b>keep</b>  PELL &lt;X&gt;<c/>tail</a>");
+  });
+
+  test("rewriteOoxml takes rules per member", () => {
+    const members: string[] = [];
+    const r = rewriteOoxml(buildZip(xlsx()), (v) => v.toUpperCase(), (member) => {
+      members.push(member);
+      return member === "xl/sharedStrings.xml" ? defaultRules : { text: () => false, attribute: () => false };
+    });
+    expect(members).toEqual(["[Content_Types].xml", "xl/workbook.xml", "xl/sharedStrings.xml", "xl/worksheets/sheet1.xml"]);
+    const after = readZip(r.bytes);
+    expect(after.find((e) => e.name === "xl/sharedStrings.xml")!.text).toContain("DANA PELL");
+    expect(after.find((e) => e.name === "xl/worksheets/sheet1.xml")!.text).toContain("Orbit Co");
+  });
+});
+
+test("a Node Buffer input (possibly a pooled slice) is never written through", () => {
+  const input = Buffer.from(buildZip(xlsx()));
+  const copy = Buffer.from(input);
+  const r = rewriteOoxml(input, upper);
+  expect(input.equals(copy)).toBe(true);
+  expect(readZip(r.bytes).find((e) => e.name === "xl/sharedStrings.xml")!.text).toContain("DANA PELL");
+  expect(Buffer.from(rewriteOoxml(input, (v) => v).bytes).equals(copy)).toBe(true);
+});

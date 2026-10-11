@@ -8,6 +8,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { parseArgs } from "node:util";
 import { type ApplyResult, ApplyError, applySpec, type FileReport, type InputFile } from "./engine/apply.ts";
 import { type BlindMap, MapError, readMap, writeMap } from "./engine/map.ts";
+import { NameError } from "./engine/names.ts";
 import { MIN_SALT_BYTES, PseudonymError } from "./engine/pseudonym.ts";
 import { BLIND_DIR, SALT_FILE } from "./init.ts";
 import { loadKeepTerms, POLICY_FILE, PolicyError } from "./policy.ts";
@@ -30,7 +31,8 @@ const APPLY_HELP = [
   "Applies the saved spec (.blind/spec.json) to the inputs and writes blinded copies under <out>.",
   "Inputs are files or directories; spec rules name files by their path relative to the input",
   "directory (or by file name for a file input). Handles CSV/TSV, JSON/JSONL (.json, .jsonl,",
-  ".ndjson), text (.txt, .md, .log) and DOCX; other files are reported and not written. File and",
+  ".ndjson), XLSX workbooks (rules name a column by sheet and header), text (.txt, .md, .log)",
+  "and DOCX; other files are reported and not written. File and",
   "folder names are blinded too; the report lists each renamed file. Host names under a domain",
   "in the blind.toml keep list are kept.",
   "",
@@ -127,12 +129,21 @@ const DELIMITER_NAMES: Record<string, string> = { ",": "comma", ";": "semicolon"
 export function renderReport(result: ApplyResult): string {
   const lines: string[] = [];
   for (const f of result.files) {
-    const head: string[] = [f.format, f.encoding];
+    const head: string[] = f.encoding === undefined ? [f.format] : [f.format, f.encoding];
     if (f.delimiter !== undefined) head.push(`${DELIMITER_NAMES[f.delimiter] ?? "other"}-delimited`);
     if (f.headerRow !== undefined) head.push(f.noHeader ? "no header row found, row 1 used" : `header row ${f.headerRow}`);
     lines.push(`${f.path} (${head.join(", ")})${f.changed ? "" : ": unchanged"}`);
     if (f.outputPath !== f.path) lines.push(`  written as ${f.outputPath}`);
+    let sheet: string | undefined;
+    for (const s of f.sheets ?? []) {
+      if (s.outputName !== s.name) lines.push(`  sheet ${JSON.stringify(s.name)} renamed ${JSON.stringify(s.outputName)}`);
+    }
     for (const c of f.columns) {
+      if (c.sheet !== undefined && c.sheet !== sheet) {
+        sheet = c.sheet;
+        const s = f.sheets?.find((x) => x.name === sheet);
+        lines.push(`  sheet ${JSON.stringify(sheet)}${s === undefined ? "" : s.noHeader ? " (no header row found, row 1 used)" : ` (header row ${s.headerRow})`}`);
+      }
       const label = c.jsonPath !== undefined ? `key ${JSON.stringify(c.jsonPath)}` : c.header === "" ? `column ${c.index + 1} (blank header)` : JSON.stringify(c.header);
       const unit = c.jsonPath !== undefined ? "value" : "cell";
       const unknown = c.outcome.startsWith("unknown-");
@@ -158,6 +169,9 @@ export function renderReport(result: ApplyResult): string {
     for (const w of f.warnings ?? []) lines.push(`  warning: ${w}`);
     if (f.keptHosts > 0) {
       lines.push(`  kept ${f.keptHosts} host name${f.keptHosts === 1 ? "" : "s"} under a domain in the policy keep list`);
+    }
+    if (f.unread !== undefined && f.unread.length > 0) {
+      lines.push(`  copied without reading (not XML; the audit still reads them): ${f.unread.join(", ")}`);
     }
   }
   return lines.length > 0 ? `${lines.join("\n")}\n` : "";
@@ -257,7 +271,7 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
     }
     return 0;
   } catch (e) {
-    if (e instanceof Refusal || e instanceof PolicyError || e instanceof SchemaError || e instanceof ApplyError || e instanceof MapError || e instanceof PseudonymError) {
+    if (e instanceof Refusal || e instanceof PolicyError || e instanceof SchemaError || e instanceof ApplyError || e instanceof MapError || e instanceof PseudonymError || e instanceof NameError) {
       io.err.write(`blind apply: ${e.message}\nnothing was written\n`);
       return 2;
     }

@@ -9,6 +9,7 @@ import { buildProfile, InputError } from "../../src/profile/profile.ts";
 import { defaultPolicy, renderPolicy } from "../../src/policy.ts";
 import { MAX_EXCERPT, type Profile } from "../../src/schema.ts";
 import { parseProfile, validateProfile } from "../../src/validate.ts";
+import { buildWorkbook } from "../formats/xlsxfixture.ts";
 
 let dir: string;
 beforeEach(() => {
@@ -140,6 +141,29 @@ describe("buildProfile", () => {
       { path: "latin1.txt", reason: "not valid UTF-8" },
       { path: "link.txt", reason: "symbolic link (not followed)" },
     ]);
+  });
+
+  test("each worksheet of a workbook is a table with its sheet, header row and columns", () => {
+    put("kit/staff.xlsx", buildWorkbook());
+    put("kit/broken.xlsx", "not a zip");
+    const { profile, skipped } = buildProfile(["kit"], 2, dir);
+    expect(profile.files).toEqual([{ path: "staff.xlsx", format: "xlsx", size: buildWorkbook().length }]);
+    expect(profile.tables.map((t) => [t.file, t.sheet, t.headerRow, t.columns.map((c) => c.header)])).toEqual([
+      ["staff.xlsx", "Staff", 1, ["Name", "Employee ID", "Notes", "Status"]],
+      ["staff.xlsx", "Avery Quill", 1, ["Amount"]],
+      ["staff.xlsx", "Contents", 1, ["Sheet", "Link"]],
+    ]);
+    const id = profile.tables[0]!.columns[1]!.stats;
+    expect([id.count, id.distinctRatio, id.detectorRates.numericId, id.samples]).toEqual([4, 1, 1, ["4417", "4419"]]);
+    expect(validateProfile(profile).ok).toBe(true);
+    expect(skipped).toEqual([{ path: "broken.xlsx", reason: "cannot read the workbook: not a zip file (no end of central directory record)" }]);
+  });
+
+  test("worksheet columns take part in co-occurrence with their sheet named", () => {
+    put("kit/staff.xlsx", buildWorkbook());
+    put("kit/people.csv", "Person\nRobin Example\nSam Placeholder\nDana Pell\nLee Orbit\n");
+    const { profile } = buildProfile(["kit"], 0, dir);
+    expect(profile.cooccurrence).toContainEqual({ a: { file: "people.csv", header: "Person" }, b: { file: "staff.xlsx", sheet: "Staff", header: "Name" }, shared: 4 });
   });
 
   test("blind's own .blind/ and blind.toml are skipped silently", () => {

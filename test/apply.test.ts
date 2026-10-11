@@ -6,6 +6,8 @@ import { PassThrough } from "node:stream";
 import { runApply } from "../src/apply.ts";
 import { defaultPolicy, renderPolicy } from "../src/policy.ts";
 import { helpText } from "../src/cli.ts";
+import { buildWorkbook, workbookEntries } from "./formats/xlsxfixture.ts";
+import { buildZip } from "./formats/zipfixture.ts";
 
 // Synthetic corpus only.
 const SPEC = {
@@ -211,6 +213,42 @@ describe("blind apply", () => {
     expect(body).not.toContain("db02.example.com");
     expect(r.out).toContain("kept 1 host name under a domain in the policy keep list");
     expect(existsSync(join(dir, "out", "db01.example.com"))).toBe(false);
+  });
+
+  test("a workbook is blinded and reported per sheet; a broken one is listed, exit 1", async () => {
+    mkdirSync(join(dir, "wb"));
+    writeFileSync(join(dir, "wb", "book.xlsx"), buildWorkbook());
+    const spec = {
+      ...SPEC,
+      columns: [{ file: "book.xlsx", sheet: "Staff", header: "Name", class: "person", treatment: "blind", confidence: 1, source: "human" }],
+      entities: { person: [{ canonical: "Avery Quill", aliases: [], parts: ["Avery", "Quill"] }] },
+    };
+    writeFileSync(join(dir, ".blind", "spec.json"), JSON.stringify(spec));
+    const r = await apply("wb", "-o", "out");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("book.xlsx (xlsx)\n");
+    expect(r.out).toMatch(/ {2}sheet "Avery Quill" renamed "Person_[0-9A-F]{4}"\n/);
+    expect(r.out).toContain('  sheet "Staff" (header row 1)\n  "Name": person/blind → blinded, 4 cells changed');
+    expect(readFileSync(join(dir, "out", "book.xlsx")).includes(Buffer.from("Avery"))).toBe(false);
+
+    writeFileSync(join(dir, "wb", "broken.xlsx"), "not a zip");
+    rmSync(join(dir, "out"), { recursive: true });
+    const again = await apply("wb", "-o", "out");
+    expect(again.code).toBe(1);
+    expect(again.err).toContain("blind apply: broken.xlsx: cannot read the workbook: not a zip file");
+  });
+
+  test("a blinded sheet name that breaks the naming rules is refused with exit 2", async () => {
+    mkdirSync(join(dir, "wb"));
+    const entries = workbookEntries();
+    const wb = entries.find((e) => e.name === "xl/workbook.xml")!;
+    wb.data = (wb.data as string).replace('name="Contents"', 'name="Avery Quill, Avery Quill, Avery"');
+    writeFileSync(join(dir, "wb", "book.xlsx"), buildZip(entries));
+    writeFileSync(join(dir, ".blind", "spec.json"), JSON.stringify({ ...SPEC, columns: [] }));
+    const r = await apply("wb", "-o", "out");
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("blind apply: the blinded worksheet name is longer than 31 characters\nnothing was written\n");
+    expect(existsSync(join(dir, "out"))).toBe(false);
   });
 
   test("apply is wired into the CLI", () => {

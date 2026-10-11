@@ -151,8 +151,8 @@ plan (exit 2) before anything is profiled or sent.
 `blind apply <inputs> -o <out>` reads `.blind/spec.json` and `.blind/salt` and refuses (exit 2,
 nothing written) if either is missing or the spec is invalid. Spec `file` values are paths relative
 to an input directory, or the file name for a file named directly. This release handles CSV/TSV,
-JSON and JSONL (`.json`, `.jsonl`, `.ndjson`), text (`.txt`, `.md`, `.log`) and DOCX (`.docx`);
-any other file is listed and not written (exit 1).
+JSON and JSONL (`.json`, `.jsonl`, `.ndjson`), XLSX workbooks (`.xlsx`), text (`.txt`, `.md`,
+`.log`) and DOCX (`.docx`); any other file is listed and not written (exit 1).
 
 **Table columns.** The header row is found the same way `blind profile` finds it, so spec headers always match: the earliest of the first 20 rows that fills more than half the table's width and is mostly non-numeric text, or row 1 if no row qualifies.
 
@@ -246,8 +246,45 @@ also searched piece by piece between underscores (`backup_db01.example.com.txt`)
 (`written as ...`). Two inputs whose blinded names coincide are refused (exit 2, nothing written).
 Every pseudonym used in a name is in the reversal map, so names are as reversible as the content;
 `blind reveal` is not built yet, and until it is, restore names by looking each pseudonym up in the
-map. The engine also exposes this rewrite for worksheet and defined names; this release reads no
-workbooks, so it is not yet applied to any.
+map. Worksheet, defined and table names in a workbook are rewritten the same way (see below).
+
+**XLSX workbooks.** Handled at the zip and XML level; every byte not rewritten is copied as it
+was. Each worksheet is a table: the header row is found as above, and rules name a column by
+`sheet` and `header` (a rule without `sheet`, or for a sheet or header the workbook does not have,
+is an error). The column table above applies to every cell, with these workbook rules:
+
+- **Strings.** Shared strings and inline strings are rewritten. A shared string used by several
+  cells gets one treatment, the strictest: a pseudonym if any cell using it is pseudonymised, else
+  free text, else kept. A shared string no cell uses (an orphan) is rewritten as free text too. In
+  rich text, a pseudonym, or a match that spans formatting runs, is written into the first non-empty
+  run and the other runs are emptied; otherwise each run keeps its formatting.
+- **Numbers.** A number cell cannot hold text, so a pseudonymised number cell is renumbered: its
+  digits get a same-length numeric `id` pseudonym (`4417` → `8203`; a decimal keeps its point),
+  whatever the column's class. Booleans, errors and dates are never changed.
+- **Sheet and defined names.** Worksheet names, defined names and table names are rewritten through
+  the same name hook as file names. Blinded worksheet names must stay distinct ignoring case, and
+  every blinded name must keep the spreadsheet's naming rules; otherwise apply refuses (exit 2,
+  nothing written). A cell, shared string, hyperlink text or `docProps/app.xml` sheet title whose
+  whole text is a worksheet's name is written as that sheet's blinded name, so a contents sheet
+  still names the right sheets.
+- **Formulas** (cells, defined names, validation and conditional formats, tables, charts, hyperlink
+  locations) keep their structure: references to a renamed sheet, defined name, table or table
+  column follow the rename, quoted when the new name needs it, and string literals are free text.
+- **Everything else** that can carry identifying text is free text: comments and their authors,
+  threaded comments and people, `docProps/core.xml` (title, subject, creator, keywords,
+  description, last modified by, category and the like), `docProps/app.xml` (company, manager,
+  application, hyperlink base), `docProps/custom.xml` names and values, pivot caches (strings,
+  field captions; numbers repeat the renumbering of their cells), pivot table captions, chart titles
+  and caches, drawing text and shape names, header and footer text, validation prompts, filter
+  values, and the targets of external relationships. Free text, in cells and everywhere else, goes
+  through the same corpus-wide scan as CSV and JSON text (patterns, spec entities and recurring
+  values), and cells under `keep` get only recurring values replaced, as in a CSV file. Table column
+  names and pivot field names are rewritten like the header cells they repeat.
+- **Fail closed.** Every other text run and attribute is scanned for spec entities and recurring
+  values; one found there stops the
+  workbook (listed and not written, exit 1), naming the part and element but never the value. So
+  does a member that cannot be parsed, a cell without a reference, and a zip that is not a workbook.
+  Members that are not XML (images, printer settings) are copied unread and listed in the report.
 
 **Output.** Delimiter, quoting, line endings and encoding (UTF-8 with or without BOM, UTF-16 with
 BOM, otherwise 8-bit bytes) are preserved, and a file with nothing to replace is copied byte for
@@ -456,7 +493,7 @@ Pairs of locations that share values, which suggests they hold the same kind of 
 ### How `blind profile` builds it
 
 `blind profile <inputs...>` reads CSV (`.csv`), TSV (`.tsv`, `.tab`), JSON (`.json`), JSONL
-(`.jsonl`, `.ndjson`), plain text (`.txt`, `.text`), Markdown (`.md`, `.markdown`) and logs (`.log`), writes `.blind/profile.json` (mode
+(`.jsonl`, `.ndjson`), XLSX workbooks (`.xlsx`), plain text (`.txt`, `.text`), Markdown (`.md`, `.markdown`) and logs (`.log`), writes `.blind/profile.json` (mode
 0600) and prints it as a table; `--json` prints the JSON instead. `k` is `[profile] samples` in
 `blind.toml`, or `--samples N`. When `samples` is unset, `k` follows `[privacy] mode`: 5 under
 `local-only` and `none`, 0 (headers and statistics only) under `profile-only`.
@@ -471,6 +508,9 @@ Pairs of locations that share values, which suggests they hold the same kind of 
   Every other document-derived string (headers, samples, outline, sentences) is cut as below.
 - **Key paths.** JSON key paths, like file paths, are never truncated; a JSON file with a key path
   over 120 characters is left out and listed under "not profiled".
+- **Workbooks.** Each worksheet is a table with its `sheet` name, read the way `blind apply` reads
+  it (shared strings resolved, numbers as written). Chart sheets have no table. A workbook that
+  cannot be read in full is left out and listed under "not profiled".
 - **Header row.** The earliest of the first 20 rows that fills more than half the table's width
   and whose filled cells are mostly text (contain a letter and are not a number). Rows above it,
   such as a title, are ignored. When no row qualifies, row 1 is used and a note says so.

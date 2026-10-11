@@ -5,6 +5,8 @@ import { processAuditIO, runAudit } from "./audit/command.ts";
 import { processBenchIO, runBench } from "./bench/command.ts";
 import { processIO, runInit } from "./init.ts";
 import { runProfile } from "./profile/command.ts";
+import { processRevealIO, runReveal } from "./reveal.ts";
+import { processRunIO, runRun } from "./run.ts";
 
 export const COMMANDS = [
   { name: "init", usage: "init [dir]", summary: "Write blind.toml (policy) and .blind/ (salt)" },
@@ -23,6 +25,8 @@ const HANDLERS: Partial<Record<(typeof COMMANDS)[number]["name"], (args: string[
   plan: (args) => runPlan(args, processPlanIO()),
   apply: (args) => runApply(args, processApplyIO()),
   audit: (args) => runAudit(args, processAuditIO()),
+  run: (args) => runRun(args, processRunIO()),
+  reveal: (args) => runReveal(args, processRevealIO()),
   bench: (args) => runBench(args, processBenchIO()),
 };
 

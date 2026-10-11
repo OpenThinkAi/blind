@@ -8,8 +8,8 @@ test("help lists every planned command", () => {
   for (const c of COMMANDS) expect(help).toContain(c.name);
 });
 
-test("stub commands exit 2", async () => {
-  expect(await main(["reveal"])).toBe(2);
+test("every command is wired: none is listed as not implemented", () => {
+  expect(helpText()).not.toContain("not implemented");
 });
 
 test("init is wired and no longer listed as not implemented", async () => {

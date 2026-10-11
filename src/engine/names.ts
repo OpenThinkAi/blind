@@ -64,7 +64,7 @@ export function rewriteSpans(value: string, spans: readonly Span[], pz: Pseudony
 }
 
 /** The part of a file name that is rewritten: everything before the extension the engine read it by. */
-function splitExtension(name: string): [string, string] {
+export function splitExtension(name: string): [string, string] {
   const dot = name.lastIndexOf(".");
   return dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
 }

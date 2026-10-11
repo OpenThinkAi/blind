@@ -356,6 +356,16 @@ describe("collision handling", () => {
     for (const v of real) expect(avoid.has(p.pseudonym("id", v))).toBe(false);
   });
 
+  test("a candidate whose suffix token equals an avoided real token is rejected", () => {
+    const first = fresh().pseudonym("id", "ledger-ref-1");
+    const token = first.slice("Id_".length);
+    const out = fresh({ avoid: [token] }).pseudonym("id", "ledger-ref-1");
+    expect(out).not.toBe(first);
+    expect(out).toMatch(/^Id_[0-9A-F]{4}$/);
+    expect(out).not.toContain(token);
+    expect(fresh({ avoid: [token] }).pseudonym("id", "ledger-ref-1")).toBe(out);
+  });
+
   test("avoidance applies to GUIDs regardless of case", () => {
     const first = fresh().pseudonym("id", "0f8fad5b-d9cb-469f-a165-70867728950e");
     const out = fresh({ avoid: [first.toUpperCase()] }).pseudonym("id", "0f8fad5b-d9cb-469f-a165-70867728950e");

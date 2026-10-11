@@ -105,19 +105,3 @@ export function renderCell(value: string, wasQuoted: boolean, delim: string): st
 export function serializeCsv(rows: readonly Row[], delim: string): string {
   return rows.map((r) => r.cells.map((c) => c.raw).join(delim) + r.eol).join("");
 }
-
-const NUMERIC_RE = /^[\s+\-−$€£¥%.,:/()#\d]*\d[\s+\-−$€£¥%.,:/()#\d]*$/;
-
-/**
- * The header row: the earliest row that is mostly non-numeric text (more than
- * half of its non-empty cells are not numbers). -1 when no row qualifies.
- */
-export function detectHeaderRow(rows: readonly Row[]): number {
-  for (let r = 0; r < rows.length; r++) {
-    const filled = (rows[r] as Row).cells.map((c) => c.value.trim()).filter((v) => v !== "");
-    if (filled.length === 0) continue;
-    const text = filled.filter((v) => !NUMERIC_RE.test(v)).length;
-    if (text * 2 > filled.length) return r;
-  }
-  return -1;
-}

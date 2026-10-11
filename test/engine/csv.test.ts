@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CsvError, detectHeaderRow, parseCsv, renderCell, serializeCsv, sniffDelimiter } from "../../src/engine/csv.ts";
+import { CsvError, parseCsv, renderCell, serializeCsv, sniffDelimiter } from "../../src/engine/csv.ts";
 
 const roundTrip = (text: string, delim = ",") => serializeCsv(parseCsv(text, delim), delim);
 
@@ -61,21 +61,5 @@ describe("renderCell", () => {
     expect(renderCell("a,b", false, ",")).toBe('"a,b"');
     expect(renderCell('say "x"', false, ";")).toBe('"say ""x"""');
     expect(renderCell("a,b", false, "\t")).toBe("a,b");
-  });
-});
-
-describe("detectHeaderRow", () => {
-  const rows = (text: string) => parseCsv(text, ",");
-  test("the first row when it is text", () => {
-    expect(detectHeaderRow(rows("Name,Code\nAvery,1\n"))).toBe(0);
-  });
-  test("skips blank and numeric rows above the header", () => {
-    expect(detectHeaderRow(rows(",,\n2026,10,11\nName,Code,Total\nAvery,1,2\n"))).toBe(2);
-  });
-  test("a row must be more than half text", () => {
-    expect(detectHeaderRow(rows("Total,1,2,3\nName,Code,Owner,Status\n"))).toBe(1);
-  });
-  test("-1 when every row is numeric", () => {
-    expect(detectHeaderRow(rows("1,2\n3.5,$4\n"))).toBe(-1);
   });
 });

@@ -226,6 +226,24 @@ describe("entities and patterns in free text (AC4)", () => {
   });
 });
 
+describe("header row (the profiler's rule)", () => {
+  test("a one-cell title line above the table is free text, not the header", () => {
+    const csv = "Prepared by Avery Quill\nOwner,Status\nAvery Quill,open\nRobin Example,open\n";
+    const s = spec({
+      columns: [rule("t.csv", "Owner", "person", "blind"), rule("t.csv", "Status", "vocabulary", "keep")],
+      entities: { person: [{ canonical: "Avery Quill", aliases: [], parts: [] }] },
+    });
+    const res = run([file("t.csv", csv)], s);
+    expect(res.files[0]).toMatchObject({ headerRow: 2, noHeader: false });
+    expect(text(res, "t.csv")).toMatch(/^Prepared by Person_[0-9A-F]{4}\nOwner,Status\nPerson_[0-9A-F]{4},open\n/);
+  });
+
+  test("with no header-like row, row 1 is used and the file says so", () => {
+    const res = run([file("t.csv", "1,2\n3,4\n")]);
+    expect(res.files[0]).toMatchObject({ headerRow: 1, noHeader: true });
+  });
+});
+
 describe("format fidelity (AC5)", () => {
   const OWNER = spec({ columns: [rule("t.csv", "Owner", "person", "blind")] });
   const OWNER_ORT = spec({ columns: [rule("t.csv", "Owner", "person", "blind"), rule("t.csv", "Ort", "location", "keep")] });

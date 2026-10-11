@@ -21,7 +21,9 @@
 
 import type { ColumnRule, EntityClassName, Spec, Treatment } from "../schema.ts";
 import type { PseudoClass } from "./canonical.ts";
-import { type Cell, CsvError, detectHeaderRow, parseCsv, renderCell, type Row, serializeCsv, sniffDelimiter } from "./csv.ts";
+// The profiler's header rule: spec rules name columns by the headers the profile reported.
+import { detectHeaderRow } from "../profile/table.ts";
+import { type Cell, CsvError, parseCsv, renderCell, type Row, serializeCsv, sniffDelimiter } from "./csv.ts";
 import { decode, type Encoding, EncodingError, encode } from "./encoding.ts";
 import type { BlindMap } from "./map.ts";
 import { type EntityEntry, Pseudonymizer } from "./pseudonym.ts";
@@ -84,8 +86,10 @@ export interface FileReport {
   encoding: Encoding;
   /** CSV/TSV only. */
   delimiter?: string;
-  /** CSV/TSV only: 1-based header row, or 0 when no row looks like a header. */
+  /** CSV/TSV only: 1-based header row (0 for an empty file). */
   headerRow?: number;
+  /** CSV/TSV only: no row looked like a header, so row 1 was used, as the profiler does. */
+  noHeader?: boolean;
   columns: ColumnReport[];
   /** Free-text replacements (text files, and header, preamble and kept cells of tables). */
   entityReplacements: number;
@@ -134,6 +138,7 @@ interface TablePlan {
   delim: string;
   rows: Row[];
   headerRow: number;
+  noHeader: boolean;
   /** Keyed by `${row}:${col}`. */
   edits: Map<string, CellEdit>;
   columns: ColumnReport[];
@@ -181,7 +186,9 @@ function planTable(
 ): TablePlan {
   const delim = format === "tsv" ? "\t" : sniffDelimiter(text);
   const rows = parseCsv(text, delim);
-  const headerRow = detectHeaderRow(rows);
+  // 0-based; like the profiler, row 1 stands in when no row looks like a header.
+  const detected = detectHeaderRow(rows.map((r) => r.cells.map((c) => c.value)));
+  const headerRow = rows.length === 0 ? -1 : (detected ?? 1) - 1;
   const headerCells = headerRow >= 0 ? (rows[headerRow] as Row).cells : [];
   const width = Math.max(0, ...rows.map((r) => r.cells.length));
   const headers = Array.from({ length: width }, (_, i) => headerCells[i]?.value ?? "");
@@ -242,7 +249,7 @@ function planTable(
       if (spans.length > 0) edits.set(`${r}:${col}`, { kind: "spans", spans });
     });
   }
-  return { kind: "table", format, input, encoding, text, delim, rows, headerRow, edits, columns };
+  return { kind: "table", format, input, encoding, text, delim, rows, headerRow, noHeader: rows.length > 0 && detected === null, edits, columns };
 }
 
 /** Tokens of a text, for the set of real values no pseudonym may equal. */
@@ -396,6 +403,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         encoding: p.encoding,
         delimiter: p.delim,
         headerRow: p.headerRow + 1,
+        noHeader: p.noHeader,
         columns: p.columns,
         entityReplacements,
         patternReplacements,

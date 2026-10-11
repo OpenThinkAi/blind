@@ -111,7 +111,7 @@ nothing written) if either is missing or the spec is invalid. Spec `file` values
 to an input directory, or the file name for a file named directly. This release handles CSV/TSV and
 text (`.txt`, `.md`, `.log`); any other file is listed and not written (exit 1).
 
-**Table columns.** The header row is the earliest row that is mostly non-numeric text.
+**Table columns.** The header row is found the same way `blind profile` finds it, so spec headers always match: the earliest of the first 20 rows that fills more than half the table's width and is mostly non-numeric text, or row 1 if no row qualifies.
 
 | Rule | Result |
 |---|---|

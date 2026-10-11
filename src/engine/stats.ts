@@ -3,7 +3,8 @@
 // pseudonymised with the neutral `Value_` class; a low-cardinality one (an
 // enum, a status) passes.
 
-import { DICTIONARY } from "./dictionary.ts";
+// The profiler's word list, so the engine and the profile agree on what a dictionary word is.
+import { DICTIONARY } from "../profile/words.ts";
 
 export interface ColumnStats {
   /** Non-empty values. */
@@ -12,7 +13,7 @@ export interface ColumnStats {
   distinctRatio: number;
   /** Digit characters ÷ all characters. */
   digitRatio: number;
-  /** Words found in the dictionary ÷ all words; 0 when there are no words. */
+  /** Words (runs of two or more letters, as the profiler counts them) found in the dictionary ÷ all words; 0 when there are none. */
   dictionaryRatio: number;
   /** Values that are Title-Case multi-word phrases ÷ count. */
   titleCaseRatio: number;
@@ -55,7 +56,7 @@ export function columnStats(values: readonly string[]): ColumnStats {
       chars++;
       if (ch >= "0" && ch <= "9") digits++;
     }
-    for (const w of v.match(/\p{L}+/gu) ?? []) {
+    for (const w of v.match(/\p{L}{2,}/gu) ?? []) {
       words++;
       if (DICTIONARY.has(w.toLowerCase())) known++;
     }

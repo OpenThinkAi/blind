@@ -127,7 +127,7 @@ export function renderReport(result: ApplyResult): string {
   for (const f of result.files) {
     const head: string[] = [f.format, f.encoding];
     if (f.delimiter !== undefined) head.push(`${DELIMITER_NAMES[f.delimiter] ?? "other"}-delimited`);
-    if (f.headerRow !== undefined) head.push(f.headerRow === 0 ? "no header row found" : `header row ${f.headerRow}`);
+    if (f.headerRow !== undefined) head.push(f.noHeader ? "no header row found, row 1 used" : `header row ${f.headerRow}`);
     lines.push(`${f.path} (${head.join(", ")})${f.changed ? "" : ": unchanged"}`);
     for (const c of f.columns) {
       const label = c.header === "" ? `column ${c.index + 1} (blank header)` : JSON.stringify(c.header);

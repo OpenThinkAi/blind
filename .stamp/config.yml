@@ -11,5 +11,3 @@ reviewers:
     prompt: .stamp/reviewers/standards.md
   product:
     prompt: .stamp/reviewers/product.md
-  example:
-    prompt: .stamp/reviewers/example.md

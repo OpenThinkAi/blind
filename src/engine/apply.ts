@@ -10,7 +10,8 @@
 // call order under collision. The second pass renders.
 //
 // Column treatments (design decision 4, fail closed):
-// - `keep` (any class, `vocabulary` included): byte-identical.
+// - `keep` (any class, `vocabulary` included): byte-identical, apart from
+//   recurring values (below).
 // - `blind` with a sensitive class: every non-empty cell gets that class's pseudonym.
 // - `blind` with `unknown`/`vocabulary`, or `value` with a sensitive class: a `Value_` pseudonym.
 // - `unknown` with `value`, and any column the spec does not mention: the
@@ -25,6 +26,13 @@
 // null are left alone. Keys that are record identifiers are the values of
 // their `.*~` path; other keys are free text, like a header row. Edits are
 // spliced into the original text, so layout and key order never change.
+//
+// Values a column pass pseudonymised recur (src/engine/recur.ts): after the
+// column decisions, every value one of them pseudonymised, and every value an
+// earlier map holds, is replaced wherever else it appears: in free text, in
+// cells kept as text or under `keep`, and in JSON strings and keys. A `keep`
+// cell changes only for such a value; spec entities and patterns in it are
+// still left as written and reported.
 //
 // Host matches under a keep-list domain are kept as written. Every output path
 // is blinded through src/engine/names.ts (patterns, entities and the column
@@ -41,7 +49,8 @@ import type { BlindMap } from "./map.ts";
 import { type EntityEntry, Pseudonymizer } from "./pseudonym.ts";
 import { type ColumnStats, columnStats, isIdentifierLike, THRESHOLDS } from "./stats.ts";
 import { NameRewriter, rewriteSpans } from "./names.ts";
-import { EntityMatcher, type ExtraForm, findSpans, keepDomains, type Span } from "./text.ts";
+import { recurrenceForms, TextScanner } from "./recur.ts";
+import { EntityMatcher, type ExtraForm, keepDomains, type Span } from "./text.ts";
 
 export type EngineFormat = "csv" | "tsv" | "json" | "jsonl" | "text";
 
@@ -116,6 +125,8 @@ export interface FileReport {
   /** Free-text replacements (text files, and header, preamble and kept cells of tables). */
   entityReplacements: number;
   patternReplacements: number;
+  /** Values pseudonymised by a column rule (or held by an earlier map) found again and replaced outside their column. */
+  mappedReplacements: number;
   /** Host names left as written because they are under a keep-list domain. */
   keptHosts: number;
   changed: boolean;
@@ -155,6 +166,15 @@ const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 type CellEdit = { kind: "pseudo"; cls: PseudoClass } | { kind: "spans"; spans: Span[] };
 
+/** Text scanned once every column is decided: a cell kept as text or under `keep`, a header, a JSON key. */
+interface Pending<K> {
+  key: K;
+  value: string;
+  keep: boolean;
+  /** The column a data cell belongs to; null for headers, preamble rows and structural keys. */
+  column: ColumnReport | null;
+}
+
 interface TablePlan {
   kind: "table";
   format: "csv" | "tsv";
@@ -167,6 +187,9 @@ interface TablePlan {
   noHeader: boolean;
   /** Keyed by `${row}:${col}`. */
   edits: Map<string, CellEdit>;
+  pending: Pending<string>[];
+  /** Values the column pass pseudonymised (columns classed `vocabulary` aside): they recur elsewhere. */
+  mapped: ExtraForm[];
   columns: ColumnReport[];
 }
 
@@ -175,6 +198,7 @@ interface TextPlan {
   input: InputFile;
   encoding: Encoding;
   text: string;
+  /** Filled once every column is decided. */
   spans: Span[];
 }
 
@@ -187,6 +211,8 @@ interface JsonPlan {
   tokens: JsonToken[];
   /** Keyed by token index. */
   edits: Map<number, CellEdit>;
+  pending: Pending<number>[];
+  mapped: ExtraForm[];
   columns: ColumnReport[];
 }
 
@@ -220,7 +246,15 @@ function outcomeOf(action: ColumnAction, stats: ColumnStats | undefined): Column
 }
 
 const isFilled = (c: Cell | undefined): c is Cell => c !== undefined && c.value.trim() !== "";
-const hasSensitive = (spans: readonly Span[]): boolean => spans.some((s) => s.cls !== null);
+
+/** Scan the pending text of a plan: free text gets every span, a `keep` cell only recurring values. */
+function scanPending<K>(pending: readonly Pending<K>[], edits: Map<K, CellEdit>, scanner: TextScanner): void {
+  for (const p of pending) {
+    if (p.keep && p.column !== null && scanner.flagged(p.value)) p.column.flagged++;
+    const spans = p.keep ? scanner.kept(p.value) : scanner.free(p.value);
+    if (spans.length > 0) edits.set(p.key, { kind: "spans", spans });
+  }
+}
 
 function planTable(
   input: InputFile,
@@ -228,7 +262,6 @@ function planTable(
   text: string,
   format: "csv" | "tsv",
   rules: readonly ColumnRule[],
-  spanner: (s: string) => Span[],
 ): TablePlan {
   const delim = format === "tsv" ? "\t" : sniffDelimiter(text);
   const rows = parseCsv(text, delim);
@@ -251,43 +284,53 @@ function planTable(
   }
 
   const edits = new Map<string, CellEdit>();
+  const pending: Pending<string>[] = [];
+  const mapped: ExtraForm[] = [];
   const columns: ColumnReport[] = [];
   const data = rows.slice(headerRow + 1);
   for (let col = 0; col < width; col++) {
     const header = headers[col] as string;
     const rule = rules.find((r) => (r.header as string).trim() === header.trim());
     const { action, stats } = decide(rule, data.map((r) => r.cells[col]?.value ?? ""));
-    let flagged = 0;
-    data.forEach((row, i) => {
-      const cell = row.cells[col];
-      if (!isFilled(cell)) return;
-      const key = `${headerRow + 1 + i}:${col}`;
-      if (action.kind === "pseudo") edits.set(key, { kind: "pseudo", cls: action.cls });
-      else {
-        const spans = spanner(cell.value);
-        if (action.kind === "keep") {
-          if (hasSensitive(spans)) flagged++;
-        } else if (spans.length > 0) edits.set(key, { kind: "spans", spans });
-      }
-    });
-    columns.push({
+    const column: ColumnReport = {
       index: col,
       header,
       class: rule?.class ?? "unknown",
       treatment: rule?.treatment ?? null,
       outcome: outcomeOf(action, stats),
       changed: 0,
-      flagged,
+      flagged: 0,
+    };
+    columns.push(column);
+    data.forEach((row, i) => {
+      const cell = row.cells[col];
+      if (!isFilled(cell)) return;
+      const key = `${headerRow + 1 + i}:${col}`;
+      if (action.kind === "pseudo") {
+        edits.set(key, { kind: "pseudo", cls: action.cls });
+        if (rule?.class !== "vocabulary") mapped.push({ cls: action.cls, value: cell.value });
+      } else pending.push({ key, value: cell.value, keep: action.kind === "keep", column });
     });
   }
   // Preamble rows and the header row are free text.
   for (let r = 0; r <= headerRow; r++) {
-    (rows[r] as Row).cells.forEach((cell, col) => {
-      const spans = spanner(cell.value);
-      if (spans.length > 0) edits.set(`${r}:${col}`, { kind: "spans", spans });
-    });
+    (rows[r] as Row).cells.forEach((cell, col) => pending.push({ key: `${r}:${col}`, value: cell.value, keep: false, column: null }));
   }
-  return { kind: "table", format, input, encoding, text, delim, rows, headerRow, noHeader: rows.length > 0 && detected === null, edits, columns };
+  return {
+    kind: "table",
+    format,
+    input,
+    encoding,
+    text,
+    delim,
+    rows,
+    headerRow,
+    noHeader: rows.length > 0 && detected === null,
+    edits,
+    pending,
+    mapped,
+    columns,
+  };
 }
 
 function planJson(
@@ -296,7 +339,6 @@ function planJson(
   text: string,
   format: JsonFormat,
   rules: readonly ColumnRule[],
-  spanner: (s: string) => Span[],
 ): JsonPlan {
   const tokens = format === "json" ? scanJson(text) : scanJsonl(text);
   // Key paths in first-seen order, with the tokens under each (literals too, so a path holding only nulls still exists).
@@ -317,24 +359,14 @@ function planJson(
   }
 
   const edits = new Map<number, CellEdit>();
+  const pending: Pending<number>[] = [];
+  const mapped: ExtraForm[] = [];
   const columns: ColumnReport[] = [];
   for (const [path, indices] of byPath) {
     const rule = rules.find((r) => r.jsonPath === path);
     const valued = indices.filter((i) => (tokens[i] as JsonToken).kind !== "literal");
     const { action, stats } = decide(rule, valued.map((i) => (tokens[i] as JsonToken).value));
-    let flagged = 0;
-    for (const i of valued) {
-      const value = (tokens[i] as JsonToken).value;
-      if (value.trim() === "") continue;
-      if (action.kind === "pseudo") edits.set(i, { kind: "pseudo", cls: action.cls });
-      else {
-        const spans = spanner(value);
-        if (action.kind === "keep") {
-          if (hasSensitive(spans)) flagged++;
-        } else if (spans.length > 0) edits.set(i, { kind: "spans", spans });
-      }
-    }
-    columns.push({
+    const column: ColumnReport = {
       index: columns.length,
       header: "",
       jsonPath: path,
@@ -342,16 +374,23 @@ function planJson(
       treatment: rule?.treatment ?? null,
       outcome: outcomeOf(action, stats),
       changed: 0,
-      flagged,
-    });
+      flagged: 0,
+    };
+    columns.push(column);
+    for (const i of valued) {
+      const value = (tokens[i] as JsonToken).value;
+      if (value.trim() === "") continue;
+      if (action.kind === "pseudo") {
+        edits.set(i, { kind: "pseudo", cls: action.cls });
+        if (rule?.class !== "vocabulary") mapped.push({ cls: action.cls, value });
+      } else pending.push({ key: i, value, keep: action.kind === "keep", column });
+    }
   }
   // Structural keys (field names) are free text, like a table's header row.
   tokens.forEach((t, i) => {
-    if (t.kind !== "key" || t.column !== null) return;
-    const spans = spanner(t.value);
-    if (spans.length > 0) edits.set(i, { kind: "spans", spans });
+    if (t.kind === "key" && t.column === null) pending.push({ key: i, value: t.value, keep: false, column: null });
   });
-  return { kind: "json", format, input, encoding, text, tokens, edits, columns };
+  return { kind: "json", format, input, encoding, text, tokens, edits, pending, mapped, columns };
 }
 
 /** A string literal with the spans replaced; every untouched character keeps its original escaping. */
@@ -371,12 +410,13 @@ function spliceString(raw: string, spans: readonly Span[], pz: Pseudonymizer): s
 function renderJson(
   p: JsonPlan,
   pz: Pseudonymizer,
-): { text: string; entityReplacements: number; patternReplacements: number; keptHosts: number } {
+): { text: string; entityReplacements: number; patternReplacements: number; mappedReplacements: number; keptHosts: number } {
   const byPath = new Map(p.columns.map((c) => [c.jsonPath as string, c]));
   // Per object, each output key and the input key it came from: two input keys must never become one.
   const keys = new Map<number, Map<string, string>>();
   let entityReplacements = 0;
   let patternReplacements = 0;
+  let mappedReplacements = 0;
   let keptHosts = 0;
   let out = "";
   let at = 0;
@@ -389,6 +429,7 @@ function renderJson(
         value = rewriteSpans(t.value, edit.spans, pz);
         entityReplacements += count(edit.spans, "entity");
         patternReplacements += count(edit.spans, "pattern");
+        mappedReplacements += count(edit.spans, "map");
         keptHosts += keptHostCount(edit.spans);
       }
       if (value !== t.value) {
@@ -413,7 +454,7 @@ function renderJson(
       keys.set(t.object as number, seen);
     }
   });
-  return { text: out + p.text.slice(at), entityReplacements, patternReplacements, keptHosts };
+  return { text: out + p.text.slice(at), entityReplacements, patternReplacements, mappedReplacements, keptHosts };
 }
 
 /** Tokens of a text, for the set of real values no pseudonym may equal. */
@@ -434,9 +475,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       throw new ApplyError(`two inputs share the path ${JSON.stringify((sorted[i] as InputFile).path)}`);
     }
   }
-  const matcher = new EntityMatcher(spec.entities);
   const keep = keepDomains(opts.keep ?? []);
-  const spanner = (s: string): Span[] => findSpans(s, matcher, spec.patterns, keep);
   const rulesByFile = new Map<string, ColumnRule[]>();
   for (const rule of spec.columns) {
     const list = rulesByFile.get(rule.file) ?? [];
@@ -465,12 +504,12 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       if (rules.length > 0) {
         throw new ApplyError(`${input.path}: the spec has column rules for a text file; column rules apply to tables only`);
       }
-      plans.push({ kind: "text", input, encoding: decoded.encoding, text: decoded.text, spans: spanner(decoded.text) });
+      plans.push({ kind: "text", input, encoding: decoded.encoding, text: decoded.text, spans: [] });
       continue;
     }
     if (format === "json" || format === "jsonl") {
       try {
-        plans.push(planJson(input, decoded.encoding, decoded.text, format, rules, spanner));
+        plans.push(planJson(input, decoded.encoding, decoded.text, format, rules));
       } catch (e) {
         if (!(e instanceof JsonError)) throw e;
         skipped.push({ path: input.path, reason: `malformed ${format.toUpperCase()}: ${e.message}; not written` });
@@ -478,7 +517,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       continue;
     }
     try {
-      plans.push(planTable(input, decoded.encoding, decoded.text, format, rules, spanner));
+      plans.push(planTable(input, decoded.encoding, decoded.text, format, rules));
     } catch (e) {
       if (!(e instanceof CsvError)) throw e;
       skipped.push({ path: input.path, reason: `malformed ${format.toUpperCase()}: ${e.message}; not written` });
@@ -502,6 +541,20 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   const nameMatcher = new EntityMatcher(spec.entities, columnValues);
   const names = new NameRewriter(nameMatcher, spec.patterns, keep);
   for (const p of plans) names.planPath(p.input.path);
+
+  // Every column is decided: scan the rest of the text for patterns, entities and the values the
+  // column pass (or an earlier map) pseudonymised.
+  const forms = recurrenceForms(
+    plans.flatMap((p) => (p.kind === "text" ? [] : p.mapped)),
+    spec.entities,
+    opts.map,
+  );
+  const scanner = new TextScanner(spec.entities, spec.patterns, keep, forms);
+  for (const p of plans) {
+    if (p.kind === "text") p.spans = scanner.free(p.text);
+    else if (p.kind === "json") scanPending(p.pending, p.edits, scanner);
+    else scanPending(p.pending, p.edits, scanner);
+  }
 
   // Every real value in the corpus, so no pseudonym equals one.
   const avoid = new Set<string>();
@@ -577,6 +630,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         outputPath: p.input.path,
         entityReplacements: count(p.spans, "entity"),
         patternReplacements: count(p.spans, "pattern"),
+        mappedReplacements: count(p.spans, "map"),
         keptHosts: keptHostCount(p.spans),
         changed: false,
       };
@@ -591,12 +645,14 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         columns: p.columns,
         entityReplacements: r.entityReplacements,
         patternReplacements: r.patternReplacements,
+        mappedReplacements: r.mappedReplacements,
         keptHosts: r.keptHosts,
         changed: false,
       };
     } else {
       let entityReplacements = 0;
       let patternReplacements = 0;
+      let mappedReplacements = 0;
       let keptHosts = 0;
       for (const [key, edit] of p.edits) {
         const [r, c] = key.split(":").map(Number) as [number, number];
@@ -607,6 +663,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
           value = rewriteSpans(cell.value, edit.spans, pz);
           entityReplacements += count(edit.spans, "entity");
           patternReplacements += count(edit.spans, "pattern");
+          mappedReplacements += count(edit.spans, "map");
           keptHosts += keptHostCount(edit.spans);
         }
         if (value === cell.value) continue;
@@ -626,6 +683,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         columns: p.columns,
         entityReplacements,
         patternReplacements,
+        mappedReplacements,
         keptHosts,
         changed: false,
       };

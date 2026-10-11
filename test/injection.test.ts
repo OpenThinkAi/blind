@@ -389,6 +389,9 @@ describe("the mechanical audit does not depend on a model", () => {
       expect(withModels.report.status).toBe("leak");
       const planted = withModels.report.files.find((f) => f.path === "planted.txt");
       expect(planted?.findings).toEqual([expect.objectContaining({ severity: "leak", source: "map", class: "email" })]);
+      // The owner names the heuristic spec pseudonymised in staff.csv are replaced in notes.txt too (AGT-1779).
+      const notes = withModels.report.files.find((f) => f.path === "notes.txt");
+      expect(notes?.findings.filter((f) => f.severity === "leak")).toEqual([]);
 
       // The same report with models switched off entirely: the result does not depend on them.
       writePolicy((p) => (p.privacy.mode = "none"));

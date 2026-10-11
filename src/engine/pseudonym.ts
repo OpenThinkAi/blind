@@ -247,11 +247,28 @@ export class Pseudonymizer {
       const candidate = render(new ByteStream(this.salt, msg));
       if (candidate === canonical || candidate === surface) continue;
       if (this.avoid.has(candidate) || this.issued.has(candidate)) continue;
+      if (this.suffixAvoided(candidate)) continue;
       this.issued.add(candidate);
       this.entries.set(`${kind}\0${canonical}`, { kind, canonical, value: surface, pseudonym: candidate });
       return candidate;
     }
     throw new PseudonymError(`no free ${kind} pseudonym after ${MAX_ATTEMPTS} attempts`);
+  }
+
+  /**
+   * True when the variable part of a candidate (the hex suffix, or a whole
+   * numeric ID) equals a real token, so a reader could not tell it from that
+   * real value. The fixed literals (Id_, host-, user_) are not checked: they
+   * are common words and would reject every candidate. IPv4 and GUID forms are
+   * checked whole only.
+   */
+  private suffixAvoided(candidate: string): boolean {
+    const m = /^(?:(?:Person|Org|Host|Id|Value|Loc)_|host-|user_)([0-9A-Za-z]+)$/.exec(candidate);
+    const variable = m?.[1] ?? (/^\d+$/.test(candidate) ? candidate : undefined);
+    if (variable === undefined) return false;
+    return (
+      this.avoid.has(variable) || this.avoid.has(variable.toLowerCase()) || this.avoid.has(variable.toUpperCase())
+    );
   }
 
   /** Record a pseudonym built from already-unique components (hostnames, emails). */

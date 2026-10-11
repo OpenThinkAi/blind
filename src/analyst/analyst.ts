@@ -19,6 +19,13 @@ export class AnalystError extends Error {
 /** Options a question about a column may offer: a treatment, or a class to give the column. */
 export const COLUMN_ANSWERS: readonly string[] = ["blind", "keep", "value", "person", "org", "host", "email", "id", "location", "vocabulary"];
 
+/**
+ * What the analyst may reply: the spec schema without `seen`, which only blind writes (it
+ * records what the analyst has read, so a reply that set it could hide excerpts from later runs).
+ */
+const { seen: _seen, ...proposalProperties } = specSchema.properties;
+const proposalSchema = { ...specSchema, properties: proposalProperties };
+
 export const locationKey = (l: Location): string => JSON.stringify([l.file, l.sheet ?? null, l.header ?? null, l.jsonPath ?? null]);
 
 const where = (l: Location): string => `${l.file} ${JSON.stringify(l.header ?? l.jsonPath ?? "")}`;
@@ -32,10 +39,15 @@ export function checkProposal(spec: Spec, profile: Profile): SchemaIssue[] {
     if (!known.has(locationKey(c))) issues.push({ path: `$.columns[${i}]`, message: `${where(c)} is not a column or key in the profile` });
     if (c.source !== "analyst") issues.push({ path: `$.columns[${i}].source`, message: `must be "analyst", got ${JSON.stringify(c.source)}` });
   });
+  const asked = new Map<string, number>();
   spec.questions.forEach((q, i) => {
     if (q.id.includes("=")) issues.push({ path: `$.questions[${i}].id`, message: `must not contain "="` });
     if (q.answer !== null) issues.push({ path: `$.questions[${i}].answer`, message: "must be null: only the human answers" });
     if (q.about === undefined) return;
+    // One question per column: answering one would decide the column while the other stayed open.
+    const first = asked.get(locationKey(q.about));
+    if (first !== undefined) issues.push({ path: `$.questions[${i}].about`, message: `same column as $.questions[${first}].about; ask once per column` });
+    else asked.set(locationKey(q.about), i);
     if (!known.has(locationKey(q.about))) {
       issues.push({ path: `$.questions[${i}].about`, message: `${where(q.about)} is not a column or key in the profile` });
     }
@@ -68,18 +80,28 @@ export function completeProposal(spec: Spec, profile: Profile, policy: Pick<Poli
   return { spec: { ...spec, columns }, filled };
 }
 
-/** Asks the configured analyst for a spec. Throws ModelError (transport, privacy) or AnalystError (bad proposal). */
+/**
+ * Sends the analyst `sent` (the whole profile, or on a re-plan only what the saved spec lacks)
+ * and returns its checked proposal. Column names are checked against `known`, the whole profile,
+ * so a reply about a saved column reaches the merge and is reported there, not lost.
+ * Throws ModelError (transport, privacy) or AnalystError (bad proposal).
+ */
+export async function proposeSpec(sent: Profile, known: Profile, policy: Policy, opts: Omit<AskOptions, "policy">): Promise<Spec> {
+  const proposal = await ask<Spec>("analyst", systemPrompt(policy), analystPrompt(sent, policy), proposalSchema, { ...opts, policy });
+  const issues = checkProposal(proposal, known);
+  if (issues.length > 0) {
+    throw new AnalystError(`the analyst's spec was rejected:\n${issues.map((i) => `  ${i.path}: ${i.message}`).join("\n")}`);
+  }
+  return proposal;
+}
+
+/** Asks the configured analyst for a spec of the whole profile, completed with heuristic rules. */
 export async function runAnalyst(
   profile: Profile,
   policy: Policy,
   opts: Omit<AskOptions, "policy">,
 ): Promise<{ spec: Spec; filled: Location[] }> {
-  const proposal = await ask<Spec>("analyst", systemPrompt(policy), analystPrompt(profile, policy), specSchema, { ...opts, policy });
-  const issues = checkProposal(proposal, profile);
-  if (issues.length > 0) {
-    throw new AnalystError(`the analyst's spec was rejected:\n${issues.map((i) => `  ${i.path}: ${i.message}`).join("\n")}`);
-  }
-  return completeProposal(proposal, profile, policy);
+  return completeProposal(await proposeSpec(profile, profile, policy, opts), profile, policy);
 }
 
 /**
@@ -99,6 +121,12 @@ export function answerQuestion(spec: Spec, id: string, option: string, policy: P
   if (question.about === undefined) return { ...spec, questions };
 
   const key = locationKey(question.about);
+  const other = spec.questions.find((q) => q !== question && q.about !== undefined && locationKey(q.about) === key);
+  if (other !== undefined) {
+    throw new AnalystError(
+      `questions ${id} and ${other.id} are both about ${where(question.about)}, so answering one would decide the column while the other stays; delete one of them from the spec, then answer the other`,
+    );
+  }
   const index = spec.columns.findIndex((c) => locationKey(c) === key);
   const rule = spec.columns[index];
   if (rule === undefined) throw new AnalystError(`question ${id} is about ${where(question.about)}, which has no column rule in the spec`);

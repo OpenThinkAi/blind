@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { answerQuestion } from "../../src/analyst/analyst.ts";
+import { answerQuestion, checkProposal } from "../../src/analyst/analyst.ts";
 import { HEURISTIC_RATE, heuristicPatterns, heuristicRule } from "../../src/analyst/heuristic.ts";
 import { analystPrompt, systemPrompt } from "../../src/analyst/prompt.ts";
 import { profilePayload } from "../../src/model.ts";
@@ -111,5 +111,33 @@ describe("answerQuestion", () => {
     const s = answerQuestion(spec(), "q2", "yes", policy);
     expect(s.columns).toEqual(spec().columns);
     expect(s.questions[1]?.answer).toBe("yes");
+  });
+
+  test("refuses to answer one of two questions about the same column", () => {
+    const base = spec();
+    base.questions[1] = { id: "q2", text: "Hide col?", options: ["blind", "keep"], answer: null, about: loc };
+    expect(() => answerQuestion(base, "q1", "person", policy)).toThrow(/questions q1 and q2 are both about a\.csv "col"/);
+    expect(() => answerQuestion(base, "q2", "keep", policy)).toThrow(/delete one of them/);
+  });
+});
+
+describe("checkProposal", () => {
+  test("rejects two questions about the same column, and accepts one", () => {
+    const profile: Profile = {
+      version: 1, sampleCount: 0, files: [{ path: "a.csv", format: "csv", size: 10 }],
+      tables: [{ file: "a.csv", headerRow: 1, columns: [{ header: "col", stats: stats() }] }],
+      jsonKeys: [], documents: [], transcripts: [], cooccurrence: [],
+    };
+    const q = (id: string) => ({ id, text: `Hide col (${id})?`, options: ["blind", "keep"], answer: null, about: loc });
+    const proposal: Spec = {
+      version: 1,
+      columns: [{ ...loc, class: "unknown", treatment: "value", confidence: 0, source: "analyst" }],
+      entities: {},
+      patterns: { ip: true, email: true, host: true, guid: true, mac: false },
+      questions: [q("q1")],
+    };
+    expect(checkProposal(proposal, profile)).toEqual([]);
+    proposal.questions.push(q("q2"));
+    expect(checkProposal(proposal, profile)).toEqual([{ path: "$.questions[1].about", message: "same column as $.questions[0].about; ask once per column" }]);
   });
 });

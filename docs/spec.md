@@ -43,7 +43,7 @@ Field names are camelCase. All examples below are synthetic.
 }
 ```
 
-All five top-level fields are required.
+The first five top-level fields are required; [`seen`](#seen) is optional.
 
 ### `version`
 
@@ -115,6 +115,36 @@ that column's rule as your decision (`source: "human"`, `confidence: 1`):
 | `value` | treatment `value`; on an `unknown` column, treatment `blind`, so it is always pseudonymised |
 | `keep` | treatment `keep`; an `unknown` column becomes `vocabulary` |
 | a class name | that class, treatment `blind` if the policy calls it sensitive, otherwise `keep` |
+
+A column has at most one question. The analyst's reply is rejected if two of its questions are
+about the same column, and `--answer` refuses to answer either of two such questions in a
+hand-edited spec until one is deleted.
+
+### `seen`
+
+Fingerprints of the document and transcript excerpts (outline entries, sample sentences, speakers,
+sample lines) the analyst has already read: the first 16 hex digits of each excerpt's SHA-256,
+sorted and unique. `blind plan` writes it; the analyst cannot. Delete an entry, or the whole field,
+to have those excerpts sent again.
+
+## Re-planning with a saved spec
+
+`blind plan <inputs>` reuses `.blind/spec.json` when it exists (`--force` ignores it and plans from
+scratch, losing its edits and answers). The saved spec is validated first; an invalid one stops the
+plan (exit 2) before anything is profiled or sent.
+
+- **What is sent.** The analyst gets a profile of only what the spec does not cover: columns and
+  key paths with no rule, and excerpts not in `seen`. When nothing is new, no model is called.
+- **What the analyst may change.** It may add column rules, entities and questions. It may
+  classify a saved rule that is its own (`source: "analyst"`), `unknown`, and not the subject of a
+  question. Everything else saved is kept exactly as it was, so a rule with `source: "human"` and
+  an answered question are written back byte-identical. A reply that would change a saved rule,
+  ask again about a column that already has a question, change a saved entity or flip a pattern
+  has that part dropped and listed. A new entity's alias or part that is already a form of a saved
+  entity is left out of it and listed. A new question whose id is taken gets the next free `qN`.
+- **The report.** After the spec, `blind plan` prints what was added, classified and dropped.
+  `--json` prints that report as JSON instead of the spec:
+  `{ "spec", "reused", "added": { "columns", "entities", "questions" }, "classified", "dropped", "notes" }`.
 
 ## How `blind apply` uses the spec
 

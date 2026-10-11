@@ -172,6 +172,34 @@ byte. The reversal map goes to `.blind/map.json`, or to `--map-out <path>`, crea
 It may not sit inside the output or an input. An existing map at that path is reused, so earlier
 pseudonyms stay the same.
 
+## How `blind audit` checks the output
+
+`blind audit <out>` reads `.blind/spec.json` and the map (`.blind/map.json`, or `--map <path>`)
+and checks the output tree as it is on disk, independently of how `blind apply` wrote it. This
+release runs the mechanical layer only (no model).
+
+- **What is read.** Every entry under `<out>`, hidden ones included. Each file's raw bytes are read
+  as Latin-1, UTF-8 and UTF-16 (both byte orders, both alignments), and each of those again with
+  XML character references, `%XX` escapes and backslash escapes undone. Zip archives (xlsx, docx,
+  anything starting `PK`) are opened recursively, up to 8 levels deep. File, directory and member
+  names are read too. Symbolic links are not followed.
+- **What it looks for.** Every spec entity form (canonical, aliases, parts; `vocabulary` excepted),
+  every original value in the map (surface and canonical form), and every match of an enabled
+  pattern that is not a pseudonym. Text that is a pseudonym or a `vocabulary` form is never a finding.
+- **`leak`**: a whole-word survivor in the case the engine would have replaced.
+- **`candidate`**: a case, accent or width variant; a value inside a longer word (4 characters or
+  more); a value under 3 characters; a host label or email local part of a blinded value; a column
+  the spec declares `unknown`; a CSV/TSV column with no spec rule; an unanswered spec question; and
+  anything the audit could not read in full (undecodable or encrypted archive members, binary
+  content, images, symbolic links, unreadable files).
+
+Status is `leak` if any leak, else `candidates` if any candidate, else `clean`. Exit status: 0
+clean, 1 candidates, 2 leak, 3 the audit could not run (usage error, or a missing or invalid spec
+or map; nothing audited). The report (a table, or `--json`) gives file, zip member, byte offset and
+line, class and a masked value: the first two characters (never more than half), `***`, and the
+length. `clean` means only that this check found nothing it knows to look for; it is not a
+guarantee that nothing identifying remains.
+
 ## Profile
 
 ```json
@@ -356,7 +384,8 @@ Pairs of locations that share values, which suggests they hold the same kind of 
 ## Privacy modes
 
 `[privacy] mode` in `blind.toml` decides what a model call may do. Every check runs before
-anything is sent; a refused call exits 2 and names the mode. There is no fallback to another mode
+anything is sent; a refused call exits 2 and names the mode (except under `blind audit`, where 2
+means a leak: there a refused call exits 3, "the audit could not run"). There is no fallback to another mode
 or backend.
 
 | Mode | Model calls | What is sent |

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
+import { AUDITOR_SYSTEM } from "../src/audit/auditor.ts";
 import { ACCOUNTS_CSV, generateKit, writeKit } from "../src/bench/synth.ts";
 import { defaultPolicy, renderPolicy } from "../src/policy.ts";
 import { type RunIO, runRun } from "../src/run.ts";
@@ -71,6 +72,7 @@ describe("blind run, in process", () => {
     writeFileSync(join(dir, ".blind", "salt"), Buffer.from(Array.from({ length: 32 }, (_, i) => i + 5)), { mode: 0o600 });
     const p = defaultPolicy();
     p.models.analyst = { backend: "openai-compatible", url: "http://127.0.0.1:9/v1", model: "fake-analyst", key_env: "" };
+    p.models.auditor = { backend: "openai-compatible", url: "http://127.0.0.1:9/v1", model: "fake-auditor", key_env: "" };
     writeFileSync(join(dir, "blind.toml"), renderPolicy(p));
     mkdirSync(join(dir, "in"));
     writeFileSync(join(dir, "in", "hosts.csv"), "Box,Status\n192.0.2.10,open\n192.0.2.11,closed\n198.51.100.7,open\n203.0.113.9,closed\n192.0.2.12,open\n");
@@ -88,15 +90,18 @@ describe("blind run, in process", () => {
     return { code, out: o, err: e };
   }
 
-  test("a corpus the saved spec covers makes no model call", async () => {
+  test("a corpus the saved spec covers makes no analyst call", async () => {
     expect((await run(["in", "-o", "out", "--no-model", "--yes"])).code).toBeLessThan(3);
-    let calls = 0;
-    const fetch = (async () => {
-      calls++;
+    const systems: string[] = [];
+    const fetch = (async (_input: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { messages: { content: string }[] };
+      systems.push(body.messages[0]?.content ?? "");
       throw new Error("no model in tests");
     }) as unknown as typeof globalThis.fetch;
     const r = await run(["in", "-o", "out2"], { fetch });
-    expect(calls).toBe(0);
+    // Only the audit's model layer called (and failed, which it reports as a candidate).
+    expect(systems.length).toBeGreaterThan(0);
+    expect(systems.every((s) => s === AUDITOR_SYSTEM)).toBe(true);
     expect(r.out).toContain("so no model was called");
     expect(r.out).toContain("reused unchanged");
     expect(r.code).toBeLessThan(3);

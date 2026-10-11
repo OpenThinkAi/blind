@@ -1,6 +1,6 @@
 // `blind run <inputs> -o <out>`: plan, apply and audit in one pass, through the
 // commands themselves. Plan reuses the saved spec, so a corpus it already covers
-// makes no model call. When the plan added anything to the spec (or there was no
+// makes no analyst call (the audit's model layer still runs unless --no-model). When the plan added anything to the spec (or there was no
 // saved spec), run stops for review with exit 3 and prints what changed, unless
 // --yes. Otherwise apply, then audit; the audit's status and exit code are run's,
 // raised to at least 1 when plan or apply left inputs out. A step that refuses
@@ -22,7 +22,7 @@ export interface RunIO {
   err: NodeJS.WritableStream;
   /** The corpus workspace: where blind.toml and .blind/ live. */
   cwd: string;
-  /** Test seams, passed through to plan's model call. */
+  /** Test seams, passed through to plan's and audit's model calls. */
   model?: PlanIO["model"];
 }
 
@@ -41,7 +41,7 @@ const RUN_HELP = [
   "Options:",
   "  -o, --out <dir>       Output directory (must not overlap an input)",
   "      --yes             Apply even when the plan changed the spec",
-  "      --no-model        Heuristic analyst only (see `blind plan --help`)",
+  "      --no-model        Heuristic analyst only, and no model audit layer (see `blind plan --help`, `blind audit --help`)",
   "      --quiet           Do not print the per-call model line",
   "      --map-out <path>  Where apply writes the map, and audit reads it (default .blind/map.json)",
   "  -h, --help            Show this help",

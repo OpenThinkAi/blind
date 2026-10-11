@@ -164,10 +164,9 @@ describe("walking skeleton on synthetic kit v1", () => {
   });
 });
 
-// AGT-1779: values from blinded columns that recur in free text are not replaced there (they are
-// neither spec entities nor pattern matches). The engine fix is in flight; when it lands, this test
-// starts passing and `test.failing` turns it red, so flip it to `test`.
-test.failing("AGT-1779: blinded column values cited in prose are replaced there too", () => {
+// AGT-1779: values from blinded columns that recur in free text (neither spec entities nor
+// pattern matches) are replaced there too, by src/engine/recur.ts.
+test("AGT-1779: blinded column values cited in prose are replaced there too", () => {
   const kit = generateKit(undefined, { recurInProse: true });
   const run = runSkeleton(kit);
   try {

@@ -244,9 +244,9 @@ a column rule replaced, so `reviews/Robin Example.md` is written as `reviews/Per
 `Robin Example` is a blinded `Owner`. Names use the same pseudonyms as the content. Names are
 also searched piece by piece between underscores (`backup_db01.example.com.txt`). The report lists each renamed file
 (`written as ...`). Two inputs whose blinded names coincide are refused (exit 2, nothing written).
-Every pseudonym used in a name is in the reversal map, so names are as reversible as the content;
-`blind reveal` is not built yet, and until it is, restore names by looking each pseudonym up in the
-map. Worksheet, defined and table names in a workbook are rewritten the same way (see below).
+Every pseudonym used in a name is in the reversal map, so names are as reversible as the content:
+`blind reveal` restores file and folder names (see [below](#how-blind-reveal-reverses-a-blinded-file)).
+Worksheet, defined and table names in a workbook are rewritten the same way (see below).
 
 **XLSX workbooks.** Handled at the zip and XML level; every byte not rewritten is copied as it
 was. Each worksheet is a table: the header row is found as above, and rules name a column by
@@ -285,12 +285,58 @@ is an error). The column table above applies to every cell, with these workbook 
   workbook (listed and not written, exit 1), naming the part and element but never the value. So
   does a member that cannot be parsed, a cell without a reference, and a zip that is not a workbook.
   Members that are not XML (images, printer settings) are copied unread and listed in the report.
-
 **Output.** Delimiter, quoting, line endings and encoding (UTF-8 with or without BOM, UTF-16 with
 BOM, otherwise 8-bit bytes) are preserved, and a file with nothing to replace is copied byte for
 byte. The reversal map goes to `.blind/map.json`, or to `--map-out <path>`, created with mode 0600.
 It may not sit inside the output or an input. An existing map at that path is reused, so earlier
 pseudonyms stay the same.
+
+## How `blind run` chains the steps
+
+`blind run <inputs> -o <out>` runs `blind plan`, `blind apply` and `blind audit` in turn, through
+the same code as the commands themselves.
+
+- **Plan** reuses `.blind/spec.json` as `blind plan` does: only what it does not cover goes to the
+  analyst, and nothing does when it covers everything.
+- **Stop for review.** When there was no saved spec, or the plan added a column rule, an entity or
+  a question or classified a rule, `run` prints the spec (and what changed) and stops with exit 3
+  before anything is applied. Review the spec, then run again: the spec is saved, so the next run
+  goes on. `--yes` applies without stopping. A plan that adds nothing does not stop, so a second
+  run on the same corpus is zero-touch.
+- **Apply, then audit** over `<out>` with the same map (`--map-out <path>`, default
+  `.blind/map.json`).
+- **Exit status** is the audit's: 0 clean, 1 candidates, 2 leak. It is at least 1 when plan or
+  apply left inputs out (they are listed). 3 means `run` stopped for review, or a step refused or
+  failed (a usage error, an invalid spec, an apply refusal), and nothing was audited; it is never
+  2, which means a leak was found.
+
+## How `blind reveal` reverses a blinded file
+
+`blind reveal <path> [--map <map.json>]` takes a blinded file, or a blinded tree, and the map
+`blind apply` wrote (default `.blind/map.json`). It needs no salt and no spec.
+
+- **What is restored.** Every pseudonym the map records, in the content and in folder names and
+  file names (not the extension, which apply never changes), is replaced with the original value
+  the map records for it. That value is one written form per identity, so an alias or a case
+  variant comes back as that recorded form, and a number that apply had to write as a JSON string
+  stays a string. A pseudonym is matched as a whole token (not beside a letter or digit, not
+  inside a longer dotted name; `_` separates tokens, as in blinded file names), longest first.
+  Text that happens to equal a pseudonym is restored too.
+- **Formats.** CSV/TSV cell by cell (a restored value that needs quoting is quoted), JSON and JSONL
+  string by string (spliced in, the rest of the text unchanged), and text (`.txt`, `.md`, `.log`),
+  with the file's encoding kept. Other formats, XLSX and DOCX among them, have no reversal path yet: a single file is refused
+  (exit 2); in a tree it is listed and not revealed (exit 1). A file that does not parse is treated
+  the same way. Two keys of one JSON object, or two files, that would reveal to the same name are
+  refused (exit 2, nothing written).
+- **Where it goes.** Revealed files hold the original values, so they are secrets like the map.
+  They are written under `.blind/revealed/` (or `-o <dir>`), with each file's revealed name and
+  path, folders mode 0700 and files mode 0600 (created that way, never changed afterwards). `-o`
+  may not be inside or around the tree being revealed, nor in the folder that holds a blinded
+  file (except under `.blind/`), so revealed output is never mistaken for blinded output. An
+  existing revealed file is not replaced without `--force`. The report names files by their
+  blinded paths only.
+- **Exit status.** 0 everything revealed; 1 some files not revealed (listed); 2 refused (usage
+  error, a missing or invalid map, a destination rule above), nothing written.
 
 ## How `blind audit` checks the output
 

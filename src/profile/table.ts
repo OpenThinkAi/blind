@@ -1,62 +1,24 @@
-// CSV and TSV: parsing, header-row detection and per-column statistics.
+// CSV and TSV: parsing (via the engine tokenizer), header-row detection and per-column statistics.
 
 import type { ProfileTable } from "../schema.ts";
+import { CsvError, parseCsv, sniffDelimiter } from "../engine/csv.ts";
 import { excerpt, valueStats } from "./stats.ts";
 
 export class ParseError extends Error {
   override name = "ParseError";
 }
 
-/** RFC 4180 CSV: quoted fields with "" escapes, embedded newlines, CRLF, LF or CR line ends. */
-export function parseCsv(text: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let field = "";
-  let i = 0;
-  let quoted = false;
-  let quoteRow = 0;
-  const endRow = () => {
-    row.push(field);
-    rows.push(row);
-    row = [];
-    field = "";
-  };
-  while (i < text.length) {
-    const c = text[i];
-    if (quoted) {
-      if (c === '"') {
-        if (text[i + 1] === '"') {
-          field += '"';
-          i += 2;
-          continue;
-        }
-        quoted = false;
-      } else field += c;
-      i++;
-      continue;
-    }
-    if (c === '"' && field === "") {
-      quoted = true;
-      quoteRow = rows.length + 1;
-    } else if (c === ",") {
-      row.push(field);
-      field = "";
-    } else if (c === "\r" || c === "\n") {
-      endRow();
-      if (c === "\r" && text[i + 1] === "\n") i++;
-    } else field += c;
-    i++;
+/**
+ * Parses CSV or TSV with the engine's tokenizer, so the profiler and `blind apply` always agree on
+ * delimiter, quoting and column counts. CSV guesses its delimiter (`,` `;` `|` tab); TSV is always tab.
+ */
+export function parseTable(text: string, format: "csv" | "tsv"): string[][] {
+  try {
+    return parseCsv(text, format === "tsv" ? "\t" : sniffDelimiter(text)).map((r) => r.cells.map((c) => c.value));
+  } catch (e) {
+    if (e instanceof CsvError) throw new ParseError(e.message);
+    throw e;
   }
-  if (quoted) throw new ParseError(`unterminated quoted field starting in row ${quoteRow}`);
-  if (field !== "" || row.length > 0) endRow();
-  return rows;
-}
-
-/** TSV (IANA text/tab-separated-values): one record per line, fields split on tabs, no quoting. */
-export function parseTsv(text: string): string[][] {
-  const lines = text.split(/\r\n|\n|\r/);
-  if (lines.at(-1) === "") lines.pop();
-  return lines.map((line) => line.split("\t"));
 }
 
 /** How many leading rows are searched for the header. */

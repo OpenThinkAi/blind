@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { detectHeaderRow, ParseError, parseCsv, parseTsv, profileTable } from "../../src/profile/table.ts";
+import { detectHeaderRow, ParseError, parseTable, profileTable } from "../../src/profile/table.ts";
 
-describe("parseCsv", () => {
+describe("parseTable", () => {
   test("quoted fields, escaped quotes, embedded newlines and CRLF", () => {
     const text = 'name,note\r\n"Quill, Avery","said ""hi""\nthen left"\r\nRobin,plain\r\n';
-    expect(parseCsv(text)).toEqual([
+    expect(parseTable(text, "csv")).toEqual([
       ["name", "note"],
       ["Quill, Avery", 'said "hi"\nthen left'],
       ["Robin", "plain"],
@@ -12,17 +12,20 @@ describe("parseCsv", () => {
   });
 
   test("a last line without a newline and empty fields", () => {
-    expect(parseCsv("a,,c\n,b,")).toEqual([["a", "", "c"], ["", "b", ""]]);
+    expect(parseTable("a,,c\n,b,", "csv")).toEqual([["a", "", "c"], ["", "b", ""]]);
   });
 
   test("an unterminated quote is a ParseError, never a silent best guess", () => {
-    expect(() => parseCsv('a,b\n"open,x\n')).toThrow(ParseError);
+    expect(() => parseTable('a,b\n"open,x\n', "csv")).toThrow(ParseError);
   });
-});
 
-describe("parseTsv", () => {
-  test("splits on tabs with no quoting", () => {
-    expect(parseTsv('a\t"b"\n1\t2\n')).toEqual([["a", '"b"'], ["1", "2"]]);
+  test("the delimiter is guessed like the engine does: semicolon and pipe CSV", () => {
+    expect(parseTable("a;b\n1;2\n", "csv")).toEqual([["a", "b"], ["1", "2"]]);
+    expect(parseTable("a|b\n1|2\n", "csv")).toEqual([["a", "b"], ["1", "2"]]);
+  });
+
+  test("TSV honours quotes", () => {
+    expect(parseTable('a\t"b\tc"\n1\t2\n', "tsv")).toEqual([["a", "b\tc"], ["1", "2"]]);
   });
 });
 

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ApplyError, type ApplyResult, applySpec, engineFormat, type InputFile } from "../../src/engine/apply.ts";
+import { parseTable, profileTable } from "../../src/profile/table.ts";
 import { Pseudonymizer } from "../../src/engine/pseudonym.ts";
 import type { ColumnRule, Spec } from "../../src/schema.ts";
 
@@ -260,6 +261,22 @@ describe("format fidelity (AC5)", () => {
     const res = run([file("t.csv", csv)], s);
     expect(text(res, "t.csv")).toMatch(/^Owner;Amount\nPerson_[0-9A-F]{4};1,5\nPerson_[0-9A-F]{4};2,5\n$/);
     expect(res.files[0]?.delimiter).toBe(";");
+  });
+
+  test("profiler and engine agree on headers for semicolon CSV, pipe CSV and quoted TSV (AGT-1777)", () => {
+    const cases: [string, "csv" | "tsv", string][] = [
+      ["s.csv", "csv", "Owner;Note\nAvery Quill;a, b\nRobin Example;c\n"],
+      ["p.csv", "csv", "Owner|Note\nAvery Quill|a, b\nRobin Example|c\n"],
+      ["q.tsv", "tsv", 'Owner\t"Note, Text"\nAvery Quill\t"x\ty"\nRobin Example\ty\n'],
+    ];
+    for (const [path, fmt, body] of cases) {
+      const profiled = profileTable(path, parseTable(body, fmt), 3).table.columns.map((c) => c.header);
+      expect(profiled.length).toBe(2);
+      const s = spec({ columns: [rule(path, "Owner", "person", "blind")] });
+      const res = run([file(path, body)], s);
+      expect(res.files[0]?.columns.map((c) => c.header)).toEqual(profiled);
+      expect(text(res, path)).toMatch(/Person_[0-9A-F]{4}/);
+    }
   });
 
   test("TSV", () => {

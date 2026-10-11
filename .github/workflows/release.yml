@@ -1,0 +1,123 @@
+name: release
+
+# Publishes @openthink/blind to npm. Two triggers:
+#   - workflow_dispatch: run it by hand from the Actions tab. This is the one that always works, because
+#     .stamp/mirror.yml mirrors main only, so a version tag pushed to the stamp origin never reaches GitHub.
+#   - push of a `v*` tag: fires if tags are ever mirrored (uncomment `tags:` in .stamp/mirror.yml).
+#   A dispatch publishes only when run on main: the publish job's `if:` skips it on any other branch, so a build
+#   that never passed the stamp gate on main cannot reach npm with a provenance attestation. Tag runs are unchanged.
+# It deliberately does NOT run on every push to main: merging this file must
+# not publish, and the first publish waits on the npm Trusted Publisher being configured for this repo and
+# this workflow filename (npm package -> Settings -> Trusted Publishers).
+#
+# Auth is OIDC Trusted Publishing, no NPM_TOKEN; --provenance attaches an SLSA attestation. Whichever trigger
+# fires, the publish is skipped when package.json's version is already on npm, so re-runs are safe.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Actions are pinned by full commit SHA: the publish job below holds id-token: write.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      # Bun is the runtime and test runner; installed from npm at a pinned version rather than a third-party action.
+      - run: npm install -g bun@1.3.13
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      # Tests may commit to temp git repos; a CI runner has no global git identity, unlike a developer machine.
+      - run: git config --global user.name "blind CI" && git config --global user.email "ci@blind.invalid"
+      - run: bun test --timeout 30000
+
+  publish:
+    needs: check
+    # workflow_dispatch can be run on any branch; only main is stamp-reviewed, so only main publishes.
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      # package.json values are file content: pass them through env, never ${{ }} into the script.
+      - name: read target version
+        id: version
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          if [[ "$VERSION" == *-* ]]; then
+            DIST_TAG="${VERSION#*-}"
+            DIST_TAG="${DIST_TAG%%.*}"
+          else
+            DIST_TAG="latest"
+          fi
+          {
+            echo "name<<__EOF_NAME_$$"
+            echo "$NAME"
+            echo "__EOF_NAME_$$"
+            echo "version<<__EOF_VERSION_$$"
+            echo "$VERSION"
+            echo "__EOF_VERSION_$$"
+            echo "dist_tag<<__EOF_DIST_TAG_$$"
+            echo "$DIST_TAG"
+            echo "__EOF_DIST_TAG_$$"
+          } >> "$GITHUB_OUTPUT"
+          echo "target: $NAME@$VERSION (dist-tag: $DIST_TAG)"
+
+      # On a tag run, the tag must name the version being published.
+      - name: tag matches version
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "tag $TAG does not match package.json version $VERSION" >&2
+            exit 1
+          fi
+
+      - name: check npm registry
+        id: check
+        env:
+          NAME: ${{ steps.version.outputs.name }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "$NAME@$VERSION already on npm, skipping."
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            echo "$NAME@$VERSION not on npm, will publish."
+          fi
+
+      # No build step: the package ships source (src/ runs on Bun). npm 11.5.1+ is needed for OIDC auth on the
+      # registry PUT; Node 22 bundles npm 10, so fetch a pinned npm via npx (not @latest: this step holds id-token).
+      - name: publish
+        if: steps.check.outputs.published == 'false'
+        env:
+          DIST_TAG: ${{ steps.version.outputs.dist_tag }}
+        run: npx -y npm@11.13.0 publish --access public --provenance --tag "$DIST_TAG"

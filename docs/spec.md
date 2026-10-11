@@ -178,7 +178,10 @@ a column rule replaced, so `reviews/Robin Example.md` is written as `reviews/Per
 `Robin Example` is a blinded `Owner`. Names use the same pseudonyms as the content. Names are
 also searched piece by piece between underscores (`backup_db01.example.com.txt`). The report lists each renamed file
 (`written as ...`). Two inputs whose blinded names coincide are refused (exit 2, nothing written).
-Worksheet and defined names will be rewritten the same way by the workbook handler.
+Every pseudonym used in a name is in the reversal map, so names are as reversible as the content;
+`blind reveal` is not built yet, and until it is, restore names by looking each pseudonym up in the
+map. The engine also exposes this rewrite for worksheet and defined names; this release reads no
+workbooks, so it is not yet applied to any.
 
 **Output.** Delimiter, quoting, line endings and encoding (UTF-8 with or without BOM, UTF-16 with
 BOM, otherwise 8-bit bytes) are preserved, and a file with nothing to replace is copied byte for

@@ -74,7 +74,7 @@ export async function runAnalyst(
   policy: Policy,
   opts: Omit<AskOptions, "policy">,
 ): Promise<{ spec: Spec; filled: Location[] }> {
-  const proposal = await ask<Spec>("analyst", systemPrompt(policy), analystPrompt(profile), specSchema, { ...opts, policy });
+  const proposal = await ask<Spec>("analyst", systemPrompt(policy), analystPrompt(profile, policy), specSchema, { ...opts, policy });
   const issues = checkProposal(proposal, profile);
   if (issues.length > 0) {
     throw new AnalystError(`the analyst's spec was rejected:\n${issues.map((i) => `  ${i.path}: ${i.message}`).join("\n")}`);
@@ -122,9 +122,8 @@ function decide(rule: ColumnRule, option: string, policy: Pick<Policy, "sensitiv
       // human asked for it hidden, and `unknown` with `blind` always gives Value_ pseudonyms.
       return { class: rule.class, treatment: undecided ? "blind" : "value" };
     default: {
-      const cls = option as EntityClassName;
-      const sensitive = (policy.sensitive.classes as readonly string[]).includes(cls);
-      return { class: cls, treatment: sensitive ? "blind" : "keep" };
+      const sensitive = policy.sensitive.classes.some((c) => c === option);
+      return { class: option as EntityClassName, treatment: sensitive ? "blind" : "keep" };
     }
   }
 }

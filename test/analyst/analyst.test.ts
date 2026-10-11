@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { answerQuestion } from "../../src/analyst/analyst.ts";
 import { HEURISTIC_RATE, heuristicPatterns, heuristicRule } from "../../src/analyst/heuristic.ts";
 import { analystPrompt, systemPrompt } from "../../src/analyst/prompt.ts";
+import { profilePayload } from "../../src/model.ts";
 import { defaultPolicy } from "../../src/policy.ts";
 import type { DetectorName, Profile, Spec, ValueStats } from "../../src/schema.ts";
 
@@ -54,14 +55,14 @@ describe("analyst prompt", () => {
     const s = systemPrompt(p);
     expect(s).toContain("- person (sensitive)");
     expect(s).toContain("- org (not sensitive here)");
-    expect(s).toContain('terms to keep unchanged: "Widgetry Suite"');
+    expect(s).not.toContain("Widgetry Suite");
     expect(s).toContain("Ask rather than guess");
   });
 
-  test("the profile goes only into data, never into the task", () => {
+  test("the profile and the policy go only into data, as the profile payload", () => {
     const profile = { version: 1, sampleCount: 1, files: [], tables: [], jsonKeys: [], documents: [], transcripts: [], cooccurrence: [] } as Profile;
-    const prompt = analystPrompt(profile);
-    expect(prompt.data).toBe(profile);
+    const prompt = analystPrompt(profile, policy);
+    expect(prompt.data).toEqual(profilePayload(profile, policy));
     expect(prompt.task).not.toContain("{");
   });
 });
@@ -86,6 +87,24 @@ describe("answerQuestion", () => {
     const s = answerQuestion(spec(), "q1", option, policy);
     expect(s.columns[0]).toMatchObject({ ...expected, confidence: 1, source: "human" });
     expect(s.questions[0]?.answer).toBe(option);
+  });
+
+  test.each([
+    ["value", { class: "person", treatment: "value" }],
+    ["blind", { class: "person", treatment: "blind" }],
+    ["keep", { class: "person", treatment: "keep" }],
+  ] as const)("%s on a classified column keeps its class", (option, expected) => {
+    const base = spec();
+    base.columns[0] = { ...loc, class: "person", treatment: "blind", confidence: 0.4, source: "analyst" };
+    base.questions[0] = { id: "q1", text: "Hide col?", options: ["value", "blind", "keep"], answer: null, about: loc };
+    const s = answerQuestion(base, "q1", option, policy);
+    expect(s.columns[0]).toMatchObject({ ...expected, confidence: 1, source: "human" });
+  });
+
+  test("a class the policy does not call sensitive is kept", () => {
+    const p = defaultPolicy();
+    p.sensitive.classes = ["host"];
+    expect(answerQuestion(spec(), "q1", "person", p).columns[0]).toMatchObject({ class: "person", treatment: "keep" });
   });
 
   test("a question about no column only records the answer", () => {

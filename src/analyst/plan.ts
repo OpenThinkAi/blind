@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { SPEC_FILE } from "../apply.ts";
 import { BLIND_DIR } from "../init.ts";
-import { type AskOptions, ModelError } from "../model.ts";
+import { type AskOptions, ModelError, modelsEnabled } from "../model.ts";
 import { loadPolicy, PolicyError } from "../policy.ts";
 import { writeProfile } from "../profile/command.ts";
 import { buildProfile, InputError } from "../profile/profile.ts";
@@ -197,7 +197,7 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
 
     let spec: Spec;
     const remarks: string[] = [];
-    if (values["no-model"] || policy.privacy.mode === "none") {
+    if (values["no-model"] || !modelsEnabled(policy)) {
       if (!values["no-model"]) remarks.push('privacy.mode is "none", so no model was called: heuristic analyst only');
       spec = heuristicSpec(profile, policy);
     } else {
@@ -221,6 +221,7 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
     }
     return 0;
   } catch (e) {
+    // ModelError covers ModelRefusal: a call the privacy mode, endpoint or key setting refused before sending.
     if (e instanceof Refusal || e instanceof PolicyError || e instanceof InputError || e instanceof SchemaError || e instanceof ModelError || e instanceof AnalystError) {
       io.err.write(`blind plan: ${e.message}\nno spec was written\n`);
       return 2;

@@ -11,6 +11,10 @@
 // - every original value recorded in the map (surface form and canonical);
 // - every match of an enabled spec pattern that is not a pseudonym.
 //
+// In an OOXML package, namespace, content-type and relationship-type URIs are
+// format structure and are blanked before scanning, by their attribute position
+// in the parsed XML (see xml.ts ooxmlUriAttribute); everything else is read.
+//
 // Severity. A whole-word survivor of a spec value in the case the engine would
 // have replaced is a `leak`. Anything the audit finds but cannot call a leak
 // with certainty is a `candidate`: a case, accent or width variant, a value
@@ -29,7 +33,8 @@ import type { BlindMap } from "../engine/map.ts";
 import { isPseudonym } from "../engine/pseudonym.ts";
 import { findPatternSpans, keepDomains, type Span } from "../engine/text.ts";
 import { detectHeaderRow } from "../profile/table.ts";
-import { fold, foldWithMap, stringView, type View, viewsOf } from "./views.ts";
+import { fold, foldWithMap, stringView, type View, viewsOf, xmlBaseView } from "./views.ts";
+import { CONTENT_TYPES_PART, looksLikeXml, ooxmlUriAttribute, walkXml } from "./xml.ts";
 import { looksLikeZip, readZip, ZipError } from "./zip.ts";
 
 export type Status = "clean" | "candidates" | "leak";
@@ -463,6 +468,18 @@ function unscanned(sink: PartSink, part: string, reason: string, where: Finding[
   sink.findings.push({ file: sink.file, part, in: where, offset: null, line: null, class: "unscanned", source: "scan", severity: "candidate", masked: "", reason, encoding: null });
 }
 
+/**
+ * A file or zip member name. A file's extension is read on its own, as the engine leaves it:
+ * "….com.json" is not one host, and "word/_rels/document.xml.rels" is not the host
+ * "document.xml.rels". Everything before the extension is still read, the stem's own dots included.
+ */
+function scanName(sink: PartSink, part: string, where: Finding["in"], name: string, ctx: Context, isName: boolean, hasExtension = true, at = 0) {
+  const dot = hasExtension ? name.lastIndexOf(".") : -1;
+  const stemEnd = dot > lastSegment(name) ? dot : name.length;
+  pushHits(sink, part, where, scanViews(stringView(name.slice(0, stemEnd)), ctx, isName), at);
+  if (stemEnd < name.length) pushHits(sink, part, where, scanViews(stringView(name.slice(stemEnd)), ctx, isName), at + stemEnd);
+}
+
 function scanBytes(sink: PartSink, part: string, bytes: Uint8Array, depth: number, ctx: Context) {
   if (!looksLikeZip(bytes)) {
     const kind = binaryKind(bytes);
@@ -494,15 +511,42 @@ function scanBytes(sink: PartSink, part: string, bytes: Uint8Array, depth: numbe
     if (m.bytes !== undefined) residual.fill(0, m.dataRange[0], m.dataRange[1]);
   }
   pushHits(sink, part, "content", scanViews(viewsOf(residual), ctx));
+  const ooxml = members.some((m) => m.name === CONTENT_TYPES_PART);
   for (const m of [...members].sort((a, b) => cmp(a.name, b.name))) {
     const memberPart = part === "" ? m.name : `${part}!${m.name}`;
-    pushHits(sink, memberPart, "name", scanViews(stringView(m.name), ctx));
+    scanName(sink, memberPart, "name", m.name, ctx, false);
     if (m.bytes === undefined) {
       unscanned(sink, memberPart, `${m.error ?? "not decoded"}; its raw bytes were scanned only`);
       continue;
     }
-    scanBytes(sink, memberPart, m.bytes, depth + 1, ctx);
+    scanBytes(sink, memberPart, ooxml ? blankOoxmlUris(m.name, m.bytes) : m.bytes, depth + 1, ctx);
   }
+}
+
+/**
+ * An OOXML package member with its namespace, content-type and relationship-type URIs
+ * (ooxmlUriAttribute) overwritten by spaces, same length, so offsets hold. Those values are format
+ * structure: every package declares schemas.openxmlformats.org and the like, and they are never
+ * document text. The positions come from parsing the member; the values themselves are never
+ * consulted, so the same host anywhere else in the member is still found. A member that is not
+ * XML, or is itself an archive, is returned as it is.
+ */
+export function blankOoxmlUris(member: string, bytes: Uint8Array): Uint8Array {
+  if (bytes.length === 0 || looksLikeZip(bytes)) return bytes;
+  const view = xmlBaseView(bytes);
+  if (!looksLikeXml(member, view.text)) return bytes;
+  const ranges: [number, number][] = [];
+  walkXml(view.text, {
+    attribute(element, attr, start, end) {
+      if (end > start && ooxmlUriAttribute(member, element, attr)) ranges.push([view.byteAt(start), view.byteAt(end)]);
+    },
+  });
+  if (ranges.length === 0) return bytes;
+  const out = Uint8Array.from(bytes);
+  // A space in the member's own encoding: UTF-16 views map code unit k to bytes 2k and 2k + 1.
+  const space = view.encoding === "utf-16le" ? [0x20, 0x00] : view.encoding === "utf-16be" ? [0x00, 0x20] : [0x20];
+  for (const [a, b] of ranges) for (let k = a; k < b; k++) out[k] = space[(k - a) % space.length] as number;
+  return out;
 }
 
 const TABLE_EXTENSIONS: Record<string, "csv" | "tsv"> = { ".csv": "csv", ".tsv": "tsv", ".tab": "tsv" };
@@ -588,12 +632,7 @@ export function auditTree(entries: readonly TreeEntry[], spec: Spec, map: BlindM
   for (const entry of [...entries].sort((a, b) => cmp(a.path, b.path))) {
     const sink: PartSink = { file: entry.path, findings: [] };
     const nameAt = lastSegment(entry.path);
-    // A file's extension is read on its own, as the engine leaves it: "….com.json" is not one host.
-    const name = entry.path.slice(nameAt);
-    const dot = entry.kind === "file" ? name.lastIndexOf(".") : -1;
-    const stemEnd = dot > 0 ? dot : name.length;
-    pushHits(sink, "", "name", scanViews(stringView(name.slice(0, stemEnd)), ctx, true), nameAt);
-    if (stemEnd < name.length) pushHits(sink, "", "name", scanViews(stringView(name.slice(stemEnd)), ctx, true), nameAt + stemEnd);
+    scanName(sink, "", "name", entry.path.slice(nameAt), ctx, true, entry.kind === "file", nameAt);
     switch (entry.kind) {
       case "file":
         scanBytes(sink, "", entry.bytes, 0, ctx);

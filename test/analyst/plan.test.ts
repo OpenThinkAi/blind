@@ -161,13 +161,211 @@ describe("blind plan with the model analyst", () => {
     expect(quiet.err).not.toContain("bytes sent");
   });
 
-  test("refuses to replace a saved spec without --force, before any model call", async () => {
+  test("--force ignores the saved spec and plans from scratch", async () => {
     await plan(["in"]);
-    const again = await plan(["in"], noFetch);
-    expect(again.code).toBe(2);
-    expect(again.err).toContain("already exists");
+    await plan(["--answer", "q1=keep"], noFetch);
+    sent = [];
     const forced = await plan(["in", "--force"]);
     expect(forced.code).toBe(0);
+    expect(sent).toHaveLength(1);
+    expect(rule(savedSpec(), "ref_code")).toMatchObject({ class: "unknown", source: "analyst" });
+    expect(savedSpec().questions[0]?.answer).toBeNull();
+  });
+});
+
+/** The data block of the n-th analyst request: what the model was shown. */
+function sentData(n = 0): { profile: { tables: { file: string; columns: { header: string }[] }[]; jsonKeys: unknown[]; documents: { sampleSentences: string[] }[]; files: { path: string }[] } } {
+  const user = (sent[n]?.body as { messages: { content: string }[] }).messages[1]?.content ?? "";
+  return JSON.parse(user.slice(user.indexOf("<data>\n") + 7, user.indexOf("\n</data>")));
+}
+
+const specText = (): string => readFileSync(join(dir, ".blind", "spec.json"), "utf8");
+const REGIONS = "Region\nNorth Yard\nSouth Yard\nEast Yard\nWest Yard\n";
+
+describe("blind plan with a saved spec", () => {
+  test("a second plan on the same kit sends the analyst nothing and leaves the spec as it was", async () => {
+    await plan(["in"]);
+    await plan(["--answer", "q1=blind"], noFetch);
+    const before = specText();
+    expect(savedSpec().seen?.length).toBeGreaterThan(0);
+    const r = await plan(["in"], noFetch);
+    expect(r.code).toBe(0);
+    expect(specText()).toBe(before);
+    expect(r.out).toContain("changes to the saved spec:\n  none");
+    expect(r.out).toContain("no model was called");
+    expect(r.err).not.toContain("bytes sent");
+  });
+
+  test("a kit with one new column sends only that column, and the saved entries are untouched", async () => {
+    await plan(["in"]);
+    await plan(["--answer", "q1=keep"], noFetch);
+    const before = savedSpec();
+    writeFileSync(join(dir, "in", "sites.csv"), REGIONS);
+    sent = [];
+    const reply = (): Spec => ({
+      version: 1,
+      columns: [{ file: "sites.csv", header: "Region", class: "location", treatment: "blind", confidence: 0.8, source: "analyst" }],
+      entities: { location: [{ canonical: "North Yard", aliases: [], parts: [] }] },
+      patterns: before.patterns,
+      questions: [{ id: "q1", text: "Are the yards real places?", options: ["yes", "no"], answer: null }],
+    });
+    const r = await plan(["in"], fakeFetch(reply));
+    expect(r.code).toBe(0);
+    expect(sent).toHaveLength(1);
+    const data = sentData();
+    expect(data.profile.tables).toEqual([expect.objectContaining({ file: "sites.csv", columns: [expect.objectContaining({ header: "Region" })] })]);
+    expect(data.profile.files.map((f) => f.path)).toEqual(["sites.csv"]);
+    expect(data.profile.documents).toEqual([]);
+    expect(data.profile.jsonKeys).toEqual([]);
+
+    const after = savedSpec();
+    expect(after.columns.slice(0, before.columns.length)).toEqual(before.columns);
+    expect(rule(after, "Region")).toMatchObject({ class: "location", treatment: "blind", source: "analyst" });
+    expect(after.entities.person).toEqual(before.entities.person);
+    expect(after.entities.location).toEqual([{ canonical: "North Yard", aliases: [], parts: [] }]);
+    // The new question's id collided with the saved q1, so it is renumbered.
+    expect(after.questions.map((x) => [x.id, x.answer])).toEqual([["q1", "keep"], ["q2", null]]);
+    expect(r.out).toContain('added column "sites.csv" "Region"  location blind analyst');
+    expect(r.out).toContain('added location entity "North Yard"');
+    expect(r.out).toContain("added question q2");
+  });
+
+  test("human rules and answered questions stay byte-identical, and a fake model that deletes or reclassifies entries is rejected", async () => {
+    await plan(["in"]);
+    await plan(["--answer", "q1=keep"], noFetch);
+    const before = specText();
+    const human = JSON.stringify(rule(savedSpec(), "ref_code"), null, 2).replace(/\n/g, "\n    ");
+    const answered = JSON.stringify(savedSpec().questions[0], null, 2).replace(/\n/g, "\n    ");
+    expect(before).toContain(human);
+    writeFileSync(join(dir, "in", "sites.csv"), REGIONS);
+    // The reply drops every saved entity and column it was not shown, reclassifies the human
+    // rule and an analyst rule, re-asks the answered question, rewrites a saved entity and turns
+    // the patterns off.
+    const hostile = (): Spec => ({
+      version: 1,
+      columns: [
+        { ...at("ref_code"), class: "id", treatment: "blind", confidence: 1, source: "analyst" },
+        { ...at("Owner"), class: "vocabulary", treatment: "keep", confidence: 1, source: "analyst" },
+        { file: "sites.csv", header: "Region", class: "location", treatment: "blind", confidence: 0.8, source: "analyst" },
+      ],
+      entities: { vocabulary: [{ canonical: "Avery Quill", aliases: [], parts: [] }] },
+      patterns: { ip: false, email: false, host: false, guid: false, mac: false },
+      questions: [{ id: "q7", text: "Keep ref_code?", options: ["keep", "blind"], answer: null, about: at("ref_code") }],
+    });
+    const r = await plan(["in", "--json"], fakeFetch(hostile));
+    expect(r.code).toBe(0);
+    const after = specText();
+    expect(after).toContain(human);
+    expect(after).toContain(answered);
+    const spec = savedSpec();
+    const old = parseSpec(before);
+    expect(spec.columns.slice(0, old.columns.length)).toEqual(old.columns);
+    expect(spec.entities.person).toEqual(old.entities.person);
+    expect(spec.entities.org).toEqual(old.entities.org);
+    expect(spec.entities.vocabulary).toBeUndefined();
+    expect(spec.patterns).toEqual(old.patterns);
+    expect(spec.questions).toEqual(old.questions);
+
+    const diff = JSON.parse(r.out);
+    expect(diff.reused).toBe(true);
+    expect(diff.added.columns.map((c: { header: string }) => c.header)).toEqual(["Region"]);
+    expect(diff.classified).toEqual([]);
+    const reasons = diff.dropped.map((d: { kind: string; reason: string }) => `${d.kind}: ${d.reason}`);
+    expect(reasons).toEqual([
+      'question: question q1 already asks about this column',
+      "column: the saved rule is a human decision",
+      "column: the saved rule is already person",
+      'entity: it would change the saved person entity "Avery Quill"',
+      "pattern: the saved spec has it on",
+      "pattern: the saved spec has it on",
+      "pattern: the saved spec has it on",
+      "pattern: the saved spec has it on",
+    ]);
+  });
+
+  test("the analyst may classify its own unknown rule that no question is about, and nothing else", async () => {
+    // A saved spec with an analyst-unknown rule and no question, and a heuristic-unknown rule.
+    await plan(["in", "--no-model"], noFetch);
+    const saved = savedSpec();
+    for (const c of saved.columns) if (c.header === "Vendor") c.source = "analyst";
+    writeFileSync(join(dir, ".blind", "spec.json"), `${JSON.stringify(saved, null, 2)}\n`);
+    writeFileSync(join(dir, "in", "sites.csv"), REGIONS);
+    const reply = (): Spec => ({
+      ...proposal(),
+      columns: [
+        { ...at("Vendor"), class: "org", treatment: "blind", confidence: 0.9, source: "analyst" },
+        { ...at("Status"), class: "vocabulary", treatment: "keep", confidence: 0.9, source: "analyst" },
+        { file: "sites.csv", header: "Region", class: "location", treatment: "blind", confidence: 0.8, source: "analyst" },
+      ],
+      questions: [],
+      patterns: saved.patterns,
+    });
+    const r = await plan(["in"], fakeFetch(reply));
+    expect(r.code).toBe(0);
+    const spec = savedSpec();
+    expect(rule(spec, "Vendor")).toMatchObject({ class: "org", treatment: "blind", source: "analyst" });
+    expect(rule(spec, "Status")).toMatchObject({ class: "unknown", source: "heuristic" });
+    expect(r.out).toContain('classified "staff.csv" "Vendor"  unknown -> org');
+    expect(r.out).toContain('column "staff.csv" "Status": the saved rule is heuristic');
+    // The heuristic plan read no documents, so this plan sent them (the analyst had not read them).
+    expect(sentData().profile.documents).toHaveLength(1);
+    expect(spec.entities.person?.[0]?.canonical).toBe("Avery Quill");
+  });
+
+  test("a new document excerpt is sent on its own; one the analyst has read is not", async () => {
+    await plan(["in"]);
+    writeFileSync(join(dir, "in", "notes.txt"), `${NOTES}Jo Sample joined the review.\n`);
+    sent = [];
+    await plan(["in"], fakeFetch(() => ({ ...proposal(), columns: [], questions: [], entities: {} })));
+    expect(sent).toHaveLength(1);
+    const data = sentData();
+    expect(data.profile.tables).toEqual([]);
+    expect(data.profile.documents.flatMap((d) => d.sampleSentences)).toEqual(["Jo Sample joined the review."]);
+  });
+
+  test("a new entity keeps its own forms but not those of a saved entity", async () => {
+    await plan(["in"]);
+    writeFileSync(join(dir, "in", "notes.txt"), `${NOTES}Avery Stone joined the review.\n`);
+    const reply = (): Spec => ({
+      ...proposal(),
+      columns: [],
+      questions: [],
+      entities: { person: [{ canonical: "Avery Stone", aliases: [], parts: ["Avery", "Stone"] }] },
+    });
+    const r = await plan(["in"], fakeFetch(reply));
+    expect(r.code).toBe(0);
+    expect(savedSpec().entities.person).toEqual([
+      { canonical: "Avery Quill", aliases: ["A. Quill"], parts: ["Avery", "Quill"] },
+      { canonical: "Avery Stone", aliases: [], parts: ["Stone"] },
+    ]);
+    expect(r.out).toContain('person entity "Avery Stone": added without "Avery", already forms of saved entities');
+  });
+
+  test("--no-model on a saved spec adds heuristic rules for new columns only", async () => {
+    await plan(["in"]);
+    const before = savedSpec();
+    writeFileSync(join(dir, "in", "sites.csv"), "contact\nkit@example.com\nlee@example.com\n");
+    const r = await plan(["in", "--no-model"], noFetch);
+    expect(r.code).toBe(0);
+    const spec = savedSpec();
+    expect(spec.columns.slice(0, before.columns.length)).toEqual(before.columns);
+    expect(spec.columns.at(-1)).toMatchObject({ file: "sites.csv", header: "contact", class: "email", source: "heuristic" });
+    expect(spec.seen).toEqual(before.seen);
+  });
+
+  test("an invalid saved spec is refused before any model call", async () => {
+    mkdirSync(join(dir, ".blind"));
+    writeFileSync(join(dir, ".blind", "spec.json"), '{"version": 2}');
+    const r = await plan(["in"], noFetch);
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("invalid spec");
+    expect(r.err).toContain("no spec was written");
+  });
+
+  test("a reply that sets seen is rejected", async () => {
+    const r = await plan(["in"], fakeFetch(() => ({ ...proposal(), seen: ["0000000000000000"] })));
+    expect(r.code).toBe(2);
+    expect(existsSync(join(dir, ".blind", "spec.json"))).toBe(false);
   });
 });
 

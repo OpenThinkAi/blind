@@ -40,6 +40,12 @@
     "questions": {
       "type": "array",
       "items": { "$ref": "#/$defs/question" }
+    },
+    "seen": {
+      "description": "Fingerprints (first 16 hex digits of SHA-256) of the document and transcript excerpts the analyst has already read. Written by blind plan; a later plan sends the analyst only excerpts not listed here.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 16, "maxLength": 16 }
     }
   },
   "$defs": {

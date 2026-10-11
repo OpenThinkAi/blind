@@ -47,6 +47,8 @@ export interface Spec {
   entities: Entities;
   patterns: Record<PatternName, boolean>;
   questions: Question[];
+  /** Fingerprints of the document and transcript excerpts the analyst has read (see docs/spec.md). */
+  seen?: string[];
 }
 
 export type FileFormat =

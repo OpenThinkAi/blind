@@ -34,3 +34,7 @@ blocks you.
 automatically. Every subsequent change goes through the stamp flow.
 
 <!-- stamp:end -->
+
+## Project rules (blind)
+
+Follow the "Project rules (blind)" section in [`AGENTS.md`](./AGENTS.md): stamp flow only, no attribution trailers on commits or PRs, clean-room (nothing from scrubby or employer repos), synthetic data only.

@@ -1,0 +1,35 @@
+{
+  "name": "@openthink/blind",
+  "version": "0.0.0",
+  "description": "Make any document set blind to the identities you choose: analyst proposes, human approves, engine applies, auditor checks",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OpenThinkAi/blind.git"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "bin",
+    "src",
+    "schema",
+    "LICENSE",
+    "README.md"
+  ],
+  "type": "module",
+  "bin": {
+    "blind": "bin/blind.js"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.2",
+    "typescript": "^5"
+  }
+}

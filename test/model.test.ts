@@ -16,6 +16,7 @@ import {
   resolveEndpoint,
 } from "../src/model.ts";
 import { type ModelConfig, type PrivacyMode, defaultPolicy } from "../src/policy.ts";
+import { forPrivacyMode } from "../src/profile/profile.ts";
 import type { Profile } from "../src/schema.ts";
 
 // Everything here is synthetic. Nothing reaches the network or a real `claude`:
@@ -30,7 +31,10 @@ const SCHEMA = {
 } as const;
 const PROMPT = { task: "Classify the column.", data: { header: "contact_name", samples: ["Ada Example"] } };
 const KEY = "test-key-0000-synthetic";
-const FIXTURE_PROFILE = JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "profile.valid.json"), "utf8")) as Profile;
+const FIXTURE_PROFILE = forPrivacyMode(
+  { profile: JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "profile.valid.json"), "utf8")) as Profile, skipped: [], notes: [] },
+  "profile-only",
+).profile;
 /** The only data a profile-only call may carry. */
 const PROFILE_PROMPT = { task: "Classify the columns.", data: profilePayload(FIXTURE_PROFILE, defaultPolicy()) };
 

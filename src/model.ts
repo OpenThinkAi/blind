@@ -11,7 +11,8 @@
 //     loopback literal (127.0.0.0/8, ::1, localhost), which rules out claude-cli and the
 //     hosted Anthropic API. There is no fallback to another backend.
 //   - privacy.mode "profile-only" allows a remote model, but the data must be exactly
-//     profilePayload(profile, policy): a schema-valid profile and the policy, nothing else.
+//     profilePayload(profile, policy): a schema-valid profile and the policy, nothing else, and
+//     no document outlines or speaker labels (text that sampleCount does not bound).
 //     The mode and the profile's sample count are printed before every call, even when quiet.
 //   - the caller's data is quoted as JSON inside a <data> block, and any string in it
 //     longer than MAX_DATA_STRING characters is refused, not truncated: a long string
@@ -250,6 +251,16 @@ export function assertProfilePayload(data: unknown): asserts data is ProfilePayl
   if (!checked.ok) refuse(`but the profile is not valid: ${checked.issues.map((i) => `${i.path}: ${i.message}`).join("; ")}`);
   const issues = validateSchema(POLICY_VIEW_SCHEMA, policy);
   if (issues.length > 0) refuse(`but the policy is not valid: ${issues.map((i) => `${i.path}: ${i.message}`).join("; ")}`);
+  // Document text the sample count does not bound. validateProfile already holds samples,
+  // sampleSentences and sampleLines to sampleCount; outlines and speaker labels have no such
+  // bound, so under profile-only they must be empty (forPrivacyMode in src/profile/profile.ts).
+  const unbounded = [
+    ...(profile as Profile).documents.flatMap((d, i) => (d.outline.length > 0 ? [`$.profile.documents[${i}].outline`] : [])),
+    ...(profile as Profile).transcripts.flatMap((t, i) => (t.speakers.length > 0 ? [`$.profile.transcripts[${i}].speakers`] : [])),
+  ];
+  if (unbounded.length > 0) {
+    refuse(`but the profile carries document text that sampleCount does not bound (${unbounded.join(", ")}); re-run blind profile or blind plan under profile-only`);
+  }
 }
 
 const KEY_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;

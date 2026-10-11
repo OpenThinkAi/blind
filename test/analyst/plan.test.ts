@@ -215,6 +215,70 @@ describe("the analyst's reply is rejected whole when it does not fit the profile
     expect(data.profile.tables[0].columns.every((c: { stats: { samples: string[] } }) => c.stats.samples.length === 0)).toBe(true);
   });
 
+  describe("document outlines (AGT-1778)", () => {
+    // Invented names in a text file's first line and in a Markdown file's first line and headings.
+    // None of them is in staff.csv, the default policy or the prompt, so any hit is an outline leak.
+    const NAMES = ["Marlo Fenwick", "Quorrin Labs", "Tessaly Brook", "Ostrava Fieldworks", "Pell Varrick", "Hollin Dray Ltd"];
+    const corpus = () => {
+      writeFileSync(join(dir, "in", "notes.txt"), "Marlo Fenwick and Quorrin Labs kickoff\n\nThe move is on Friday.\n");
+      writeFileSync(
+        join(dir, "in", "memo.md"),
+        "# Tessaly Brook weekly\n\nShort intro.\n\n## Ostrava Fieldworks renewal\n\nText.\n\n### Call with Pell Varrick of Hollin Dray Ltd\n\nMore text.\n",
+      );
+    };
+    const sentText = () => JSON.stringify(sent.map((s) => s.body));
+
+    test("profile-only sends none of the names in first lines or headings to a remote analyst", async () => {
+      corpus();
+      writePolicy((p) => {
+        p.privacy.mode = "profile-only";
+        p.profile.samples = defaultSamples("profile-only");
+        p.models.analyst.url = "https://analyst.example.com/v1";
+      });
+      const r = await plan(["in"]);
+      expect(r.code).toBe(0);
+      expect(sent).toHaveLength(1);
+      const body = sentText();
+      for (const name of NAMES) expect(body).not.toContain(name);
+      const user = (sent[0]?.body as { messages: { content: string }[] }).messages[1]?.content ?? "";
+      const data = JSON.parse(user.slice(user.indexOf("<data>\n") + 7, user.indexOf("\n</data>")));
+      // The documents are still listed, with empty outlines.
+      expect(data.profile.documents.map((d: { file: string; outline: string[] }) => [d.file, d.outline])).toEqual([
+        ["memo.md", []],
+        ["notes.txt", []],
+      ]);
+      expect(r.out).toContain("note: privacy.mode is profile-only: the outline of 2 document(s) is left out");
+      // The saved profile is the one that was sent.
+      const saved = JSON.parse(readFileSync(join(dir, ".blind", "profile.json"), "utf8"));
+      expect(saved.documents.every((d: { outline: string[] }) => d.outline.length === 0)).toBe(true);
+    });
+
+    test("profile-only with samples set still leaves outlines out", async () => {
+      corpus();
+      writePolicy((p) => {
+        p.privacy.mode = "profile-only";
+        p.profile = { samples: 1, samplesExplicit: true };
+        p.models.analyst.url = "https://analyst.example.com/v1";
+      });
+      expect((await plan(["in"])).code).toBe(0);
+      const user = (sent[0]?.body as { messages: { content: string }[] }).messages[1]?.content ?? "";
+      const data = JSON.parse(user.slice(user.indexOf("<data>\n") + 7, user.indexOf("\n</data>")));
+      expect(data.profile.documents.every((d: { outline: string[] }) => d.outline.length === 0)).toBe(true);
+      expect(sentText()).not.toContain("Tessaly Brook weekly");
+    });
+
+    test("local-only still sends outlines", async () => {
+      corpus();
+      expect((await plan(["in"])).code).toBe(0);
+      const user = (sent[0]?.body as { messages: { content: string }[] }).messages[1]?.content ?? "";
+      const data = JSON.parse(user.slice(user.indexOf("<data>\n") + 7, user.indexOf("\n</data>")));
+      expect(data.profile.documents.map((d: { file: string; outline: string[] }) => [d.file, d.outline])).toEqual([
+        ["memo.md", ["Tessaly Brook weekly", "Ostrava Fieldworks renewal", "Call with Pell Varrick of Hollin Dray Ltd"]],
+        ["notes.txt", ["Marlo Fenwick and Quorrin Labs kickoff"]],
+      ]);
+    });
+  });
+
   test("local-only refuses a remote analyst before sending anything", async () => {
     writePolicy((p) => (p.models.analyst.url = "https://analyst.example.com/v1"));
     const r = await plan(["in"], noFetch);

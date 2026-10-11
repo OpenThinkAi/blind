@@ -5,7 +5,7 @@ import { basename, extname, join, relative, resolve, sep } from "node:path";
 import { BLIND_DIR } from "../init.ts";
 import { POLICY_FILE } from "../policy.ts";
 import { type Cooccurrence, type FileFormat, MAX_EXCERPT, type Profile, type ProfileDocument, type ProfileFile, type ProfileTable } from "../schema.ts";
-import { ParseError, parseCsv, parseTsv, profileTable } from "./table.ts";
+import { ParseError, parseTable, profileTable } from "./table.ts";
 import { profileText } from "./text.ts";
 
 /** Formats this profiler reads, by lower-cased extension. */
@@ -181,7 +181,7 @@ export function buildProfile(inputs: readonly string[], k: number, cwd: string):
     if (format === "csv" || format === "tsv") {
       let rows: string[][];
       try {
-        rows = format === "csv" ? parseCsv(text) : parseTsv(text);
+        rows = parseTable(text, format);
       } catch (e) {
         if (!(e instanceof ParseError)) throw e;
         skipped.push({ path: f.path, reason: `cannot parse: ${e.message}` });

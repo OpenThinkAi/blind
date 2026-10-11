@@ -134,7 +134,7 @@ describe("buildProfile", () => {
       { path: ".hidden.csv", reason: "hidden" },
       { path: "a.json", reason: "json is not profiled yet" },
       { path: "b.bin", reason: "unsupported file type .bin" },
-      { path: "broken.csv", reason: "cannot parse: unterminated quoted field starting in row 2" },
+      { path: "broken.csv", reason: "cannot parse: unterminated quoted field starting on line 2" },
       { path: "latin1.txt", reason: "not valid UTF-8" },
       { path: "link.txt", reason: "symbolic link (not followed)" },
     ]);

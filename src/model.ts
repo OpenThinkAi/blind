@@ -6,7 +6,8 @@
 //   openai-compatible  POST <url>/chat/completions       (url default the local server in policy.ts)
 //
 // The privacy boundary lives here, and every check runs before the first byte is sent
-// (a failed check throws ModelRefusal, which a command reports with exit 2):
+// (a failed check throws ModelRefusal, which a command reports with exit 2; blind audit, where
+// 2 means a leak, reports it with exit 3):
 //   - privacy.mode "none" calls no model; "local-only" refuses anything that is not a
 //     loopback literal (127.0.0.0/8, ::1, localhost), which rules out claude-cli and the
 //     hosted Anthropic API. There is no fallback to another backend.
@@ -227,14 +228,16 @@ export function splitText(text: string, max = MAX_DATA_STRING): string[] {
 
 /** Builds the only data a profile-only call may carry. Strings over the limit are refused later by ask(), not cut. */
 export function profilePayload(profile: Profile, policy: Pick<Policy, "sensitive" | "keep">): ProfilePayload {
+  return { profile, policy: policyView(policy) };
+}
+
+/** The policy as a model sees it, in every payload that carries it. */
+export function policyView(policy: Pick<Policy, "sensitive" | "keep">): PolicyView {
   return {
-    profile,
-    policy: {
-      classes: [...policy.sensitive.classes],
-      description: splitText(policy.sensitive.description),
-      examples: [...policy.sensitive.examples],
-      keep: [...policy.keep.terms],
-    },
+    classes: [...policy.sensitive.classes],
+    description: splitText(policy.sensitive.description),
+    examples: [...policy.sensitive.examples],
+    keep: [...policy.keep.terms],
   };
 }
 

@@ -1,27 +1,31 @@
-// `blind audit <out>`: the file-system side of the audit (mechanical, then semantic). Reads the
+// `blind audit <out>`: the file-system side of the audit (mechanical, semantic, then model). Reads the
 // saved spec and the map, walks every entry of the output tree (hidden ones
 // included, symbolic links not followed), runs the audit and prints the
 // report as a table or JSON. Exit status is the contract: 0 clean,
 // 1 candidates, 2 leak; 3 the audit could not run (never 2, which would
 // report a leak that was not found, and never 0 or 1).
 
-import { lstatSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { MAP_FILE, SPEC_FILE } from "../apply.ts";
 import { type BlindMap, MapError, readMap } from "../engine/map.ts";
 import { BLIND_DIR } from "../init.ts";
-import { loadKeepTerms, PolicyError } from "../policy.ts";
+import { type AskOptions, ModelRefusal, modelsEnabled } from "../model.ts";
+import { loadPolicy, type Policy, POLICY_FILE, PolicyError } from "../policy.ts";
 import type { Spec } from "../schema.ts";
 import { parseSpec, SchemaError } from "../validate.ts";
+import { addModelLayer } from "./auditor.ts";
 import { addSemanticLayer } from "./semantic.ts";
 import { type AuditReport, auditTree, type Finding, type Status, type TreeEntry } from "./mechanical.ts";
 
 export interface AuditIO {
   out: NodeJS.WritableStream;
   err: NodeJS.WritableStream;
-  /** The corpus workspace: where .blind/ lives. */
+  /** The corpus workspace: where blind.toml and .blind/ live. */
   cwd: string;
+  /** Test seams, passed through to the model auditor's calls. */
+  model?: Pick<AskOptions, "fetch" | "spawn" | "env" | "timeoutMs">;
 }
 
 const AUDIT_HELP = [
@@ -40,6 +44,13 @@ const AUDIT_HELP = [
   "that is a pseudonym is left out. Each is a candidate, listed once per file (at most 200 per file,",
   "with a count of the rest).",
   "",
+  "Then the model layer, unless --no-model or privacy.mode = \"none\": the auditor model ([models.auditor]",
+  "in blind.toml; without it, the analyst's backend with the auditor's own prompt) is told it is the",
+  "subject of the documents and asked to find what gives it away. Under local-only it is sent the",
+  "output's text in lines of at most 120 characters and chunks of at most 8 kB, to a loopback server",
+  "only; under profile-only only the output's profile. It can only add candidates. A call that fails",
+  "or a reply that is rejected is itself a candidate: that text was not checked by a model.",
+  "",
   "Status: leak (a spec value survives), candidates (something to review: a variant or partial",
   "match, a semantic candidate, a column the spec declares unknown or does not mention, an",
   "unanswered spec question, or a part that could not be read), clean (none of these). Clean means",
@@ -50,10 +61,11 @@ const AUDIT_HELP = [
   "Options:",
   "      --map <path>  The map apply wrote (default .blind/map.json)",
   "      --json        Print the report as JSON",
-  "      --no-model    Mechanical and semantic layers only (this build has no model layer yet, so this is the default)",
+  "      --no-model    Mechanical and semantic layers only: no model is called",
   "  -h, --help        Show this help",
   "",
-  "Exit status: 0 clean, 1 candidates, 2 leak, 3 the audit could not run (usage error or refusal; nothing audited).",
+  "Exit status: 0 clean, 1 candidates, 2 leak, 3 the audit could not run (usage error, or a refusal such as a",
+  "model call the privacy mode forbids; nothing audited).",
   "",
 ].join("\n");
 
@@ -157,6 +169,7 @@ export function renderTable(r: AuditReport): string {
     if (f.kind === "dir") continue;
     lines.push(`${f.status.padEnd(10)}  ${f.path}`);
   }
+  if (r.model !== undefined) lines.push("", ...modelLines(r.model));
   const { files, leaks, candidates } = r.summary;
   const counts = `${files} file${files === 1 ? "" : "s"}; ${leaks} leak${leaks === 1 ? "" : "s"}, ${candidates} candidate${candidates === 1 ? "" : "s"}`;
   lines.push("");
@@ -169,6 +182,23 @@ export function renderTable(r: AuditReport): string {
     );
   } else lines.push(`status: ${r.status} (${counts}; layers run: ${r.layers.join(", ")})`);
   return `${lines.join("\n")}\n`;
+}
+
+function modelLines(m: NonNullable<AuditReport["model"]>): string[] {
+  const name = m.model === "" ? "default model" : m.model;
+  const what = m.sent === "text" ? `the output's text in ${m.chunks} chunk${m.chunks === 1 ? "" : "s"}` : "the output's profile only";
+  const out = [`model layer: ${m.backend} · ${name} · ${m.mode}; sent ${what}; ${m.answered} of ${m.chunks} answered`];
+  if (m.config === "analyst") out.push("model layer: [models.auditor] is not set, so the analyst's backend was used with the auditor's prompt");
+  for (const n of m.notSent) out.push(`model layer: not sent: ${n.part === "" ? n.file : `${n.file}!${n.part}`} (${n.reason})`);
+  return out;
+}
+
+/** Why the model layer does not run, or null when it does. */
+function noModelReason(noModel: boolean, policy: Policy | null): string | null {
+  if (noModel) return null;
+  if (policy === null) return `no ${POLICY_FILE}, so no model is configured: mechanical and semantic layers only (run blind init to configure one)`;
+  if (!modelsEnabled(policy)) return 'privacy.mode is "none": mechanical and semantic layers only';
+  return null;
 }
 
 export async function runAudit(argv: string[], io: AuditIO): Promise<number> {
@@ -201,15 +231,31 @@ export async function runAudit(argv: string[], io: AuditIO): Promise<number> {
     const spec = loadSpec(io.cwd);
     const map = loadMap(resolve(io.cwd, values.map ?? join(BLIND_DIR, MAP_FILE)));
     const entries = collectTree(resolve(io.cwd, positionals[0] as string));
+    // Without a blind.toml nothing is kept (the more private reading) and no model is configured.
+    const policy = existsSync(join(io.cwd, POLICY_FILE)) ? loadPolicy(io.cwd) : null;
     // Hosts the engine kept under a keep-list domain are policy, not leaks.
-    const keep = loadKeepTerms(io.cwd);
-    const report = addSemanticLayer(auditTree(entries, spec, map, keep), entries, spec, map, { keep });
-    if (!values["no-model"]) io.err.write("blind audit: mechanical and semantic layers only; this build has no model layer\n");
+    const keep = policy?.keep.terms ?? [];
+    let report = addSemanticLayer(auditTree(entries, spec, map, keep), entries, spec, map, { keep });
+    const skip = noModelReason(values["no-model"], policy);
+    if (skip !== null) io.err.write(`blind audit: ${skip}\n`);
+    else if (policy !== null && !values["no-model"]) {
+      if (!policy.models.auditorExplicit) {
+        io.err.write("blind audit: [models.auditor] is not set; the auditor uses the analyst's backend with its own prompt\n");
+      }
+      report = await addModelLayer(report, entries, {
+        policy,
+        root: positionals[0] as string,
+        cwd: io.cwd,
+        ask: { ...io.model, stderr: (line) => io.err.write(`blind audit: ${line}\n`) },
+      });
+    }
     io.out.write(values.json ? `${JSON.stringify(report, null, 2)}\n` : renderTable(report));
     return EXIT[report.status];
   } catch (e) {
-    if (e instanceof Refusal || e instanceof PolicyError || e instanceof SchemaError || e instanceof MapError) {
-      io.err.write(`blind audit: ${e.message}\nnothing was audited\n`);
+    // A refused model call is "could not run" (3), never 2: 2 means a leak was found.
+    if (e instanceof Refusal || e instanceof PolicyError || e instanceof SchemaError || e instanceof MapError || e instanceof ModelRefusal) {
+      const hint = e instanceof ModelRefusal ? "; --no-model runs the mechanical and semantic layers without a model" : "";
+      io.err.write(`blind audit: ${e.message}\nnothing was audited${hint}\n`);
       return EXIT_NOT_RUN;
     }
     // Anything else is a bug; exit 3 rather than let the runtime's exit 1 read as "candidates".

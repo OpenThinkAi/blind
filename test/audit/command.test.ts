@@ -44,7 +44,12 @@ async function audit(...argv: string[]) {
   let e = "";
   out.on("data", (d) => (o += d));
   err.on("data", (d) => (e += d));
-  const code = await runAudit(argv, { out, err, cwd: dir });
+  // A test never reaches a model: any call the audit tries fails loudly.
+  const model = {
+    fetch: () => Promise.reject(new Error("a test must not call a model")),
+    spawn: () => Promise.reject(new Error("a test must not call a model")),
+  };
+  const code = await runAudit(argv, { out, err, cwd: dir, model });
   return { code, out: o, err: e };
 }
 
@@ -69,7 +74,7 @@ describe("blind audit", () => {
     const policy = defaultPolicy();
     policy.keep.terms = ["vendor.example.net"];
     writeFileSync(join(dir, "blind.toml"), renderPolicy(policy));
-    expect((await audit("out")).code).toBe(0);
+    expect((await audit("out", "--no-model")).code).toBe(0);
     writeFileSync(join(dir, "blind.toml"), "[keep\n");
     const r = await audit("out");
     expect(r.code).toBe(3);
@@ -98,7 +103,7 @@ describe("blind audit", () => {
     const policy = defaultPolicy();
     policy.keep.terms = ["Northwind Harbor"];
     writeFileSync(join(dir, "blind.toml"), renderPolicy(policy));
-    expect((await audit("out")).code).toBe(0);
+    expect((await audit("out", "--no-model")).code).toBe(0);
   });
 
   test("a leak exits 2, with a masked value and its location", async () => {

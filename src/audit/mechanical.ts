@@ -53,7 +53,7 @@ export interface Finding {
   line: number | null;
   /** Entity class, map kind, `pattern:<name>`, `unknown`, or `unscanned`. */
   class: string;
-  source: "entity" | "map" | "pattern" | "spec" | "scan" | "semantic";
+  source: "entity" | "map" | "pattern" | "spec" | "scan" | "semantic" | "model";
   severity: Severity;
   /** First characters, `***`, then the length in characters; never the whole value. */
   masked: string;
@@ -72,12 +72,30 @@ export interface FileAudit {
 export interface AuditReport {
   version: 1;
   status: Status;
-  /** Layers that ran, in order: `mechanical`, then `semantic` (src/audit/semantic.ts). */
+  /** Layers that ran, in order: `mechanical`, then `semantic` (src/audit/semantic.ts), then `model` (src/audit/auditor.ts). */
   layers: string[];
   files: FileAudit[];
-  /** Findings not tied to one file (unanswered spec questions). */
+  /** Findings not tied to one file (unanswered spec questions, a model layer that could not finish). */
   general: Finding[];
   summary: { files: number; leaks: number; candidates: number };
+  /** What the model layer was configured with and sent; present only when it ran. */
+  model?: ModelLayerSummary;
+}
+
+export interface ModelLayerSummary {
+  /** `auditor`, or `analyst` when blind.toml has no [models.auditor] and the analyst's backend was reused. */
+  config: "auditor" | "analyst";
+  backend: string;
+  /** The configured model name; "" when the backend's default or the server's first model is used. */
+  model: string;
+  mode: string;
+  /** `text`: the output's extracted text (local-only); `profile`: the output's profile only (profile-only). */
+  sent: "text" | "profile";
+  /** Calls planned and calls whose reply was accepted. */
+  chunks: number;
+  answered: number;
+  /** Files and members the model was not sent, with why (the other layers still read them). */
+  notSent: { file: string; part: string; reason: string }[];
 }
 
 export type TreeEntry =
@@ -381,7 +399,7 @@ function patternName(value: string, patterns: Record<PatternName, boolean>): Pat
 
 type PlacedHit = Hit & { byteStart: number; byteEnd: number };
 
-const SOURCE_RANK: Record<Finding["source"], number> = { entity: 0, map: 1, pattern: 2, spec: 3, scan: 4, semantic: 5 };
+const SOURCE_RANK: Record<Finding["source"], number> = { entity: 0, map: 1, pattern: 2, spec: 3, scan: 4, semantic: 5, model: 6 };
 const SEVERITY_RANK: Record<Severity, number> = { candidate: 0, leak: 1 };
 
 /**
@@ -620,6 +638,43 @@ export function compareFindings(a: Finding, b: Finding): number {
     cmp(a.reason, b.reason) ||
     cmp(a.masked, b.masked)
   );
+}
+
+/**
+ * The report with one more layer's findings added: `layer` appended to the layers, `perFile`
+ * merged into each file (a file with no line yet is added), `general` added, and every status and
+ * count recomputed. Nothing already in the report is removed or downgraded.
+ */
+export function addLayer(
+  report: AuditReport,
+  layer: string,
+  entries: readonly TreeEntry[],
+  perFile: ReadonlyMap<string, readonly Finding[]>,
+  general: readonly Finding[] = [],
+): AuditReport {
+  const kinds = new Map(entries.map((e) => [e.path, e.kind]));
+  const files = new Map<string, FileAudit>(report.files.map((f) => [f.path, { ...f, findings: [...f.findings] }]));
+  for (const [path, findings] of perFile) {
+    if (findings.length === 0) continue;
+    const f = files.get(path) ?? { path, kind: kinds.get(path) ?? "file", status: "clean" as Status, findings: [] };
+    f.findings.push(...findings);
+    f.findings.sort(compareFindings);
+    f.status = statusOf(f.findings);
+    files.set(path, f);
+  }
+  const merged = [...files.values()].sort((a, b) => cmp(a.path, b.path));
+  const allGeneral = [...report.general, ...general].sort(compareFindings);
+  const all = [...merged.flatMap((f) => f.findings), ...allGeneral];
+  const leaks = all.filter((f) => f.severity === "leak").length;
+  const status = merged.reduce<Status>((s, f) => (STATUS_RANK[f.status] > STATUS_RANK[s] ? f.status : s), statusOf(allGeneral));
+  return {
+    ...report,
+    status,
+    layers: [...report.layers, layer],
+    files: merged,
+    general: allGeneral,
+    summary: { files: report.summary.files, leaks, candidates: all.length - leaks },
+  };
 }
 
 /** Audit an output tree (every entry under it, paths relative to its root) against the spec and map. */

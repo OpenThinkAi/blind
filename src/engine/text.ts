@@ -1,0 +1,235 @@
+// Free-text finders: the spec's shape patterns and its entity lists, turned
+// into non-overlapping spans. Pure and deterministic; the caller decides what
+// each span becomes.
+//
+// Order: pattern matches (email, IP, MAC, GUID, host) are found first and are
+// atomic, so "avery@example.com" is one email, not a name plus a host. Entity
+// forms are then matched in the gaps, longest form first at each position,
+// whole-token only.
+//
+// Case rules, per entity form (by its shape, as written in the spec):
+// - an acronym (no lowercase letters, at most 6 letters, e.g. "EXW") matches
+//   only exactly, so "EXW" never matches "exw";
+// - a single capitalised word (a given name or surname part, e.g. "Avery" or
+//   "May") matches case-insensitively but only where the text starts with a
+//   capital, so "May" matches "May" and "MAY" but not "may";
+// - anything else (multi-word names, lowercase handles) matches
+//   case-insensitively.
+// Whitespace between the words of a multi-word form matches any run of
+// whitespace, so a name wrapped across lines is still found.
+
+import type { PseudoClass } from "./canonical.ts";
+import type { Entities, PatternName } from "../schema.ts";
+
+export interface Span {
+  start: number;
+  end: number;
+  /** null: a vocabulary form, kept as written but shielding its text from other entity forms. */
+  cls: PseudoClass | null;
+  /** The value the pseudonym is derived from: the matched text for a pattern, the spec form for an entity. */
+  value: string;
+  source: "pattern" | "entity";
+}
+
+const IPV4_OCTET = "(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)";
+const PATTERN_RES: Record<PatternName, RegExp> = {
+  email: /(?<![\p{L}\p{N}._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+(?![\p{L}\p{N}-]|\.[A-Za-z0-9])/gu,
+  ip: new RegExp(
+    `(?<![\\d.])${IPV4_OCTET}(?:\\.${IPV4_OCTET}){3}(?!\\d|\\.\\d)|(?<![\\p{L}\\p{N}:])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![\\p{L}\\p{N}:]|\\.\\d)`,
+    "gu",
+  ),
+  mac: /(?<![0-9A-Fa-f:-])[0-9A-Fa-f]{2}([:-])[0-9A-Fa-f]{2}(?:\1[0-9A-Fa-f]{2}){4}(?![0-9A-Fa-f:-])/g,
+  guid: /(?<![0-9A-Fa-f-])[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}(?![0-9A-Fa-f-])/g,
+  host: /(?<![\p{L}\p{N}._-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}(?![\p{L}\p{N}_-]|\.[A-Za-z0-9])/gu,
+};
+
+/** What each pattern's matches are pseudonymised as. */
+export const PATTERN_CLASS: Record<PatternName, PseudoClass> = {
+  email: "email",
+  ip: "host",
+  mac: "id",
+  guid: "id",
+  host: "host",
+};
+
+// Fixed order: when two patterns match the same span, the earlier one wins.
+const PATTERN_ORDER: readonly PatternName[] = ["email", "ip", "mac", "guid", "host"];
+
+// Two-label names count as hosts only under these suffixes, so "notes.txt" or
+// "report.md" is not a host; three or more labels ("db01.example.com") always count.
+const HOST_TLDS = new Set([
+  "com", "net", "org", "edu", "gov", "mil", "int", "io", "co", "ai", "dev", "app", "cloud", "biz", "info",
+  "local", "lan", "internal", "intranet", "corp", "home", "example", "test", "invalid", "localhost", "uk", "us",
+  "de", "fr", "nl", "eu", "ca", "au", "jp", "ch", "se", "no", "es", "it",
+]);
+
+function validIpv6(s: string): boolean {
+  if (!s.includes(":")) return false;
+  const halves = s.split("::");
+  if (halves.length > 2) return false;
+  const groups = halves.flatMap((h) => (h === "" ? [] : h.split(":")));
+  if (groups.length === 0 || groups.some((g) => g === "" || g.length > 4)) return false;
+  return halves.length === 2 ? groups.length < 8 : groups.length === 8;
+}
+
+function accept(name: PatternName, m: string): boolean {
+  if (name === "ip" && m.includes(":")) return validIpv6(m);
+  if (name === "host") {
+    const labels = m.split(".");
+    return labels.length >= 3 || HOST_TLDS.has((labels[labels.length - 1] as string).toLowerCase());
+  }
+  return true;
+}
+
+export function findPatternSpans(text: string, patterns: Record<PatternName, boolean>): Span[] {
+  const found: (Span & { rank: number })[] = [];
+  PATTERN_ORDER.forEach((name, rank) => {
+    if (!patterns[name]) return;
+    for (const m of text.matchAll(PATTERN_RES[name])) {
+      if (!accept(name, m[0])) continue;
+      const start = m.index;
+      found.push({ start, end: start + m[0].length, cls: PATTERN_CLASS[name], value: m[0], source: "pattern", rank });
+    }
+  });
+  // Leftmost first; at the same start the longest; then the fixed pattern order.
+  found.sort((a, b) => a.start - b.start || b.end - a.end || a.rank - b.rank);
+  const out: Span[] = [];
+  let taken = 0;
+  for (const { rank: _rank, ...s } of found) {
+    if (s.start < taken) continue;
+    out.push(s);
+    taken = s.end;
+  }
+  return out;
+}
+
+type CaseRule = "exact" | "capital" | "fold";
+
+interface Form {
+  words: string[];
+  folded: string[];
+  rule: CaseRule;
+  cls: PseudoClass | null;
+  value: string;
+  /** Characters excluding the flexible whitespace, for longest-first ordering. */
+  length: number;
+  /** Position of the entity class in ENTITY_CLASSES, the tie-breaker between equal lengths. */
+  rank: number;
+}
+
+const WORDCHAR_RE = /[\p{L}\p{N}]/u;
+const isWordChar = (ch: string | undefined): boolean => ch !== undefined && WORDCHAR_RE.test(ch);
+const isSpace = (ch: string | undefined): boolean => ch !== undefined && /\s/.test(ch);
+
+function caseRule(form: string, words: readonly string[]): CaseRule {
+  const letters = form.match(/\p{L}/gu) ?? [];
+  if (letters.length > 0 && letters.length <= 6 && !/\p{Ll}/u.test(form)) return "exact";
+  if (words.length === 1 && /^\p{Lu}/u.test(form)) return "capital";
+  return "fold";
+}
+
+/** Code-unit order, never locale order. */
+const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+const ENTITY_CLASSES = ["person", "org", "host", "email", "id", "location", "vocabulary"] as const;
+
+/** An index of every entity form in the spec, ready to scan text with. */
+export class EntityMatcher {
+  private readonly byFirst = new Map<string, Form[]>();
+  readonly empty: boolean;
+
+  constructor(entities: Entities) {
+    const seen = new Set<string>();
+    for (const [rank, key] of ENTITY_CLASSES.entries()) {
+      const cls: PseudoClass | null = key === "vocabulary" ? null : key;
+      for (const e of entities[key] ?? []) {
+        for (const raw of [e.canonical, ...e.aliases, ...e.parts]) {
+          const words = raw.trim().split(/\s+/).filter((w) => w !== "");
+          if (words.length === 0) continue;
+          const dedupe = `${key}\0${words.join(" ")}`;
+          if (seen.has(dedupe)) continue;
+          seen.add(dedupe);
+          const form: Form = {
+            words,
+            folded: words.map((w) => w.toLowerCase()),
+            rule: caseRule(raw, words),
+            cls,
+            value: raw,
+            length: words.join("").length,
+            rank,
+          };
+          const first = (words[0] as string)[0]?.toLowerCase() as string;
+          const list = this.byFirst.get(first) ?? [];
+          list.push(form);
+          this.byFirst.set(first, list);
+        }
+      }
+    }
+    // Longest first; ties broken by class order then text, so the scan is order-independent.
+    for (const list of this.byFirst.values()) {
+      list.sort(
+        (a, b) =>
+          b.length - a.length || a.rank - b.rank || cmp(a.value, b.value),
+      );
+    }
+    this.empty = this.byFirst.size === 0;
+  }
+
+  /** End offset of `form` matched at `pos`, or -1. */
+  private matchAt(text: string, pos: number, form: Form): number {
+    let i = pos;
+    for (let w = 0; w < form.words.length; w++) {
+      if (w > 0) {
+        if (!isSpace(text[i])) return -1;
+        while (isSpace(text[i])) i++;
+      }
+      const word = form.words[w] as string;
+      const got = text.slice(i, i + word.length);
+      if (got.length !== word.length) return -1;
+      if (form.rule === "exact") {
+        if (got !== word) return -1;
+      } else if (got.toLowerCase() !== form.folded[w]) return -1;
+      if (form.rule === "capital" && !/^\p{Lu}/u.test(got)) return -1;
+      i += word.length;
+    }
+    const lastWord = form.words[form.words.length - 1] as string;
+    if (isWordChar(lastWord[lastWord.length - 1]) && isWordChar(text[i])) return -1;
+    return i;
+  }
+
+  /** Entity spans in `text` that do not overlap any of `taken` (sorted, non-overlapping). */
+  find(text: string, taken: readonly Span[] = []): Span[] {
+    if (this.empty) return [];
+    const out: Span[] = [];
+    let t = 0;
+    let pos = 0;
+    while (pos < text.length) {
+      while (t < taken.length && (taken[t] as Span).end <= pos) t++;
+      const block = taken[t];
+      if (block !== undefined && block.start <= pos) {
+        pos = block.end;
+        continue;
+      }
+      const ch = text[pos] as string;
+      const candidates = isWordChar(text[pos - 1]) && isWordChar(ch) ? undefined : this.byFirst.get(ch.toLowerCase());
+      let matched = false;
+      for (const form of candidates ?? []) {
+        const end = this.matchAt(text, pos, form);
+        if (end < 0 || (block !== undefined && end > block.start)) continue;
+        out.push({ start: pos, end, cls: form.cls, value: form.value, source: "entity" });
+        pos = end;
+        matched = true;
+        break;
+      }
+      if (!matched) pos++;
+    }
+    return out;
+  }
+}
+
+/** Every span to act on: pattern matches, then entity forms in the gaps, sorted by position. */
+export function findSpans(text: string, matcher: EntityMatcher, patterns: Record<PatternName, boolean>): Span[] {
+  const p = findPatternSpans(text, patterns);
+  const e = matcher.find(text, p);
+  return [...p, ...e].sort((a, b) => a.start - b.start);
+}

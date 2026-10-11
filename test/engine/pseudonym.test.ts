@@ -93,14 +93,17 @@ describe("determinism", () => {
     }
   });
 
-  test("engine modules import only node:crypto, node:fs and each other", () => {
+  test("engine modules import only node:crypto, node:fs, each other and the spec types", () => {
     const dir = join(import.meta.dir, "../../src/engine");
     for (const f of readdirSync(dir).sort()) {
       const src = readFileSync(join(dir, f), "utf8");
       for (const m of src.matchAll(/from\s+"([^"]+)"/g)) {
-        expect(["node:crypto", "node:fs"].includes(m[1] as string) || /^\.\/[a-z]+\.ts$/.test(m[1] as string)).toBe(true);
+        const spec = m[1] as string;
+        expect(["node:crypto", "node:fs", "../schema.ts"].includes(spec) || /^\.\/[a-z]+\.ts$/.test(spec)).toBe(true);
       }
     }
+    // The spec types module is a leaf: it imports nothing, so the engine reaches nothing through it.
+    expect(readFileSync(join(dir, "../schema.ts"), "utf8")).not.toMatch(/\bimport\b|\brequire\(/);
   });
 });
 

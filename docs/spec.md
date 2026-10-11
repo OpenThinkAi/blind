@@ -348,7 +348,7 @@ One entry per prose document (text, Markdown, logs, DOCX).
 | Field | Type | Meaning |
 |---|---|---|
 | `file` | string, non-empty | The file. |
-| `outline` | array of strings, each at most 120 characters | Headings, in order. |
+| `outline` | array of strings, each at most 120 characters | Headings, in order. Empty under `profile-only` (see [Privacy modes](#privacy-modes)). |
 | `sampleSentences` | array of strings, each at most 120 characters, at most `sampleCount` items | Example sentences. |
 
 ### `transcripts`
@@ -358,7 +358,7 @@ One entry per transcript (VTT, SRT, or a DOCX or text file detected as transcrip
 | Field | Type | Meaning |
 |---|---|---|
 | `file` | string, non-empty | The file. |
-| `speakers` | array of strings, each at most 120 characters | Speaker labels as written. |
+| `speakers` | array of strings, each at most 120 characters | Speaker labels as written. Empty under `profile-only`. |
 | `sampleLines` | array of strings, each at most 120 characters, at most `sampleCount` items | Example lines. |
 
 ### `cooccurrence`
@@ -398,7 +398,8 @@ Pairs of locations that share values, which suggests they hold the same kind of 
   and is cut to 120 characters, ending in `…` when cut.
 - **Documents.** The outline is the first non-empty line, then, for Markdown, each heading (fenced
   code is skipped), at most 50 entries. Sample sentences are up to `k` distinct sentences spread
-  evenly through the document; for logs, each line is one sample.
+  evenly through the document; for logs, each line is one sample. Under `profile-only` the outline
+  is left out (an empty array) and a note says how many documents it was left out of.
 - **Co-occurrence.** Every pair of table columns or JSON key paths, in the same or different files, whose distinct
   values (compared case-insensitively, trimmed) overlap by more than half of the smaller column's
   distinct values.
@@ -415,6 +416,18 @@ or backend.
 | `local-only` (default) | Loopback endpoints only (127.0.0.0/8, `::1`, `localhost`). `claude-cli`, the hosted Anthropic API and any other host are refused with "privacy.mode is local-only". | The caller's data, every string at most 120 characters. |
 | `profile-only` | Remote endpoints allowed, over https. | Exactly the profile and the policy (classes, description split into pieces of at most 120 characters, examples, keep list). Anything else is refused. |
 | `none` | None. `blind plan` uses the heuristic analyst; `blind audit` runs its mechanical and semantic layers only. | Nothing. |
+
+**Document text under `profile-only`.** The only document text a `profile-only` profile carries
+is what `sampleCount` bounds: `samples`, `sampleSentences` and `sampleLines`, at most `sampleCount`
+each (none at the default of 0). Document outlines (a file's first line and its headings) and
+transcript speaker labels have no such bound, so under `profile-only` `blind profile` and
+`blind plan` leave them out: the document or transcript is still listed, with an empty `outline`
+or `speakers`, and a note says so. They are omitted rather than reduced to counts or lengths, so
+the profile shape does not change between modes. What stays is structure: file paths, table
+headers, sheet names and JSON key paths, with their statistics. A `profile-only` call whose
+profile carries a non-empty `outline` or `speakers` (for example a profile built under
+`local-only`) is refused before anything is sent. Under `local-only` outlines and speakers are
+kept and sent as before.
 
 Each call prints one line to stderr before it is sent:
 `role · backend · model · mode · [samples k ·] N bytes sent`, where `samples k` is the profile's

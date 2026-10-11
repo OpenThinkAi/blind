@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
+import { defaultPolicy, renderPolicy } from "../../src/policy.ts";
 import { runProfile } from "../../src/profile/command.ts";
 import { buildProfile } from "../../src/profile/profile.ts";
 import { validateProfile } from "../../src/validate.ts";
@@ -100,7 +101,7 @@ describe("JSON profiling", () => {
   });
 
   test("blind profile prints every key path, quoted as data", async () => {
-    put("blind.toml", "");
+    put("blind.toml", renderPolicy(defaultPolicy()));
     put("t.json", JSON.stringify(TICKETS));
     put("empty.json", "{}");
     const output = new PassThrough();

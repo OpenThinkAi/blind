@@ -13,7 +13,7 @@ import {
   splitText,
 } from "../src/model.ts";
 import { type ModelConfig, type Policy, type PrivacyMode, defaultPolicy, parsePolicy, renderPolicy } from "../src/policy.ts";
-import { buildProfile } from "../src/profile/profile.ts";
+import { buildProfile, forPrivacyMode } from "../src/profile/profile.ts";
 import type { Profile } from "../src/schema.ts";
 
 // Privacy modes (AGT-1741). Synthetic data only; nothing reaches the network or a real `claude`.
@@ -25,6 +25,8 @@ const SCHEMA = {
   properties: { label: { enum: ["person", "unknown"] } },
 } as const;
 const FIXTURE = JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "profile.valid.json"), "utf8")) as Profile;
+/** The fixture as profile-only builds it: no outlines, no speaker labels. */
+const PROFILE_ONLY = forPrivacyMode({ profile: FIXTURE, skipped: [], notes: [] }, "profile-only").profile;
 const REMOTE: ModelConfig = { backend: "openai-compatible", url: "https://models.example.com/v1", model: "m", key_env: "" };
 
 function policyWith(mode: PrivacyMode, cfg: Partial<ModelConfig> = {}): Policy {
@@ -118,7 +120,7 @@ describe("local-only", () => {
 });
 
 describe("profile-only", () => {
-  const payload = () => profilePayload(FIXTURE, defaultPolicy());
+  const payload = () => profilePayload(PROFILE_ONLY, defaultPolicy());
 
   test("sends exactly the profile and the policy, and prints the mode and sample count first", async () => {
     const events: string[] = [];
@@ -156,6 +158,13 @@ describe("profile-only", () => {
     ["an invalid profile", () => ({ ...payload(), profile: { ...FIXTURE, version: 2 } }), "the profile is not valid"],
     ["a policy with an extra field", () => ({ ...payload(), policy: { ...payload().policy, salt: "x" } }), "the policy is not valid"],
     ["a non-object", () => "Ada Example", "the data is not an object"],
+    // AGT-1778: document text that sampleCount does not bound.
+    ["a document outline", () => profilePayload(FIXTURE, defaultPolicy()), "$.profile.documents[0].outline"],
+    [
+      "a speaker list",
+      () => ({ ...payload(), profile: { ...PROFILE_ONLY, transcripts: FIXTURE.transcripts } }),
+      "$.profile.transcripts[0].speakers",
+    ],
   ];
   for (const [name, data, message] of bad) {
     test(`refuses ${name} before any send`, async () => {
@@ -240,7 +249,7 @@ describe("every sample in a payload is at most 120 characters", () => {
     expect(big.length).toBe(10_240);
     writeFileSync(join(dir, "staff.csv"), `owner,notes\nAda Example,"${big}"\nBen Sample,short\n`);
     writeFileSync(join(dir, "notes.txt"), `${big}.\nSecond line.\n`);
-    const { profile, skipped } = buildProfile(["."], 5, dir);
+    const { profile, skipped } = forPrivacyMode(buildProfile(["."], 5, dir), "profile-only");
     expect(skipped).toEqual([]);
 
     const events: string[] = [];

@@ -252,6 +252,33 @@ describe("blind profile", () => {
     expect((await profile("a.csv", "--samples", "2")).code).toBe(0);
   });
 
+  test("under profile-only the printed and saved profile has no outlines (AGT-1778); local-only keeps them", async () => {
+    put("notes.md", "# Marlo Fenwick weekly\n\n## Quorrin Labs renewal\n\nText.\n");
+    const p = defaultPolicy();
+    p.privacy.mode = "profile-only";
+    put("blind.toml", renderPolicy(p));
+    for (const args of [["notes.md"], ["notes.md", "--samples", "2"], ["notes.md", "--json"]]) {
+      const r = await profile(...args);
+      expect(r.code).toBe(0);
+      expect(r.out + r.err).not.toContain("Marlo Fenwick");
+      expect(r.out + r.err).not.toContain("Quorrin Labs");
+      expect(r.out + r.err).toContain("privacy.mode is profile-only: the outline of 1 document(s) is left out");
+      const saved = parseProfile(readFileSync(join(dir, ".blind", "profile.json"), "utf8"));
+      expect(saved.documents[0]?.outline).toEqual([]);
+    }
+    policy(5);
+    const local = await profile("notes.md");
+    expect(local.out).toContain('outline: "Marlo Fenwick weekly", "Quorrin Labs renewal"');
+  });
+
+  test("with --samples, a blind.toml that does not parse is still an error: its mode decides the profile", async () => {
+    put("a.csv", "Name\nAvery\n");
+    put("blind.toml", "");
+    const r = await profile("a.csv", "--samples", "2");
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("sensitive must be a table");
+  });
+
   test("usage errors exit 2", async () => {
     expect((await profile()).code).toBe(2);
     expect((await profile("a", "--samples", "-1")).code).toBe(2);

@@ -1,13 +1,13 @@
 // `blind profile <inputs>`: build the corpus profile, write .blind/profile.json, print it.
 
-import { closeSync, mkdirSync, openSync, renameSync, rmSync, writeSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, renameSync, rmSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { BLIND_DIR } from "../init.ts";
-import { loadPolicy, PolicyError } from "../policy.ts";
+import { defaultPolicy, loadPolicy, POLICY_FILE, PolicyError } from "../policy.ts";
 import type { Location, Profile, ValueStats } from "../schema.ts";
 import { validateProfile } from "../validate.ts";
-import { buildProfile, InputError, type Skipped } from "./profile.ts";
+import { buildProfile, forPrivacyMode, InputError, type Skipped } from "./profile.ts";
 
 export const PROFILE_FILE = "profile.json";
 
@@ -164,8 +164,10 @@ export async function runProfile(argv: string[], io: ProfileIO, cwd = process.cw
   }
 
   try {
-    const k = values.samples !== undefined ? Number(values.samples) : loadPolicy(cwd).profile.samples;
-    const { profile, skipped, notes } = buildProfile(positionals, k, cwd);
+    // --samples works without blind.toml; then the mode is the default (local-only).
+    const policy = values.samples !== undefined && !existsSync(join(cwd, POLICY_FILE)) ? defaultPolicy() : loadPolicy(cwd);
+    const k = values.samples !== undefined ? Number(values.samples) : policy.profile.samples;
+    const { profile, skipped, notes } = forPrivacyMode(buildProfile(positionals, k, cwd), policy.privacy.mode);
     const check = validateProfile(profile);
     if (!check.ok) {
       // A bug, not a user error: refuse to write a profile that breaks the schema.

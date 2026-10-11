@@ -11,7 +11,7 @@ import { BLIND_DIR } from "../init.ts";
 import { type AskOptions, ModelError, modelsEnabled } from "../model.ts";
 import { loadPolicy, PolicyError } from "../policy.ts";
 import { writeProfile } from "../profile/command.ts";
-import { buildProfile, InputError } from "../profile/profile.ts";
+import { buildProfile, forPrivacyMode, InputError } from "../profile/profile.ts";
 import type { ColumnRule, EntityClassName, Location, Spec } from "../schema.ts";
 import { parseSpec, SchemaError, validateProfile, validateSpec } from "../validate.ts";
 import { AnalystError, answerQuestion, runAnalyst } from "./analyst.ts";
@@ -190,7 +190,7 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
       }
     }
 
-    const { profile, skipped, notes } = buildProfile(positionals, policy.profile.samples, io.cwd);
+    const { profile, skipped, notes } = forPrivacyMode(buildProfile(positionals, policy.profile.samples, io.cwd), policy.privacy.mode);
     const check = validateProfile(profile);
     if (!check.ok) throw new Refusal(`internal error, the profile failed validation:\n${check.issues.map((i) => `  ${i.path}: ${i.message}`).join("\n")}`);
     writeProfile(io.cwd, profile);

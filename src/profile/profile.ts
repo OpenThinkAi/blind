@@ -3,7 +3,7 @@
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { basename, extname, join, relative, resolve, sep } from "node:path";
 import { BLIND_DIR } from "../init.ts";
-import { POLICY_FILE } from "../policy.ts";
+import { POLICY_FILE, type PrivacyMode } from "../policy.ts";
 import { type Cooccurrence, type FileFormat, type Location, MAX_EXCERPT, type Profile, type ProfileDocument, type ProfileFile, type ProfileJsonKey, type ProfileTable } from "../schema.ts";
 import { profileJson, scanJsonFile } from "./json.ts";
 import { ParseError, parseTable, profileTable } from "./table.ts";
@@ -238,6 +238,31 @@ export function buildProfile(inputs: readonly string[], k: number, cwd: string):
       cooccurrence: cooccurrence([...tableColumns(tables), ...jsonColumns]),
     },
     skipped: skipped.sort((a, b) => byCodeUnit(a.path, b.path)),
+    notes,
+  };
+}
+
+/**
+ * Fits a profile to the privacy mode. Under profile-only the profile may carry no document text
+ * beyond what `sampleCount` bounds, so document outlines (first lines and headings) and transcript
+ * speaker labels are emptied, and a note says how many were left out. Other modes are unchanged.
+ * Headers, key paths and file paths are structure and stay.
+ */
+export function forPrivacyMode(result: ProfileResult, mode: PrivacyMode): ProfileResult {
+  if (mode !== "profile-only") return result;
+  const { profile } = result;
+  const outlines = profile.documents.filter((d) => d.outline.length > 0).length;
+  const speakers = profile.transcripts.filter((t) => t.speakers.length > 0).length;
+  const notes = [...result.notes];
+  if (outlines > 0) notes.push(`privacy.mode is profile-only: the outline of ${outlines} document(s) is left out`);
+  if (speakers > 0) notes.push(`privacy.mode is profile-only: the speaker list of ${speakers} transcript(s) is left out`);
+  return {
+    ...result,
+    profile: {
+      ...profile,
+      documents: profile.documents.map((d) => ({ ...d, outline: [] })),
+      transcripts: profile.transcripts.map((t) => ({ ...t, speakers: [] })),
+    },
     notes,
   };
 }

@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { PolicyError, defaultPolicy, loadPolicy, parsePolicy, renderPolicy } from "../src/policy.ts";
 
 const valid = () => renderPolicy(defaultPolicy());
+/** The default policy with `[profile] samples = 5` written out rather than left to the mode. */
+const explicit = () => renderPolicy({ ...defaultPolicy(), profile: { samples: 5, samplesExplicit: true } });
 
 function errorOf(text: string): string {
   try {
@@ -51,7 +53,7 @@ describe("validation names the key and the expected type", () => {
     ["section replaced by a value", (t) => t.replace("[keep]\n", "keep = 3\n[unused]\n").replace("terms = []\n", ""), "unknown key unused"],
   ];
   for (const [name, edit, message] of cases) {
-    test(name, () => expect(errorOf(edit(valid()))).toContain(message));
+    test(name, () => expect(errorOf(edit(explicit()))).toContain(message));
   }
 
   test("a missing key is reported as missing", () => {
@@ -67,7 +69,7 @@ describe("validation names the key and the expected type", () => {
   });
 
   test("a misspelt key is rejected, not ignored", () => {
-    expect(errorOf(valid().replace("samples = 5", "samples = 5\nsampels = 3"))).toBe(
+    expect(errorOf(explicit().replace("samples = 5", "samples = 5\nsampels = 3"))).toBe(
       "blind.toml: unknown key profile.sampels (expected one of: samples)",
     );
   });
@@ -97,7 +99,7 @@ describe("loadPolicy", () => {
   });
 
   test("errors name the file path", () => {
-    writeFileSync(join(dir, "blind.toml"), valid().replace("samples = 5", "samples = true"));
+    writeFileSync(join(dir, "blind.toml"), explicit().replace("samples = 5", "samples = true"));
     expect(() => loadPolicy(dir)).toThrow(`${join(dir, "blind.toml")}: profile.samples must be a non-negative integer (got boolean)`);
   });
 

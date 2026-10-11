@@ -279,7 +279,8 @@ Pairs of locations that share values, which suggests they hold the same kind of 
 `blind profile <inputs...>` reads CSV (`.csv`), TSV (`.tsv`, `.tab`), plain text (`.txt`,
 `.text`), Markdown (`.md`, `.markdown`) and logs (`.log`), writes `.blind/profile.json` (mode
 0600) and prints it as a table; `--json` prints the JSON instead. `k` is `[profile] samples` in
-`blind.toml`, or `--samples N`.
+`blind.toml`, or `--samples N`. When `samples` is unset, `k` follows `[privacy] mode`: 5 under
+`local-only` and `none`, 0 (headers and statistics only) under `profile-only`.
 
 - **Paths.** Directories are walked recursively in sorted order; `path` is relative to the input
   directory, or the file name for a file named directly. Hidden entries, symbolic links, files in
@@ -303,3 +304,20 @@ Pairs of locations that share values, which suggests they hold the same kind of 
 - **Co-occurrence.** Every pair of table columns, in the same or different files, whose distinct
   values (compared case-insensitively, trimmed) overlap by more than half of the smaller column's
   distinct values.
+
+## Privacy modes
+
+`[privacy] mode` in `blind.toml` decides what a model call may do. Every check runs before
+anything is sent; a refused call exits 2 and names the mode. There is no fallback to another mode
+or backend.
+
+| Mode | Model calls | What is sent |
+|---|---|---|
+| `local-only` (default) | Loopback endpoints only (127.0.0.0/8, `::1`, `localhost`). `claude-cli`, the hosted Anthropic API and any other host are refused with "privacy.mode is local-only". | The caller's data, every string at most 120 characters. |
+| `profile-only` | Remote endpoints allowed, over https. | Exactly the profile and the policy (classes, description split into pieces of at most 120 characters, examples, keep list). Anything else is refused. |
+| `none` | None. `blind plan` uses the heuristic analyst; `blind audit` runs its mechanical and semantic layers only. | Nothing. |
+
+Each call prints one line to stderr before it is sent:
+`role · backend · model · mode · [samples k ·] N bytes sent`, where `samples k` is the profile's
+`sampleCount` and appears under `profile-only`. Under `profile-only` the line is printed even when
+the command is quiet.

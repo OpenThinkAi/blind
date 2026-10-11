@@ -6,14 +6,17 @@ import {
   type AskOptions,
   MAX_DATA_STRING,
   ModelError,
+  ModelRefusal,
   type SpawnFn,
   ask,
+  profilePayload,
   isLoopback,
   parseReply,
   renderPrompt,
   resolveEndpoint,
 } from "../src/model.ts";
 import { type ModelConfig, type PrivacyMode, defaultPolicy } from "../src/policy.ts";
+import type { Profile } from "../src/schema.ts";
 
 // Everything here is synthetic. Nothing reaches the network or a real `claude`:
 // HTTP goes to a Bun.serve on 127.0.0.1 or an injected fetch, and claude-cli runs a
@@ -27,6 +30,9 @@ const SCHEMA = {
 } as const;
 const PROMPT = { task: "Classify the column.", data: { header: "contact_name", samples: ["Ada Example"] } };
 const KEY = "test-key-0000-synthetic";
+const FIXTURE_PROFILE = JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "profile.valid.json"), "utf8")) as Profile;
+/** The only data a profile-only call may carry. */
+const PROFILE_PROMPT = { task: "Classify the columns.", data: profilePayload(FIXTURE_PROFILE, defaultPolicy()) };
 
 function policy(cfg: Partial<ModelConfig>, mode: PrivacyMode = "local-only"): AskOptions["policy"] {
   const p = defaultPolicy();
@@ -82,7 +88,7 @@ describe("local-only refuses non-loopback endpoints before any request", () => {
     const msg = await rejection(
       ask("analyst", "sys", PROMPT, SCHEMA, { policy: policy({ url, model: "m" }), fetch: noFetch, stderr: () => {} }),
     );
-    expect(msg).toContain('privacy.mode "local-only"');
+    expect(msg).toStartWith("privacy.mode is local-only: ");
   });
 
   test("refuses a URL with userinfo, which can hide the real host", async () => {
@@ -97,6 +103,7 @@ describe("local-only refuses non-loopback endpoints before any request", () => {
     const cli = await rejection(
       ask("analyst", "sys", PROMPT, SCHEMA, { policy: policy({ backend: "claude-cli" }), spawn: noSpawn, fetch: noFetch, env }),
     );
+    expect(cli).toStartWith("privacy.mode is local-only: ");
     expect(cli).toContain("claude-cli");
     const api = await rejection(
       ask("analyst", "sys", PROMPT, SCHEMA, {
@@ -105,6 +112,7 @@ describe("local-only refuses non-loopback endpoints before any request", () => {
         env,
       }),
     );
+    expect(api).toStartWith("privacy.mode is local-only: ");
     expect(api).toContain("api.anthropic.com");
   });
 
@@ -112,7 +120,7 @@ describe("local-only refuses non-loopback endpoints before any request", () => {
     const msg = await rejection(
       ask("analyst", "sys", PROMPT, SCHEMA, { policy: policy({}, "none"), fetch: noFetch, spawn: noSpawn }),
     );
-    expect(msg).toContain('"none"');
+    expect(msg).toStartWith("privacy.mode is none: ");
   });
 
   test("profile-only allows remote https but refuses plain http to a remote host", async () => {
@@ -335,11 +343,11 @@ describe("anthropic", () => {
       urls.push(String(input));
       return Response.json({ content: [{ type: "text", text: '{"label":"unknown"}' }], stop_reason: "end_turn" });
     };
-    await ask("analyst", "s", PROMPT, SCHEMA, {
+    await ask("analyst", "s", PROFILE_PROMPT, SCHEMA, {
       policy: policy({ backend: "anthropic", url: "", model: "claude-test", key_env: "K" }, "profile-only"),
       env: { K: KEY },
       fetch: fake,
-      quiet: true,
+      stderr: () => {},
     });
     expect(urls).toEqual(["https://api.anthropic.com/v1/messages"]);
   });
@@ -400,7 +408,7 @@ describe("claude-cli", () => {
   test("runs claude -p with tools off, prompt on stdin, in a neutral cwd", async () => {
     cliReply('{"label":"person"}');
     const lines: string[] = [];
-    const out = await ask("analyst", "You classify columns.", PROMPT, SCHEMA, {
+    const out = await ask("analyst", "You classify columns.", PROFILE_PROMPT, SCHEMA, {
       policy: policy({ backend: "claude-cli", url: "", model: "" }, "profile-only"),
       env: env(),
       stderr: (l) => lines.push(l),
@@ -412,21 +420,21 @@ describe("claude-cli", () => {
     expect(args).toContain("[You classify columns.]");
     expect(args).not.toContain("[--model]");
     const stdin = readFileSync(join(dir, "stdin"), "utf8");
-    expect(stdin).toContain('"contact_name"');
-    expect(args.join("\n")).not.toContain("contact_name");
+    expect(stdin).toContain('"Owner"');
+    expect(args.join("\n")).not.toContain("Owner");
     const cwd = readFileSync(join(dir, "cwd"), "utf8").trim();
     expect(cwd).toContain("blind-claude-");
     expect(existsSync(cwd)).toBe(false);
-    expect(lines[0]).toStartWith("analyst · claude-cli · default · profile-only · ");
+    expect(lines[0]).toStartWith("analyst · claude-cli · default · profile-only · samples 3 · ");
   });
 
   test("passes --model when configured and rejects a non-conforming result twice", async () => {
     cliReply("I think it is a person.");
     const msg = await rejection(
-      ask("analyst", "s", PROMPT, SCHEMA, {
+      ask("analyst", "s", PROFILE_PROMPT, SCHEMA, {
         policy: policy({ backend: "claude-cli", url: "", model: "test-model" }, "profile-only"),
         env: env(),
-        quiet: true,
+        stderr: () => {},
       }),
     );
     expect(msg).toContain("rejected after one retry");
@@ -436,7 +444,7 @@ describe("claude-cli", () => {
   });
 
   const run = (spawn: SpawnFn) =>
-    rejection(ask("analyst", "s", PROMPT, SCHEMA, { policy: policy({ backend: "claude-cli" }, "profile-only"), spawn, quiet: true }));
+    rejection(ask("analyst", "s", PROFILE_PROMPT, SCHEMA, { policy: policy({ backend: "claude-cli" }, "profile-only"), spawn, stderr: () => {} }));
 
   test("a timeout, a non-zero exit and an error result are failures", async () => {
     expect(await run(async () => ({ exitCode: null, stdout: "", stderr: "", timedOut: true }))).toContain("no reply within");
@@ -451,10 +459,10 @@ describe("claude-cli", () => {
     writeFileSync(join(bin, "claude"), "#!/bin/sh\nexec sleep 5\n");
     chmodSync(join(bin, "claude"), 0o755);
     const msg = await rejection(
-      ask("analyst", "s", PROMPT, SCHEMA, {
+      ask("analyst", "s", PROFILE_PROMPT, SCHEMA, {
         policy: policy({ backend: "claude-cli" }, "profile-only"),
         env: env(),
-        quiet: true,
+        stderr: () => {},
         timeoutMs: 100,
       }),
     );

@@ -93,14 +93,17 @@ describe("determinism", () => {
     }
   });
 
-  // Deterministic leaf modules the engine shares with the profiler (header rule, word list), so the
-  // two agree on what a header and a dictionary word are.
-  const SHARED = ["node:crypto", "node:fs", "../schema.ts", "../profile/table.ts", "../profile/words.ts", "../formats/ooxml.ts"];
+  // Deterministic leaf modules the engine shares with the profiler (header rule, word list, the
+  // workbook reader), so the two agree on what a header, a dictionary word and a sheet are.
+  const SHARED = [
+    "node:crypto", "node:fs", "../schema.ts", "../profile/table.ts", "../profile/words.ts", "../formats/ooxml.ts", "../formats/xlsx.ts",
+  ];
   const SHARED_IMPORTS: Record<string, string[]> = {
+    "../formats/ooxml.ts": ["node:zlib"],
+    "../formats/xlsx.ts": ["./ooxml.ts"],
     "../profile/table.ts": ["../schema.ts", "./stats.ts", "../engine/csv.ts"],
     "../profile/stats.ts": ["../schema.ts", "./words.ts"],
     "../profile/words.ts": [],
-    "../formats/ooxml.ts": ["node:zlib"],
   };
 
   test("engine modules import only node:crypto, node:fs, each other and shared deterministic leaves", () => {

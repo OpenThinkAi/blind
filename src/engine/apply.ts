@@ -47,13 +47,14 @@ import { decode, type Encoding, EncodingError, encode } from "./encoding.ts";
 import { isJsonNumber, type JsonFormat, JsonError, type JsonToken, quote, scanJson, scanJsonl, stringOffsets } from "./json.ts";
 import type { BlindMap } from "./map.ts";
 import { type EntityEntry, Pseudonymizer } from "./pseudonym.ts";
-import { type ColumnStats, columnStats, isIdentifierLike, THRESHOLDS } from "./stats.ts";
+import { type ColumnOutcome, decide, outcomeOf } from "./columns.ts";
 import { DocxError, type DocxPlan, planDocx, renderDocx, scanDocx } from "./docx.ts";
 import { NameRewriter, rewriteSpans } from "./names.ts";
 import { recurrenceForms, TextScanner } from "./recur.ts";
 import { EntityMatcher, type ExtraForm, keepDomains, type Span } from "./text.ts";
+import { type Env, planXlsx, prepareXlsx, renderXlsx, XlsxError, type XlsxPlan, XlsxSpecError, xlsxValues, ZipError } from "./xlsx.ts";
 
-export type EngineFormat = "csv" | "tsv" | "json" | "jsonl" | "text" | "docx";
+export type EngineFormat = "csv" | "tsv" | "json" | "jsonl" | "text" | "docx" | "xlsx";
 
 const EXTENSIONS: Record<string, EngineFormat> = {
   ".csv": "csv",
@@ -68,6 +69,7 @@ const EXTENSIONS: Record<string, EngineFormat> = {
   ".markdown": "text",
   ".log": "text",
   ".docx": "docx",
+  ".xlsx": "xlsx",
 };
 
 /** The format this engine handles a path as, or null when it does not handle it. */
@@ -84,14 +86,7 @@ export interface InputFile {
   bytes: Uint8Array;
 }
 
-export type ColumnOutcome =
-  | "blinded"
-  | "value"
-  | "kept"
-  | "unknown-pseudonymised"
-  | "unknown-kept-low-cardinality"
-  | "unknown-kept-not-identifier-like"
-  | "unknown-kept-empty";
+export type { ColumnOutcome } from "./columns.ts";
 
 export interface ColumnReport {
   /** 0-based column index (for JSON, the key path's position in first-seen order). */
@@ -100,6 +95,8 @@ export interface ColumnReport {
   header: string;
   /** JSON/JSONL only: the key path. */
   jsonPath?: string;
+  /** XLSX only: the worksheet. */
+  sheet?: string;
   class: EntityClassName;
   /** null when the spec has no rule for the column. */
   treatment: Treatment | null;
@@ -116,7 +113,8 @@ export interface FileReport {
   /** Where the blinded file is written: `path` with its folder and file names blinded. */
   outputPath: string;
   format: EngineFormat;
-  encoding: Encoding;
+  /** Absent for XLSX, a zip whose XML members are UTF-8. */
+  encoding?: Encoding;
   /** CSV/TSV only. */
   delimiter?: string;
   /** CSV/TSV only: 1-based header row (0 for an empty file). */
@@ -135,6 +133,10 @@ export interface FileReport {
   metadataReplacements?: number;
   /** Parts of the file copied without blinding (images), for the report. */
   warnings?: string[];
+  /** XLSX only: each worksheet, its header row and its blinded name. */
+  sheets?: { name: string; outputName: string; headerRow: number; noHeader: boolean }[];
+  /** XLSX only: members that are not XML (images, binaries), copied as they are without being read. */
+  unread?: string[];
   changed: boolean;
 }
 
@@ -164,8 +166,6 @@ export interface ApplyOptions {
 export class ApplyError extends Error {
   override name = "ApplyError";
 }
-
-const SENSITIVE: ReadonlySet<EntityClassName> = new Set(["person", "org", "host", "email", "id", "location"]);
 
 /** Code-unit order, never locale order. */
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -228,34 +228,13 @@ interface DocxFilePlan {
   docx: DocxPlan;
 }
 
-type Plan = TablePlan | TextPlan | JsonPlan | DocxFilePlan;
-
-type ColumnAction = { kind: "keep" } | { kind: "pseudo"; cls: PseudoClass } | { kind: "free" };
-
-function ruleAction(rule: ColumnRule): ColumnAction | "heuristic" {
-  if (rule.treatment === "keep") return { kind: "keep" };
-  if (rule.treatment === "blind" && SENSITIVE.has(rule.class)) return { kind: "pseudo", cls: rule.class as PseudoClass };
-  if (rule.treatment === "value" && rule.class === "unknown") return "heuristic";
-  return { kind: "pseudo", cls: "value" };
+interface WorkbookPlan {
+  kind: "xlsx";
+  input: InputFile;
+  plan: XlsxPlan;
 }
 
-/** What a column gets: its rule's action, or for no rule (or unknown/value) the fail-closed identifier-like test. */
-function decide(rule: ColumnRule | undefined, values: readonly string[]): { action: ColumnAction; stats: ColumnStats | undefined } {
-  const planned = rule === undefined ? "heuristic" : ruleAction(rule);
-  if (planned !== "heuristic") return { action: planned, stats: undefined };
-  const stats = columnStats(values);
-  return { action: isIdentifierLike(stats) ? { kind: "pseudo", cls: "value" } : { kind: "free" }, stats };
-}
-
-function outcomeOf(action: ColumnAction, stats: ColumnStats | undefined): ColumnOutcome {
-  if (stats !== undefined) {
-    if (action.kind === "pseudo") return "unknown-pseudonymised";
-    if (stats.count === 0) return "unknown-kept-empty";
-    return stats.distinctRatio < THRESHOLDS.distinct ? "unknown-kept-low-cardinality" : "unknown-kept-not-identifier-like";
-  }
-  if (action.kind === "keep") return "kept";
-  return action.kind === "pseudo" && action.cls !== "value" ? "blinded" : "value";
-}
+type Plan = TablePlan | TextPlan | JsonPlan | DocxFilePlan | WorkbookPlan;
 
 const isFilled = (c: Cell | undefined): c is Cell => c !== undefined && c.value.trim() !== "";
 
@@ -516,6 +495,16 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       }
       continue;
     }
+    if (format === "xlsx") {
+      try {
+        plans.push({ kind: "xlsx", input, plan: planXlsx(input.path, input.bytes, rules) });
+      } catch (e) {
+        if (e instanceof XlsxSpecError) throw new ApplyError(e.message);
+        if (!(e instanceof XlsxError || e instanceof ZipError)) throw e;
+        skipped.push({ path: input.path, reason: `cannot read the workbook: ${e.message}; not written` });
+      }
+      continue;
+    }
     let decoded;
     try {
       decoded = decode(input.bytes);
@@ -554,7 +543,8 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   for (const p of plans) {
     if (p.kind === "json") {
       for (const [i, edit] of p.edits) if (edit.kind === "pseudo") columnValues.push({ cls: edit.cls, value: (p.tokens[i] as JsonToken).value });
-    } else if (p.kind === "table") {
+    } else if (p.kind === "xlsx") columnValues.push(...p.plan.columnValues);
+    else if (p.kind === "table") {
       for (const [key, edit] of p.edits) {
         if (edit.kind !== "pseudo") continue;
         const [r, c] = key.split(":").map(Number) as [number, number];
@@ -569,7 +559,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   // Every column is decided: scan the rest of the text for patterns, entities and the values the
   // column pass (or an earlier map) pseudonymised.
   const forms = recurrenceForms(
-    plans.flatMap((p) => (p.kind === "text" || p.kind === "docx" ? [] : p.mapped)),
+    plans.flatMap((p) => (p.kind === "text" || p.kind === "docx" ? [] : p.kind === "xlsx" ? p.plan.mapped : p.mapped)),
     spec.entities,
     opts.map,
   );
@@ -578,7 +568,21 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     if (p.kind === "text") p.spans = scanner.free(p.text);
     else if (p.kind === "docx") scanDocx(p.docx, (t) => scanner.free(t));
     else if (p.kind === "json") scanPending(p.pending, p.edits, scanner);
-    else scanPending(p.pending, p.edits, scanner);
+    else if (p.kind === "table") scanPending(p.pending, p.edits, scanner);
+  }
+
+  // Workbooks: plan their sheet and defined names, refuse one that holds a spec value where blind
+  // does not rewrite, and record the pseudonyms the render will need.
+  const xlsxEnv: Env = { scanner, names };
+  const unhandled = new EntityMatcher(spec.entities, forms);
+  for (let i = plans.length - 1; i >= 0; i--) {
+    const p = plans[i] as Plan;
+    if (p.kind !== "xlsx") continue;
+    const refused = prepareXlsx(p.input.path, p.input.bytes, p.plan, xlsxEnv, (s) => unhandled.find(s, []));
+    if (refused !== null) {
+      skipped.push({ path: p.input.path, reason: refused });
+      plans.splice(i, 1);
+    }
   }
 
   // Every real value in the corpus, so no pseudonym equals one.
@@ -588,6 +592,11 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     if (p.kind === "text") for (const t of tokens(p.text)) avoid.add(t);
     else if (p.kind === "docx") {
       for (const v of p.docx.values) {
+        avoid.add(v.trim());
+        for (const t of tokens(v)) avoid.add(t);
+      }
+    } else if (p.kind === "xlsx") {
+      for (const v of xlsxValues(p.plan)) {
         avoid.add(v.trim());
         for (const t of tokens(v)) avoid.add(t);
       }
@@ -633,6 +642,10 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       }
       continue;
     }
+    if (p.kind === "xlsx") {
+      for (const r of p.plan.requests) want(r.cls, r.value);
+      continue;
+    }
     for (const [key, edit] of p.edits) {
       if (edit.kind === "spans") {
         for (const s of edit.spans) if (s.cls !== null) want(s.cls, s.value);
@@ -652,6 +665,38 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   const outputs: InputFile[] = [];
   const files: FileReport[] = [];
   for (const p of plans) {
+    if (p.kind === "xlsx") {
+      let r;
+      try {
+        r = renderXlsx(p.input.path, p.input.bytes, p.plan, xlsxEnv, pz);
+      } catch (e) {
+        if (e instanceof XlsxSpecError) throw new ApplyError(e.message);
+        throw e;
+      }
+      const broken = r.members.find((m) => m.kind === "error");
+      if (broken?.kind === "error") {
+        // The rewriter copies a member it cannot parse unchanged: never write that as blinded.
+        skipped.push({ path: p.input.path, reason: `cannot rewrite member ${broken.name} (${broken.error}); not written` });
+        continue;
+      }
+      const changed = r.members.some((m) => m.kind === "xml" && m.changed);
+      const report: FileReport = {
+        path: p.input.path,
+        outputPath: names.renamePath(p.input.path, pz),
+        format: "xlsx",
+        columns: p.plan.columns,
+        entityReplacements: r.entityReplacements,
+        patternReplacements: r.patternReplacements,
+        mappedReplacements: r.mappedReplacements,
+        keptHosts: r.keptHosts,
+        sheets: p.plan.sheets.map((s) => ({ ...s, outputName: r.sheetNames.find((n) => n.from === s.name)?.to ?? s.name })),
+        unread: r.members.filter((m) => m.kind === "other" && !m.name.endsWith("/")).map((m) => m.name),
+        changed,
+      };
+      outputs.push({ path: report.outputPath, bytes: changed ? r.bytes : p.input.bytes });
+      files.push(report);
+      continue;
+    }
     if (p.kind === "docx") {
       const r = renderDocx(p.docx, pz);
       const outputPath = names.renamePath(p.input.path, pz);

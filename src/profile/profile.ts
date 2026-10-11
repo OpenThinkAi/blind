@@ -6,9 +6,12 @@ import { BLIND_DIR } from "../init.ts";
 import { POLICY_FILE, type PrivacyMode } from "../policy.ts";
 import { type Cooccurrence, type FileFormat, type Location, MAX_EXCERPT, type Profile, type ProfileDocument, type ProfileFile, type ProfileJsonKey, type ProfileTable } from "../schema.ts";
 import { profileJson, scanJsonFile } from "./json.ts";
+import { excerpt } from "./stats.ts";
 import { ParseError, parseTable, profileTable } from "./table.ts";
 import { profileText } from "./text.ts";
 import { tokeniseProfile } from "./tokens.ts";
+import { ZipError } from "../formats/ooxml.ts";
+import { readWorkbook, sheetRows, XlsxError } from "../formats/xlsx.ts";
 
 /** Formats this profiler reads, by lower-cased extension. */
 const PROFILED: Record<string, "csv" | "tsv" | "json" | "jsonl" | "text" | "markdown" | "log"> = {
@@ -27,7 +30,6 @@ const PROFILED: Record<string, "csv" | "tsv" | "json" | "jsonl" | "text" | "mark
 
 /** Formats blind knows but this profiler cannot read yet. */
 const NOT_YET: Record<string, FileFormat> = {
-  ".xlsx": "xlsx",
   ".docx": "docx",
   ".vtt": "vtt",
   ".srt": "srt",
@@ -124,7 +126,9 @@ interface ValueColumn {
 
 function tableColumns(tables: readonly TableColumns[]): ValueColumn[] {
   return tables.flatMap((t) =>
-    t.table.columns.map((c, i) => ({ loc: { file: t.table.file, header: c.header }, values: t.valueSets[i] ?? new Set<string>() })),
+    t.table.columns.map((c, i) => ({
+      loc: t.table.sheet === undefined ? { file: t.table.file, header: c.header } : { file: t.table.file, sheet: t.table.sheet, header: c.header },
+      values: t.valueSets[i] ?? new Set<string>() })),
   );
 }
 
@@ -169,6 +173,38 @@ export function buildProfile(inputs: readonly string[], k: number, cwd: string):
       continue;
     }
     const ext = extname(f.path).toLowerCase();
+    if (ext === ".xlsx") {
+      let bytes: Buffer;
+      try {
+        bytes = readFileSync(f.abs);
+      } catch (e) {
+        skipped.push({ path: f.path, reason: `cannot read: ${(e as NodeJS.ErrnoException).code ?? "error"}` });
+        continue;
+      }
+      // Each worksheet is a table, read the way `blind apply` reads it.
+      let wb;
+      try {
+        wb = readWorkbook(bytes);
+      } catch (e) {
+        if (!(e instanceof XlsxError || e instanceof ZipError)) throw e;
+        skipped.push({ path: f.path, reason: `cannot read the workbook: ${e.message}` });
+        continue;
+      }
+      const broken = wb.members.find((m) => m.kind === "error");
+      if (broken?.kind === "error") {
+        skipped.push({ path: f.path, reason: `cannot read the workbook: member ${broken.name} (${broken.error})` });
+        continue;
+      }
+      for (const sheet of wb.sheets) {
+        if (sheet.member === null) continue;
+        const result = profileTable(f.path, sheetRows(sheet, wb.sharedStrings), k);
+        result.table = { file: result.table.file, sheet: excerpt(sheet.name), headerRow: result.table.headerRow, columns: result.table.columns };
+        if (result.noHeader) notes.push(`${f.path} sheet ${JSON.stringify(sheet.name)}: no header row detected; row 1 used as the header`);
+        tables.push(result);
+      }
+      files.push({ path: f.path, format: "xlsx", size: bytes.length });
+      continue;
+    }
     const format = PROFILED[ext];
     if (format === undefined) {
       const known = NOT_YET[ext];

@@ -19,8 +19,9 @@ export interface ProfileIO {
 const PROFILE_HELP = [
   "Usage: blind profile <inputs...> [--samples N] [--json]",
   "",
-  "Profiles CSV, TSV, JSON, JSONL, plain text, Markdown and log files (directories are walked) and",
-  "writes .blind/profile.json (mode 0600). Every JSON key path is profiled like a table column.",
+  "Profiles CSV, TSV, JSON, JSONL, XLSX, plain text, Markdown and log files (directories are walked)",
+  "and writes .blind/profile.json (mode 0600). Every JSON key path is profiled like a table column,",
+  "and every worksheet as a table.",
   "The profile is the only thing a model ever sees; this command prints it so you can check exactly",
   "what would leave the machine. Samples are cut to 120 characters.",
   "Run it in the directory that holds blind.toml.",
@@ -76,7 +77,7 @@ const statCells = (s: ValueStats): string[] => [
   s.samples.map(q).join(", "),
 ];
 
-const where = (l: Location): string => `${l.file} ${q(l.header ?? l.jsonPath ?? "")}`;
+const where = (l: Location): string => `${l.file}${l.sheet === undefined ? "" : ` sheet ${q(l.sheet)}`} ${q(l.header ?? l.jsonPath ?? "")}`;
 
 /** The human-readable profile. Every document-derived string is printed JSON-quoted, as data. */
 export function renderProfile(p: Profile, skipped: readonly Skipped[], notes: readonly string[]): string {
@@ -87,7 +88,7 @@ export function renderProfile(p: Profile, skipped: readonly Skipped[], notes: re
     return `${q(file)}  ${f?.format ?? "?"}  ${f?.size ?? 0} bytes`;
   };
   for (const t of p.tables) {
-    out.push(`${head(t.file)}  header row ${t.headerRow}`);
+    out.push(`${head(t.file)}${t.sheet === undefined ? "" : `  sheet ${q(t.sheet)}`}  header row ${t.headerRow}`);
     out.push(
       ...table([
         ["column", "count", "distinct", "digits", "words", "length", "detectors", "samples"],

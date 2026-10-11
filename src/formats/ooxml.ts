@@ -57,6 +57,12 @@ export interface RewriteRules {
    * element's attributes are offered: lets a handler see markup between text nodes (a tab, a break).
    */
   visit?(element: Frame, parents: readonly Frame[]): void;
+  /**
+   * Offer each run of character data directly inside this element (text between its child tags,
+   * CDATA included) when the element's text is not selected as a whole. Whitespace-only runs are
+   * not offered. Lets a handler scan mixed content it does not otherwise rewrite.
+   */
+  runs?(element: Frame, parents: readonly Frame[]): boolean;
 }
 
 export type XmlRewrite = (value: string, ctx: NodeContext) => string;
@@ -161,6 +167,16 @@ export function rewriteXml(xml: string, rewrite: XmlRewrite, rules: RewriteRules
     }
   };
 
+  // A run of character data inside a non-selected element, offered when rules.runs selects the element.
+  const offerRun = (raw: string, value: string, at: number): string => {
+    const top = stack[stack.length - 1];
+    if (top === undefined || rules.runs === undefined || !/[^ \t\r\n]/.test(value)) return raw;
+    const parents = stack.slice(0, -1);
+    if (!rules.runs(top, parents)) return raw;
+    const after = rewrite(value, { element: top, parents });
+    return after === value ? raw : withLine(at, () => encodeText(after));
+  };
+
   // A selected text element collects its content (text and CDATA) until its end tag.
   let selected: { frame: Frame; parents: Frame[]; raw: string[]; value: string[]; at: number; tag: number } | null = null;
   let rootClosed = false;
@@ -180,9 +196,9 @@ export function rewriteXml(xml: string, rewrite: XmlRewrite, rules: RewriteRules
         selected.raw.push(raw);
         selected.value.push(withLine(i, () => decodeText(raw)));
       } else {
-        withLine(i, () => decodeText(raw));
+        const value = withLine(i, () => decodeText(raw));
         if ((stack.length === 0) && /[^ \t\r\n]/.test(raw)) fail(i, "text outside the root element");
-        out.push(raw);
+        out.push(offerRun(raw, value, i));
       }
     }
     if (lt < 0) break;
@@ -195,7 +211,7 @@ export function rewriteXml(xml: string, rewrite: XmlRewrite, rules: RewriteRules
       if (selected) {
         selected.raw.push(raw);
         selected.value.push(xml.slice(i + 9, k).replace(/\r\n?/g, "\n"));
-      } else out.push(raw);
+      } else out.push(offerRun(raw, xml.slice(i + 9, k).replace(/\r\n?/g, "\n"), i));
       i = k + 3;
       continue;
     }

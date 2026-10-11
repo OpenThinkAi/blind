@@ -278,3 +278,50 @@ describe("readZip", () => {
     ]);
   });
 });
+
+describe("keep-list hosts and blinded names (AGT-1737)", () => {
+  const VENDOR = "Fetched from api.vendor.example.net and db01.example.com.\n";
+  const inputs = [
+    { path: "staff.csv", bytes: Buffer.from(STAFF) },
+    { path: "backup_db01.example.com/Robin Example_avery@example.com.md", bytes: Buffer.from("hi\n") },
+    { path: "123e4567-e89b-12d3-a456-426614174000/vendor.txt", bytes: Buffer.from(VENDOR) },
+  ];
+  /** The engine's output as a tree, with each output folder as a directory entry. */
+  const tree = (keep: string[]) => {
+    const r = applySpec(inputs, SPEC, { salt: SALT, keep });
+    const dirs = [...new Set(r.outputs.flatMap((o) => (o.path.includes("/") ? [o.path.slice(0, o.path.lastIndexOf("/"))] : [])))];
+    const entries: TreeEntry[] = [...dirs.map((d) => ({ path: d, kind: "dir" as const })), ...r.outputs.map((o) => file(o.path, o.bytes))];
+    return { entries, map: r.map };
+  };
+
+  test("a host the engine kept under a keep-list domain is not a leak when the audit has the same keep list", () => {
+    const { entries, map } = tree(["vendor.example.net"]);
+    expect(leaks(auditTree(entries, SPEC, map, ["vendor.example.net"]))).toEqual([]);
+    // Without the keep list the audit still reports it: the keep list is the only exemption.
+    const without = leaks(auditTree(entries, SPEC, map));
+    expect(without.map((f) => f.class)).toEqual(["pattern:host"]);
+  });
+
+  test("blinded names joined by underscores (pseudonyms side by side) are not leaks", () => {
+    const { entries, map } = tree([]);
+    const names = entries.map((e) => e.path).join("\n");
+    expect(names).not.toMatch(/db01|avery|Robin|123e4567/);
+    expect(leaks(auditTree(entries, SPEC, map))).toEqual([]);
+  });
+
+  test("an unblinded name with an underscore-joined host or an email before the extension is a leak", () => {
+    const { map } = tree([]);
+    const r = auditTree([file("backup_db02.example.org.txt", "x\n"), file("ops@example.org.md", "y\n")], SPEC, map);
+    expect(leaks(r).map((f) => [f.file, f.in, f.class])).toEqual([
+      ["backup_db02.example.org.txt", "name", "pattern:host"],
+      ["ops@example.org.md", "name", "pattern:email"],
+    ]);
+  });
+
+  test("a match made of a pseudonym plus real text is still a leak", () => {
+    const { map } = tree([]);
+    const person = map.entries.find((e) => e.pseudonym.startsWith("Person_"))?.pseudonym as string;
+    const r = auditTree([file("a.txt", `mail ${person}_ops@example.org now\n`)], SPEC, map);
+    expect(leaks(r).map((f) => f.class)).toEqual(["pattern:email"]);
+  });
+});

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { runApply } from "../../src/apply.ts";
+import { defaultPolicy, renderPolicy } from "../../src/policy.ts";
 import { runAudit } from "../../src/audit/command.ts";
 import { helpText } from "../../src/cli.ts";
 import { makeZip } from "./zipfixture.ts";
@@ -60,6 +61,19 @@ describe("blind audit", () => {
     const r = await audit("out", "--no-model");
     expect(r.code).toBe(0);
     expect(r.err).toBe("");
+  });
+
+  test("a host under a blind.toml keep-list domain is not a leak; an invalid blind.toml stops the audit", async () => {
+    writeFileSync(join(dir, "out", "vendor.txt"), "pulled from api.vendor.example.net\n");
+    expect((await audit("out")).code).toBe(2);
+    const policy = defaultPolicy();
+    policy.keep.terms = ["vendor.example.net"];
+    writeFileSync(join(dir, "blind.toml"), renderPolicy(policy));
+    expect((await audit("out")).code).toBe(0);
+    writeFileSync(join(dir, "blind.toml"), "[keep\n");
+    const r = await audit("out");
+    expect(r.code).toBe(3);
+    expect(r.err).toContain("nothing was audited");
   });
 
   test("a candidate exits 1", async () => {

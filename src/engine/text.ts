@@ -18,18 +18,24 @@
 // Whitespace between the words of a multi-word form matches any run of
 // whitespace, so a name wrapped across lines is still found.
 
-import type { PseudoClass } from "./canonical.ts";
+import { PSEUDO_CLASSES, type PseudoClass } from "./canonical.ts";
 import type { Entities, PatternName } from "../schema.ts";
 
 export interface Span {
   start: number;
   end: number;
-  /** null: a vocabulary form, kept as written but shielding its text from other entity forms. */
+  /**
+   * null: kept as written. For an entity, a vocabulary form that shields its text from other
+   * entity forms; for a pattern, a host under a keep-list domain.
+   */
   cls: PseudoClass | null;
   /** The value the pseudonym is derived from: the matched text for a pattern, the spec form for an entity. */
   value: string;
   source: "pattern" | "entity";
 }
+
+/** Code-unit order, never locale order. */
+const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 const IPV4_OCTET = "(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)";
 const PATTERN_RES: Record<PatternName, RegExp> = {
@@ -81,14 +87,38 @@ function accept(name: PatternName, m: string): boolean {
   return true;
 }
 
-export function findPatternSpans(text: string, patterns: Record<PatternName, boolean>): Span[] {
+/**
+ * The domain-shaped terms of the policy keep list ("vendor.example.net", or "*.vendor.example.net"),
+ * lowercased. Terms without a dot are not domains, so a keep term such as "com" never keeps a host.
+ */
+export function keepDomains(terms: readonly string[]): string[] {
+  const out = new Set<string>();
+  for (const term of terms) {
+    const d = term.trim().toLowerCase().replace(/^\*?\./, "").replace(/\.$/, "");
+    if (/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/.test(d)) out.add(d);
+  }
+  return [...out].sort(cmp);
+}
+
+/** A host equal to a kept domain or under it, by whole labels ("api.vendor.example.net" is under "vendor.example.net"; "badvendor.example.net" is not). */
+export function underKeptDomain(host: string, domains: readonly string[]): boolean {
+  const h = host.toLowerCase().replace(/\.$/, "");
+  return domains.some((d) => h === d || h.endsWith(`.${d}`));
+}
+
+/**
+ * Pattern matches in `text`. A host match under one of `keep` (from keepDomains) is returned with
+ * `cls: null`: kept as written, and still shielding its text from entity forms.
+ */
+export function findPatternSpans(text: string, patterns: Record<PatternName, boolean>, keep: readonly string[] = []): Span[] {
   const found: (Span & { rank: number })[] = [];
   PATTERN_ORDER.forEach((name, rank) => {
     if (!patterns[name]) return;
     for (const m of text.matchAll(PATTERN_RES[name])) {
       if (!accept(name, m[0])) continue;
       const start = m.index;
-      found.push({ start, end: start + m[0].length, cls: PATTERN_CLASS[name], value: m[0], source: "pattern", rank });
+      const cls = name === "host" && underKeptDomain(m[0], keep) ? null : PATTERN_CLASS[name];
+      found.push({ start, end: start + m[0].length, cls, value: m[0], source: "pattern", rank });
     }
   });
   // Leftmost first; at the same start the longest; then the fixed pattern order.
@@ -128,43 +158,52 @@ function caseRule(form: string, words: readonly string[]): CaseRule {
   return "fold";
 }
 
-/** Code-unit order, never locale order. */
-const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
-
 const ENTITY_CLASSES = ["person", "org", "host", "email", "id", "location", "vocabulary"] as const;
+
+/** A literal value to match like an entity form, such as a cell value pseudonymised by a column rule. */
+export interface ExtraForm {
+  cls: PseudoClass;
+  value: string;
+}
 
 /** An index of every entity form in the spec, ready to scan text with. */
 export class EntityMatcher {
   private readonly byFirst = new Map<string, Form[]>();
   readonly empty: boolean;
 
-  constructor(entities: Entities) {
+  /**
+   * `extra` forms (cell values pseudonymised by column rules, for names) follow the same case
+   * rules, and rank after every spec entity class when lengths tie.
+   */
+  constructor(entities: Entities, extra: readonly ExtraForm[] = []) {
     const seen = new Set<string>();
+    const add = (key: string, cls: PseudoClass | null, raw: string, rank: number): void => {
+      const words = raw.trim().split(/\s+/).filter((w) => w !== "");
+      if (words.length === 0) return;
+      const dedupe = `${key}\0${words.join(" ")}`;
+      if (seen.has(dedupe)) return;
+      seen.add(dedupe);
+      const form: Form = {
+        words,
+        folded: words.map((w) => w.toLowerCase()),
+        rule: caseRule(raw, words),
+        cls,
+        value: raw,
+        length: words.join("").length,
+        rank,
+      };
+      const first = (words[0] as string)[0]?.toLowerCase() as string;
+      const list = this.byFirst.get(first) ?? [];
+      list.push(form);
+      this.byFirst.set(first, list);
+    };
     for (const [rank, key] of ENTITY_CLASSES.entries()) {
       const cls: PseudoClass | null = key === "vocabulary" ? null : key;
       for (const e of entities[key] ?? []) {
-        for (const raw of [e.canonical, ...e.aliases, ...e.parts]) {
-          const words = raw.trim().split(/\s+/).filter((w) => w !== "");
-          if (words.length === 0) continue;
-          const dedupe = `${key}\0${words.join(" ")}`;
-          if (seen.has(dedupe)) continue;
-          seen.add(dedupe);
-          const form: Form = {
-            words,
-            folded: words.map((w) => w.toLowerCase()),
-            rule: caseRule(raw, words),
-            cls,
-            value: raw,
-            length: words.join("").length,
-            rank,
-          };
-          const first = (words[0] as string)[0]?.toLowerCase() as string;
-          const list = this.byFirst.get(first) ?? [];
-          list.push(form);
-          this.byFirst.set(first, list);
-        }
+        for (const raw of [e.canonical, ...e.aliases, ...e.parts]) add(key, cls, raw, rank);
       }
     }
+    for (const x of extra) add(`extra:${x.cls}`, x.cls, x.value, ENTITY_CLASSES.length + PSEUDO_CLASSES.indexOf(x.cls));
     // Longest first; ties broken by class order then text, so the scan is order-independent.
     for (const list of this.byFirst.values()) {
       list.sort(
@@ -228,8 +267,13 @@ export class EntityMatcher {
 }
 
 /** Every span to act on: pattern matches, then entity forms in the gaps, sorted by position. */
-export function findSpans(text: string, matcher: EntityMatcher, patterns: Record<PatternName, boolean>): Span[] {
-  const p = findPatternSpans(text, patterns);
+export function findSpans(
+  text: string,
+  matcher: EntityMatcher,
+  patterns: Record<PatternName, boolean>,
+  keep: readonly string[] = [],
+): Span[] {
+  const p = findPatternSpans(text, patterns, keep);
   const e = matcher.find(text, p);
   return [...p, ...e].sort((a, b) => a.start - b.start);
 }

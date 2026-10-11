@@ -25,6 +25,10 @@
 // null are left alone. Keys that are record identifiers are the values of
 // their `.*~` path; other keys are free text, like a header row. Edits are
 // spliced into the original text, so layout and key order never change.
+//
+// Host matches under a keep-list domain are kept as written. Every output path
+// is blinded through src/engine/names.ts (patterns, entities and the column
+// values replaced above), planned with the cells and rendered after them.
 
 import type { ColumnRule, EntityClassName, Spec, Treatment } from "../schema.ts";
 import type { PseudoClass } from "./canonical.ts";
@@ -36,7 +40,8 @@ import { isJsonNumber, type JsonFormat, JsonError, type JsonToken, quote, scanJs
 import type { BlindMap } from "./map.ts";
 import { type EntityEntry, Pseudonymizer } from "./pseudonym.ts";
 import { type ColumnStats, columnStats, isIdentifierLike, THRESHOLDS } from "./stats.ts";
-import { EntityMatcher, findSpans, type Span } from "./text.ts";
+import { NameRewriter, rewriteSpans } from "./names.ts";
+import { EntityMatcher, type ExtraForm, findSpans, keepDomains, type Span } from "./text.ts";
 
 export type EngineFormat = "csv" | "tsv" | "json" | "jsonl" | "text";
 
@@ -95,7 +100,10 @@ export interface ColumnReport {
 }
 
 export interface FileReport {
+  /** The input path, as spec rules name it. */
   path: string;
+  /** Where the blinded file is written: `path` with its folder and file names blinded. */
+  outputPath: string;
   format: EngineFormat;
   encoding: Encoding;
   /** CSV/TSV only. */
@@ -108,6 +116,8 @@ export interface FileReport {
   /** Free-text replacements (text files, and header, preamble and kept cells of tables). */
   entityReplacements: number;
   patternReplacements: number;
+  /** Host names left as written because they are under a keep-list domain. */
+  keptHosts: number;
   changed: boolean;
 }
 
@@ -129,6 +139,8 @@ export interface ApplyOptions {
   salt: Uint8Array;
   /** An earlier map; its pseudonyms are reused verbatim. */
   map?: BlindMap;
+  /** The policy keep list. Its domain-shaped terms keep the host names under them as written. */
+  keep?: readonly string[];
 }
 
 /** The spec does not fit the inputs (a rule names a column that is not there, or a shape this engine cannot apply). */
@@ -356,12 +368,16 @@ function spliceString(raw: string, spans: readonly Span[], pz: Pseudonymizer): s
   return `${out}${raw.slice(at(pos), raw.length - 1)}"`;
 }
 
-function renderJson(p: JsonPlan, pz: Pseudonymizer): { text: string; entityReplacements: number; patternReplacements: number } {
+function renderJson(
+  p: JsonPlan,
+  pz: Pseudonymizer,
+): { text: string; entityReplacements: number; patternReplacements: number; keptHosts: number } {
   const byPath = new Map(p.columns.map((c) => [c.jsonPath as string, c]));
   // Per object, each output key and the input key it came from: two input keys must never become one.
   const keys = new Map<number, Map<string, string>>();
   let entityReplacements = 0;
   let patternReplacements = 0;
+  let keptHosts = 0;
   let out = "";
   let at = 0;
   p.tokens.forEach((t, i) => {
@@ -370,9 +386,10 @@ function renderJson(p: JsonPlan, pz: Pseudonymizer): { text: string; entityRepla
     if (edit !== undefined) {
       if (edit.kind === "pseudo") value = pz.pseudonym(edit.cls, t.value);
       else {
-        value = rewrite(t.value, edit.spans, pz);
+        value = rewriteSpans(t.value, edit.spans, pz);
         entityReplacements += count(edit.spans, "entity");
         patternReplacements += count(edit.spans, "pattern");
+        keptHosts += keptHostCount(edit.spans);
       }
       if (value !== t.value) {
         const raw = p.text.slice(t.start, t.end);
@@ -396,7 +413,7 @@ function renderJson(p: JsonPlan, pz: Pseudonymizer): { text: string; entityRepla
       keys.set(t.object as number, seen);
     }
   });
-  return { text: out + p.text.slice(at), entityReplacements, patternReplacements };
+  return { text: out + p.text.slice(at), entityReplacements, patternReplacements, keptHosts };
 }
 
 /** Tokens of a text, for the set of real values no pseudonym may equal. */
@@ -404,19 +421,11 @@ function tokens(text: string): string[] {
   return text.match(/[\p{L}\p{N}][\p{L}\p{N}._@:-]*/gu) ?? [];
 }
 
-function rewrite(value: string, spans: readonly Span[], pz: Pseudonymizer): string {
-  let out = "";
-  let at = 0;
-  for (const s of spans) {
-    out += value.slice(at, s.start) + (s.cls === null ? value.slice(s.start, s.end) : pz.pseudonym(s.cls, s.value));
-    at = s.end;
-  }
-  return out + value.slice(at);
-}
-
 function count(spans: readonly Span[], source: Span["source"]): number {
   return spans.filter((s) => s.cls !== null && s.source === source).length;
 }
+
+const keptHostCount = (spans: readonly Span[]): number => spans.filter((s) => s.cls === null && s.source === "pattern").length;
 
 export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyOptions): ApplyResult {
   const sorted = [...inputs].sort((a, b) => cmp(a.path, b.path));
@@ -426,7 +435,8 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     }
   }
   const matcher = new EntityMatcher(spec.entities);
-  const spanner = (s: string): Span[] => findSpans(s, matcher, spec.patterns);
+  const keep = keepDomains(opts.keep ?? []);
+  const spanner = (s: string): Span[] => findSpans(s, matcher, spec.patterns, keep);
   const rulesByFile = new Map<string, ColumnRule[]>();
   for (const rule of spec.columns) {
     const list = rulesByFile.get(rule.file) ?? [];
@@ -475,9 +485,28 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     }
   }
 
+  // File and folder names go through the patterns, the spec entities and every cell value a
+  // column rule pseudonymises, so a value hidden in a cell is hidden in a name too.
+  const columnValues: ExtraForm[] = [];
+  for (const p of plans) {
+    if (p.kind === "json") {
+      for (const [i, edit] of p.edits) if (edit.kind === "pseudo") columnValues.push({ cls: edit.cls, value: (p.tokens[i] as JsonToken).value });
+    } else if (p.kind === "table") {
+      for (const [key, edit] of p.edits) {
+        if (edit.kind !== "pseudo") continue;
+        const [r, c] = key.split(":").map(Number) as [number, number];
+        columnValues.push({ cls: edit.cls, value: ((p.rows[r] as Row).cells[c] as Cell).value });
+      }
+    }
+  }
+  const nameMatcher = new EntityMatcher(spec.entities, columnValues);
+  const names = new NameRewriter(nameMatcher, spec.patterns, keep);
+  for (const p of plans) names.planPath(p.input.path);
+
   // Every real value in the corpus, so no pseudonym equals one.
   const avoid = new Set<string>();
   for (const p of plans) {
+    for (const segment of p.input.path.split("/")) for (const t of tokens(segment)) avoid.add(t);
     if (p.kind === "text") for (const t of tokens(p.text)) avoid.add(t);
     else if (p.kind === "json") {
       for (const t of p.tokens) {
@@ -526,6 +555,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       }
     }
   }
+  for (const r of names.requests()) want(r.cls, r.value);
   for (const req of [...requests].sort(cmp)) {
     const cut = req.indexOf("\0");
     pz.pseudonym(req.slice(0, cut) as PseudoClass, req.slice(cut + 1));
@@ -538,14 +568,16 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     let text: string;
     let report: FileReport;
     if (p.kind === "text") {
-      text = rewrite(p.text, p.spans, pz);
+      text = rewriteSpans(p.text, p.spans, pz);
       report = {
         path: p.input.path,
         format: "text",
         encoding: p.encoding,
         columns: [],
+        outputPath: p.input.path,
         entityReplacements: count(p.spans, "entity"),
         patternReplacements: count(p.spans, "pattern"),
+        keptHosts: keptHostCount(p.spans),
         changed: false,
       };
     } else if (p.kind === "json") {
@@ -555,23 +587,27 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         path: p.input.path,
         format: p.format,
         encoding: p.encoding,
+        outputPath: p.input.path,
         columns: p.columns,
         entityReplacements: r.entityReplacements,
         patternReplacements: r.patternReplacements,
+        keptHosts: r.keptHosts,
         changed: false,
       };
     } else {
       let entityReplacements = 0;
       let patternReplacements = 0;
+      let keptHosts = 0;
       for (const [key, edit] of p.edits) {
         const [r, c] = key.split(":").map(Number) as [number, number];
         const cell = (p.rows[r] as Row).cells[c] as Cell;
         let value: string;
         if (edit.kind === "pseudo") value = pz.pseudonym(edit.cls, cell.value);
         else {
-          value = rewrite(cell.value, edit.spans, pz);
+          value = rewriteSpans(cell.value, edit.spans, pz);
           entityReplacements += count(edit.spans, "entity");
           patternReplacements += count(edit.spans, "pattern");
+          keptHosts += keptHostCount(edit.spans);
         }
         if (value === cell.value) continue;
         cell.raw = renderCell(value, cell.quoted, p.delim);
@@ -586,15 +622,29 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         delimiter: p.delim,
         headerRow: p.headerRow + 1,
         noHeader: p.noHeader,
+        outputPath: p.input.path,
         columns: p.columns,
         entityReplacements,
         patternReplacements,
+        keptHosts,
         changed: false,
       };
     }
     report.changed = text !== p.text;
-    outputs.push({ path: p.input.path, bytes: report.changed ? encode(text, p.encoding) : p.input.bytes });
+    report.outputPath = names.renamePath(p.input.path, pz);
+    outputs.push({ path: report.outputPath, bytes: report.changed ? encode(text, p.encoding) : p.input.bytes });
     files.push(report);
+  }
+  // Two inputs whose blinded names coincide would overwrite each other.
+  const byOutput = new Map<string, string>();
+  for (const f of files) {
+    const other = byOutput.get(f.outputPath);
+    if (other !== undefined) {
+      throw new ApplyError(
+        `${other} and ${f.path} would both be written as ${f.outputPath} once their names are blinded; rename one of the inputs`,
+      );
+    }
+    byOutput.set(f.outputPath, f.path);
   }
   return { outputs, files, skipped, map: pz.toMap() };
 }

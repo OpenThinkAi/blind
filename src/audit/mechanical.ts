@@ -27,7 +27,7 @@ import { CsvError, parseCsv, sniffDelimiter } from "../engine/csv.ts";
 import { decode, EncodingError } from "../engine/encoding.ts";
 import type { BlindMap } from "../engine/map.ts";
 import { isPseudonym } from "../engine/pseudonym.ts";
-import { findPatternSpans } from "../engine/text.ts";
+import { findPatternSpans, keepDomains, type Span } from "../engine/text.ts";
 import { detectHeaderRow } from "../profile/table.ts";
 import { fold, foldWithMap, stringView, type View, viewsOf } from "./views.ts";
 import { looksLikeZip, readZip, ZipError } from "./zip.ts";
@@ -243,10 +243,37 @@ interface Context {
   spec: Spec;
   map: BlindMap;
   index: NeedleIndex;
+  /** Keep-list domains (keepDomains): host names under them are kept by the engine, by policy. */
+  keep: string[];
+}
+
+// The same shapes unanchored, for "is this pattern match made only of pseudonyms?": a blinded name
+// joins pseudonyms with "_" ("Person_1E95_user_559f@host-f3ce.com"), which reads as one email.
+const SHAPED_ANY_RE = new RegExp(SHAPED_RE.source.replace("(?<![A-Za-z0-9_.-])", ""), "g");
+
+/**
+ * Pattern matches in a view. A name is also read piece by piece between underscores, as the
+ * engine reads it, so "backup_db01.example.com" is checked as a host. Hosts under a keep-list
+ * domain are dropped: the engine keeps them because the policy says to.
+ */
+function patternSpans(text: string, ctx: Context, name: boolean): Span[] {
+  const spans = findPatternSpans(text, ctx.spec.patterns, ctx.keep);
+  if (name && text.includes("_")) {
+    let offset = 0;
+    for (const piece of text.split("_")) {
+      for (const s of findPatternSpans(piece, ctx.spec.patterns, ctx.keep)) {
+        const start = s.start + offset;
+        const end = s.end + offset;
+        if (!spans.some((x) => x.start === start && x.end === end)) spans.push({ ...s, start, end });
+      }
+      offset += piece.length + 1;
+    }
+  }
+  return spans.filter((s) => s.cls !== null);
 }
 
 /** Findings in one view: needle survivors outside pseudonym and vocabulary text, and non-pseudonym pattern matches. */
-function scanView(view: View, ctx: Context): Hit[] {
+function scanView(view: View, ctx: Context, name: boolean): Hit[] {
   const text = view.text;
   const f = foldWithMap(text);
   const srcEnd = (foldedEnd: number): number => {
@@ -256,6 +283,15 @@ function scanView(view: View, ctx: Context): Hit[] {
   const masks: [number, number][] = [];
   // Every pseudonym and pattern shape needs ASCII letters or digits; most non-text views have none.
   const ascii = /[0-9A-Za-z]/.test(text);
+  const pseudo = new Uint8Array(ascii ? text.length : 0);
+  for (const m of ascii ? text.matchAll(SHAPED_ANY_RE) : []) {
+    if (isPseudonym(m[0], ctx.map)) pseudo.fill(1, m.index, m.index + m[0].length);
+  }
+  /** Every letter and digit of text[s, e) is inside a pseudonym. */
+  const onlyPseudonyms = (s: number, e: number): boolean => {
+    for (let i = s; i < e; i++) if (pseudo[i] === 0 && /[\p{L}\p{N}]/u.test(text[i] as string)) return false;
+    return true;
+  };
   for (const m of ascii ? text.matchAll(SHAPED_RE) : []) {
     if (isPseudonym(m[0], ctx.map)) masks.push([m.index, m.index + m[0].length]);
   }
@@ -317,8 +353,8 @@ function scanView(view: View, ctx: Context): Hit[] {
     if (exactCase) push(start, end, { ...base, severity: "leak", reason: `${what} survives` });
     else push(start, end, { ...base, severity: "candidate", reason: `${what}, in another case, accent or width` });
   }
-  for (const s of ascii ? findPatternSpans(text, ctx.spec.patterns) : []) {
-    if (isPseudonym(s.value, ctx.map) || masked(s.start, s.end)) continue;
+  for (const s of ascii ? patternSpans(text, ctx, name) : []) {
+    if (isPseudonym(s.value, ctx.map) || masked(s.start, s.end) || onlyPseudonyms(s.start, s.end)) continue;
     const name = patternName(s.value, ctx.spec.patterns);
     push(s.start, s.end, { class: `pattern:${name}`, source: "pattern", severity: "leak", reason: `${name} pattern match that is not a pseudonym` });
   }
@@ -350,10 +386,10 @@ const SEVERITY_RANK: Record<Severity, number> = { candidate: 0, leak: 1 };
  * longer value. The most severe hit is kept first, then the longest, then spec entities before map
  * values before patterns, then the earliest view.
  */
-function scanViews(views: readonly View[], ctx: Context): PlacedHit[] {
+function scanViews(views: readonly View[], ctx: Context, name = false): PlacedHit[] {
   const all: PlacedHit[] = [];
   for (const v of views) {
-    for (const h of scanView(v, ctx)) all.push({ ...h, byteStart: v.byteAt(h.start), byteEnd: v.byteAt(h.end) });
+    for (const h of scanView(v, ctx, name)) all.push({ ...h, byteStart: v.byteAt(h.start), byteEnd: v.byteAt(h.end) });
   }
   // Stable sort: equal hits keep view order.
   const ranked = all
@@ -543,8 +579,8 @@ function compareFindings(a: Finding, b: Finding): number {
 }
 
 /** Audit an output tree (every entry under it, paths relative to its root) against the spec and map. */
-export function auditTree(entries: readonly TreeEntry[], spec: Spec, map: BlindMap): AuditReport {
-  const ctx: Context = { spec, map, index: new NeedleIndex(buildNeedles(spec, map)) };
+export function auditTree(entries: readonly TreeEntry[], spec: Spec, map: BlindMap, keep: readonly string[] = []): AuditReport {
+  const ctx: Context = { spec, map, index: new NeedleIndex(buildNeedles(spec, map)), keep: keepDomains(keep) };
   const rulesByFile = new Map<string, ColumnRule[]>();
   for (const r of spec.columns) rulesByFile.set(r.file, [...(rulesByFile.get(r.file) ?? []), r]);
 
@@ -552,7 +588,12 @@ export function auditTree(entries: readonly TreeEntry[], spec: Spec, map: BlindM
   for (const entry of [...entries].sort((a, b) => cmp(a.path, b.path))) {
     const sink: PartSink = { file: entry.path, findings: [] };
     const nameAt = lastSegment(entry.path);
-    pushHits(sink, "", "name", scanViews(stringView(entry.path.slice(nameAt)), ctx), nameAt);
+    // A file's extension is read on its own, as the engine leaves it: "….com.json" is not one host.
+    const name = entry.path.slice(nameAt);
+    const dot = entry.kind === "file" ? name.lastIndexOf(".") : -1;
+    const stemEnd = dot > 0 ? dot : name.length;
+    pushHits(sink, "", "name", scanViews(stringView(name.slice(0, stemEnd)), ctx, true), nameAt);
+    if (stemEnd < name.length) pushHits(sink, "", "name", scanViews(stringView(name.slice(stemEnd)), ctx, true), nameAt + stemEnd);
     switch (entry.kind) {
       case "file":
         scanBytes(sink, "", entry.bytes, 0, ctx);

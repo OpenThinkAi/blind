@@ -3,14 +3,14 @@
 // writes the map (0600) and then the blinded files, and prints a report per
 // file. Nothing is written unless the spec, the salt and every input check out.
 
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { type ApplyResult, ApplyError, applySpec, type FileReport, type InputFile } from "./engine/apply.ts";
 import { type BlindMap, MapError, readMap, writeMap } from "./engine/map.ts";
 import { MIN_SALT_BYTES, PseudonymError } from "./engine/pseudonym.ts";
 import { BLIND_DIR, SALT_FILE } from "./init.ts";
-import { loadPolicy, POLICY_FILE, PolicyError } from "./policy.ts";
+import { loadKeepTerms, POLICY_FILE, PolicyError } from "./policy.ts";
 import type { Spec } from "./schema.ts";
 import { parseSpec, SchemaError } from "./validate.ts";
 
@@ -185,7 +185,7 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
   try {
     const spec = loadSpec(io.cwd);
     // The keep list's domains keep vendor host names as written. Without a policy nothing is kept.
-    const keep = existsSync(join(io.cwd, POLICY_FILE)) ? loadPolicy(io.cwd).keep.terms : [];
+    const keep = loadKeepTerms(io.cwd);
     const salt = readSecret(join(io.cwd, BLIND_DIR, SALT_FILE), "salt", "run `blind init` first");
     if (salt.length < MIN_SALT_BYTES) throw new Refusal(`${join(io.cwd, BLIND_DIR, SALT_FILE)} is too short; re-run \`blind init --force\``);
 

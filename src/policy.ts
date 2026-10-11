@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 /** The policy file `blind init` writes and every later command reads. */
@@ -252,4 +252,12 @@ export function loadPolicy(dir = "."): Policy {
     throw new PolicyError(`${path}: cannot read: ${(e as Error).message}`);
   }
   return parsePolicy(text, path);
+}
+
+/**
+ * The keep-list terms of `dir`'s blind.toml, for apply and audit. Without a blind.toml nothing is
+ * kept, the more private reading; a blind.toml that does not parse is a PolicyError.
+ */
+export function loadKeepTerms(dir = "."): string[] {
+  return existsSync(join(dir, POLICY_FILE)) ? loadPolicy(dir).keep.terms : [];
 }

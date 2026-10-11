@@ -11,6 +11,7 @@ import { parseArgs } from "node:util";
 import { MAP_FILE, SPEC_FILE } from "../apply.ts";
 import { type BlindMap, MapError, readMap } from "../engine/map.ts";
 import { BLIND_DIR } from "../init.ts";
+import { loadKeepTerms, PolicyError } from "../policy.ts";
 import type { Spec } from "../schema.ts";
 import { parseSpec, SchemaError } from "../validate.ts";
 import { type AuditReport, auditTree, type Finding, type Status, type TreeEntry } from "./mechanical.ts";
@@ -29,7 +30,8 @@ const AUDIT_HELP = [
   "and the map. Every file is read as raw bytes, in Latin-1, UTF-8 and UTF-16, with XML, percent",
   "and backslash escapes undone; zip members (xlsx, docx, nested archives) are opened recursively;",
   "file, directory and member names are checked too. It looks for every spec entity, every original",
-  "value in the map and every enabled pattern match that is not a pseudonym.",
+  "value in the map and every enabled pattern match that is not a pseudonym. Host names under a",
+  "domain in the blind.toml keep list are not reported: the policy keeps them.",
   "",
   "Status: leak (a spec value survives), candidates (something to review: a variant or partial",
   "match, a column the spec declares unknown or does not mention, an unanswered spec question, or a",
@@ -190,12 +192,13 @@ export async function runAudit(argv: string[], io: AuditIO): Promise<number> {
     const spec = loadSpec(io.cwd);
     const map = loadMap(resolve(io.cwd, values.map ?? join(BLIND_DIR, MAP_FILE)));
     const entries = collectTree(resolve(io.cwd, positionals[0] as string));
-    const report = auditTree(entries, spec, map);
+    // Hosts the engine kept under a keep-list domain are policy, not leaks.
+    const report = auditTree(entries, spec, map, loadKeepTerms(io.cwd));
     if (!values["no-model"]) io.err.write("blind audit: mechanical layer only; this build has no model layer\n");
     io.out.write(values.json ? `${JSON.stringify(report, null, 2)}\n` : renderTable(report));
     return EXIT[report.status];
   } catch (e) {
-    if (e instanceof Refusal || e instanceof SchemaError || e instanceof MapError) {
+    if (e instanceof Refusal || e instanceof PolicyError || e instanceof SchemaError || e instanceof MapError) {
       io.err.write(`blind audit: ${e.message}\nnothing was audited\n`);
       return EXIT_NOT_RUN;
     }

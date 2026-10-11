@@ -202,7 +202,12 @@ release runs the mechanical layer only (no model).
   names are read too. Symbolic links are not followed.
 - **What it looks for.** Every spec entity form (canonical, aliases, parts; `vocabulary` excepted),
   every original value in the map (surface and canonical form), and every match of an enabled
-  pattern that is not a pseudonym. Text that is a pseudonym or a `vocabulary` form is never a finding.
+  pattern that is not a pseudonym. Text that is a pseudonym or a `vocabulary` form is never a finding,
+  and neither is a pattern match made only of pseudonyms and punctuation (a blinded file name such
+  as `Person_1E95_user_559f@host-f3ce.com.md`). File and directory names are also read piece by
+  piece between underscores, as `blind apply` reads them, and a file's extension is read on its own.
+- **Kept hosts.** A host name under a domain in the `blind.toml` keep list is not reported: the
+  engine keeps it because the policy says to. An invalid `blind.toml` stops the audit (exit 3).
 - **`leak`**: a whole-word survivor in the case the engine would have replaced.
 - **`candidate`**: a case, accent or width variant; a value inside a longer word (4 characters or
   more); a value under 3 characters; a host label or email local part of a blinded value; a column

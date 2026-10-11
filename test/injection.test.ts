@@ -388,7 +388,11 @@ describe("the mechanical audit does not depend on a model", () => {
       expect(withModels.code).toBe(2);
       expect(withModels.report.status).toBe("leak");
       const planted = withModels.report.files.find((f) => f.path === "planted.txt");
-      expect(planted?.findings).toEqual([expect.objectContaining({ severity: "leak", source: "map", class: "email" })]);
+      expect(planted?.findings).toEqual([
+        expect.objectContaining({ severity: "leak", source: "map", class: "email" }),
+        // The semantic layer (no model either) also points at the unexplained email shape.
+        expect.objectContaining({ severity: "candidate", source: "semantic", class: "semantic:email" }),
+      ]);
       // The owner names the heuristic spec pseudonymised in staff.csv are replaced in notes.txt too (AGT-1779).
       const notes = withModels.report.files.find((f) => f.path === "notes.txt");
       expect(notes?.findings.filter((f) => f.severity === "leak")).toEqual([]);

@@ -453,11 +453,36 @@ each (none at the default of 0). Document outlines (a file's first line and its 
 transcript speaker labels have no such bound, so under `profile-only` `blind profile` and
 `blind plan` leave them out: the document or transcript is still listed, with an empty `outline`
 or `speakers`, and a note says so. They are omitted rather than reduced to counts or lengths, so
-the profile shape does not change between modes. What stays is structure: file paths, table
-headers, sheet names and JSON key paths, with their statistics. A `profile-only` call whose
+the profile shape does not change between modes. What stays is structure, with its statistics;
+the names in it are sent as tokens (below). A `profile-only` call whose
 profile carries a non-empty `outline` or `speakers` (for example a profile built under
 `local-only`) is refused before anything is sent. Under `local-only` outlines and speakers are
 kept and sent as before.
+
+**Names under `profile-only`.** File and folder names, sheet names, some JSON keys and some
+headers are document text too ("Avery Quill review.md", a sheet named after a client, an object
+keyed by people's names, a headerless CSV whose first row of names was taken as the header). Under
+`profile-only` every model call replaces them with opaque local tokens, and the reply is mapped back
+to the real locations on this machine before it is checked and saved. `.blind/profile.json` and
+`.blind/spec.json` keep the real names; the tokens exist only in memory for the one call.
+
+| Profile string | Token | When |
+|---|---|---|
+| File path | every folder `dir_N`, the file `file_N`: `dir_1/dir_2/file_3` | always |
+| Sheet name | `sheet_N` | always |
+| JSON key segment | `["key_N"]` | the key is not ASCII-identifier-shaped (`[A-Za-z_][A-Za-z0-9_]*`, so it was written `["..."]`), or matches the host, email or ip pattern; `.name`, `[*]`, `.*` and `.*~` segments stay |
+| Table header | every header of the table becomes `col_N` (its 1-based column) | the header row looks like values: half the width or less filled, or not mostly text (always so when row 1 was used because no header row was found), a cell matches a pattern (ip, email, host, guid, mac), or at least half the filled cells are two or more capitalised words (`Marlo Fenwick`) |
+
+`N` counts from 1 over the distinct real strings in code-unit sorted order (headers: column
+order), so the same profile always gives the same tokens. A token is a counter, never a hash or
+anything derived from the salt, so it says nothing about the name it stands for. Name-like JSON
+keys are tokenised rather than left out, so the analyst still classifies their values. Tokens in a
+question's text are replaced by the real names, JSON-quoted. A reply that names a location that
+was not sent is rejected whole. A `profile-only` call whose profile carries an untokenised path,
+sheet name, value-like header row or flagged key segment is refused before anything is sent.
+`blind profile` and `blind plan` print a note with how many of each are tokenised. A table of
+ordinary title-case headers ("First Name", "Last Name") can be caught by the last rule; its
+headers then go out as `col_N` with their statistics, which costs the analyst context, never privacy.
 
 Each call prints one line to stderr before it is sent:
 `role · backend · model · mode · [samples k ·] N bytes sent`, where `samples k` is the profile's

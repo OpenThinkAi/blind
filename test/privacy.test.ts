@@ -14,6 +14,7 @@ import {
 } from "../src/model.ts";
 import { type ModelConfig, type Policy, type PrivacyMode, defaultPolicy, parsePolicy, renderPolicy } from "../src/policy.ts";
 import { buildProfile, forPrivacyMode } from "../src/profile/profile.ts";
+import { tokeniseProfile } from "../src/profile/tokens.ts";
 import type { Profile } from "../src/schema.ts";
 
 // Privacy modes (AGT-1741). Synthetic data only; nothing reaches the network or a real `claude`.
@@ -25,8 +26,8 @@ const SCHEMA = {
   properties: { label: { enum: ["person", "unknown"] } },
 } as const;
 const FIXTURE = JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "profile.valid.json"), "utf8")) as Profile;
-/** The fixture as profile-only builds it: no outlines, no speaker labels. */
-const PROFILE_ONLY = forPrivacyMode({ profile: FIXTURE, skipped: [], notes: [] }, "profile-only").profile;
+/** The fixture as a profile-only call sends it: no outlines, no speaker labels, names as tokens. */
+const PROFILE_ONLY = tokeniseProfile(forPrivacyMode({ profile: FIXTURE, skipped: [], notes: [] }, "profile-only").profile).profile;
 const REMOTE: ModelConfig = { backend: "openai-compatible", url: "https://models.example.com/v1", model: "m", key_env: "" };
 
 function policyWith(mode: PrivacyMode, cfg: Partial<ModelConfig> = {}): Policy {
@@ -162,8 +163,28 @@ describe("profile-only", () => {
     ["a document outline", () => profilePayload(FIXTURE, defaultPolicy()), "$.profile.documents[0].outline"],
     [
       "a speaker list",
-      () => ({ ...payload(), profile: { ...PROFILE_ONLY, transcripts: FIXTURE.transcripts } }),
+      () => ({ ...payload(), profile: { ...PROFILE_ONLY, transcripts: PROFILE_ONLY.transcripts.map((t, i) => ({ ...t, speakers: FIXTURE.transcripts[i]?.speakers ?? [] })) } }),
       "$.profile.transcripts[0].speakers",
+    ],
+    // AGT-1782: names that must go out as tokens.
+    ["real file paths", () => ({ ...payload(), profile: forPrivacyMode({ profile: FIXTURE, skipped: [], notes: [] }, "profile-only").profile }), "$.profile.files[0].path"],
+    [
+      "a real sheet name",
+      () => ({ ...payload(), profile: { ...PROFILE_ONLY, tables: PROFILE_ONLY.tables.map((t) => ({ ...t, sheet: "Avery Quill" })) } }),
+      "$.profile.tables[0].sheet",
+    ],
+    [
+      "value-like headers",
+      () => ({
+        ...payload(),
+        profile: { ...PROFILE_ONLY, tables: PROFILE_ONLY.tables.map((t) => ({ ...t, columns: t.columns.map((c, i) => ({ ...c, header: ["Avery Quill", "Robin Example"][i] ?? "x" })) })) },
+      }),
+      "$.profile.tables[0].columns[*].header",
+    ],
+    [
+      "a name-like JSON key",
+      () => ({ ...payload(), profile: { ...PROFILE_ONLY, jsonKeys: PROFILE_ONLY.jsonKeys.map((j) => ({ ...j, path: '$["Avery Quill"].role' })) } }),
+      "$.profile.jsonKeys[0].path",
     ],
   ];
   for (const [name, data, message] of bad) {
@@ -256,7 +277,7 @@ describe("every sample in a payload is at most 120 characters", () => {
     const bodies: string[] = [];
     const p = policyWith("profile-only", REMOTE);
     p.profile = { samples: 5, samplesExplicit: true };
-    await ask("analyst", "s", { task: "t", data: profilePayload(profile, p) }, SCHEMA, {
+    await ask("analyst", "s", { task: "t", data: profilePayload(tokeniseProfile(profile).profile, p) }, SCHEMA, {
       policy: p,
       fetch: recorder(events, bodies),
       stderr: (l) => events.push(l),

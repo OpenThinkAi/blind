@@ -12,7 +12,8 @@
 //     hosted Anthropic API. There is no fallback to another backend.
 //   - privacy.mode "profile-only" allows a remote model, but the data must be exactly
 //     profilePayload(profile, policy): a schema-valid profile and the policy, nothing else, and
-//     no document outlines or speaker labels (text that sampleCount does not bound).
+//     no document outlines or speaker labels (text that sampleCount does not bound), and every
+//     file path, sheet name, value-like header and flagged JSON key segment a token.
 //     The mode and the profile's sample count are printed before every call, even when quiet.
 //   - the caller's data is quoted as JSON inside a <data> block, and any string in it
 //     longer than MAX_DATA_STRING characters is refused, not truncated: a long string
@@ -29,6 +30,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_LOCAL_URL, type ModelConfig, type Policy, type PrivacyMode, SENSITIVE_CLASSES } from "./policy.ts";
+import { untokenised } from "./profile/tokens.ts";
 import type { Profile } from "./schema.ts";
 import { type Schema, validateProfile, validateSchema } from "./validate.ts";
 
@@ -260,6 +262,12 @@ export function assertProfilePayload(data: unknown): asserts data is ProfilePayl
   ];
   if (unbounded.length > 0) {
     refuse(`but the profile carries document text that sampleCount does not bound (${unbounded.join(", ")}); re-run blind profile or blind plan under profile-only`);
+  }
+  // Names that are document text: paths, sheet names, value-like headers and flagged JSON key
+  // segments go out only as tokens (tokeniseProfile in src/profile/tokens.ts).
+  const named = untokenised(profile as Profile);
+  if (named.length > 0) {
+    refuse(`but the profile carries names that must be sent as tokens (${named.join(", ")}); tokenise it with tokeniseProfile first`);
   }
 }
 

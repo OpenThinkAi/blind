@@ -17,6 +17,7 @@ import {
 } from "../src/model.ts";
 import { type ModelConfig, type PrivacyMode, defaultPolicy } from "../src/policy.ts";
 import { forPrivacyMode } from "../src/profile/profile.ts";
+import { tokeniseProfile } from "../src/profile/tokens.ts";
 import type { Profile } from "../src/schema.ts";
 
 // Everything here is synthetic. Nothing reaches the network or a real `claude`:
@@ -31,9 +32,12 @@ const SCHEMA = {
 } as const;
 const PROMPT = { task: "Classify the column.", data: { header: "contact_name", samples: ["Ada Example"] } };
 const KEY = "test-key-0000-synthetic";
-const FIXTURE_PROFILE = forPrivacyMode(
-  { profile: JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "profile.valid.json"), "utf8")) as Profile, skipped: [], notes: [] },
-  "profile-only",
+/** The fixture as a profile-only call sends it: no outlines or speakers, names as tokens. */
+const FIXTURE_PROFILE = tokeniseProfile(
+  forPrivacyMode(
+    { profile: JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "profile.valid.json"), "utf8")) as Profile, skipped: [], notes: [] },
+    "profile-only",
+  ).profile,
 ).profile;
 /** The only data a profile-only call may carry. */
 const PROFILE_PROMPT = { task: "Classify the columns.", data: profilePayload(FIXTURE_PROFILE, defaultPolicy()) };

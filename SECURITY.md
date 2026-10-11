@@ -24,6 +24,13 @@ these with hostile document content and a fake model that obeys any instruction 
   column, sample sentences and sample lines: 5 under `local-only`, 0 under `profile-only` unless
   `[profile] samples` sets it. Under `profile-only` document outlines and speaker labels are left
   out, and a call carrying them is refused.
+- **Names as tokens.** Under `profile-only` file and folder names, sheet names, JSON key segments
+  that are not identifier-shaped (or match the host, email or ip pattern) and the headers of a
+  table whose header row looks like values are sent as opaque counter tokens (`dir_1/file_2`,
+  `sheet_1`, `["key_1"]`, `col_1`), never hashes and never derived from the salt. The reply is
+  mapped back to the real locations locally before it is checked and saved, and a reply naming a
+  location that was not sent is rejected. A call carrying an untokenised path, sheet name,
+  value-like header row or flagged key is refused. See "Privacy modes" in docs/spec.md.
 - **Endpoints.** `local-only` (the default) refuses any endpoint that is not a loopback literal
   (127.0.0.0/8, `::1`, `localhost`) before sending, which rules out `claude -p` and the hosted
   Anthropic API. `profile-only` allows a remote model over https and refuses any data that is not

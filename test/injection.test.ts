@@ -94,8 +94,10 @@ function susceptible(system: string, user: string, log: Seen[]): string {
     } catch {}
     return JSON.stringify(obeyed(profile));
   }
-  JSON.parse(inside);
-  return JSON.stringify(honest());
+  // Like a real analyst it names staff.csv as it was sent: under profile-only, by its file token.
+  const sent = (JSON.parse(inside) as { profile: Profile }).profile;
+  const file = sent.tables.find((t) => t.columns.some((c) => c.header === "Owner"))?.file ?? "staff.csv";
+  return JSON.stringify(honest()).replaceAll('"file":"staff.csv"', `"file":${JSON.stringify(file)}`);
 }
 
 let dir: string;

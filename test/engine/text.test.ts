@@ -88,6 +88,17 @@ describe("entity matching", () => {
     ]);
   });
 
+  test("a vocabulary form wins a length tie against a person part", () => {
+    const e: Entities = {
+      person: [{ canonical: "Sam Rowe", aliases: [], parts: ["Sam"] }],
+      vocabulary: [{ canonical: "SAM", aliases: [], parts: [] }],
+    };
+    expect(find("SAM and Sam", e)).toEqual([
+      ["SAM", null, "SAM"],
+      ["Sam", "person", "Sam"],
+    ]);
+  });
+
   test("multi-word and lowercase forms fold case", () => {
     expect(find("AVERY QUILL, avery quill, Aves")).toEqual([
       ["AVERY QUILL", "person", "Avery Quill"],

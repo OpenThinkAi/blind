@@ -153,12 +153,10 @@ describe("walking skeleton on synthetic kit v1", () => {
     for (const f of report.files.filter((x) => x.path !== ACCOUNTS_CSV && x.kind === "file")) expect({ path: f.path, status: f.status }).toEqual({ path: f.path, status: "clean" });
   });
 
-  // Engine gap found by this kit (not a leak: over-blinding). The person part "Sam" matches "SAM"
-  // (a capitalised single word matches any capitalised text), and the vocabulary entry "SAM" does
-  // not shield it: equal-length forms are tie-broken by class order, and person comes before
-  // vocabulary. "Jan." survives only because it is longer than "Jan". Reported from AGT-1739 for a
-  // fix ticket; when the engine lets vocabulary win the tie, this passes and must become `test`.
-  test.failing("the acronym decoy survives: SAM, marked vocabulary, is not taken for the given name Sam", () => {
+  // Found by this kit (AGT-1739), fixed in AGT-1783: the person part "Sam" also matches the text
+  // "SAM", and an equal-length vocabulary entry "SAM" used to lose the tie to person. Vocabulary now
+  // wins equal-length ties, so the acronym decoy survives.
+  test("the acronym decoy survives: SAM, marked vocabulary, is not taken for the given name Sam", () => {
     const md = run.output["notes/review.md"] as string;
     const expected = (kit.files.find((f) => f.path === "notes/review.md")?.text.match(/\bSAM\b/g) ?? []).length;
     expect(expected).toBeGreaterThan(0);

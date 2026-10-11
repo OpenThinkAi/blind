@@ -194,7 +194,7 @@ how the form is written:
   so `may` is left alone.
 - Anything else matches case-insensitively, with any run of whitespace between words.
 
-`vocabulary` entities are kept as written and shield their words from other entity forms.
+`vocabulary` entities are kept as written and shield their words from other entity forms. A vocabulary form wins any length tie with another form, so a vocabulary acronym such as `SAM` is kept even when a person part `Sam` (which matches any capitalised text, including all-caps) has the same length.
 
 **Kept hosts.** A host name equal to, or under, a domain-shaped term of the `blind.toml` keep list
 (`terms = ["vendor.example.net"]`; a leading `*.` is ignored) is kept as written: `api.vendor.example.net`

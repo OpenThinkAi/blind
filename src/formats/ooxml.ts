@@ -46,6 +46,17 @@ export interface RewriteRules {
   text(element: Frame, parents: readonly Frame[]): boolean;
   /** Rewrite this attribute's value? */
   attribute(element: Frame, attribute: string, parents: readonly Frame[]): boolean;
+  /**
+   * When a rewritten text value of this element starts or ends with whitespace and the element has
+   * no xml:space attribute, add xml:space="preserve" so a consumer does not strip it (WordprocessingML
+   * `w:t`). Unchanged values never gain the attribute.
+   */
+  preserveSpace?(element: Frame, parents: readonly Frame[]): boolean;
+  /**
+   * Called for every start tag, self-closing ones included, in document order and before the
+   * element's attributes are offered: lets a handler see markup between text nodes (a tab, a break).
+   */
+  visit?(element: Frame, parents: readonly Frame[]): void;
 }
 
 export type XmlRewrite = (value: string, ctx: NodeContext) => string;
@@ -151,7 +162,7 @@ export function rewriteXml(xml: string, rewrite: XmlRewrite, rules: RewriteRules
   };
 
   // A selected text element collects its content (text and CDATA) until its end tag.
-  let selected: { frame: Frame; parents: Frame[]; raw: string[]; value: string[]; at: number } | null = null;
+  let selected: { frame: Frame; parents: Frame[]; raw: string[]; value: string[]; at: number; tag: number } | null = null;
   let rootClosed = false;
   let sawRoot = false;
   let i = 0;
@@ -225,6 +236,9 @@ export function rewriteXml(xml: string, rewrite: XmlRewrite, rules: RewriteRules
         const before = s.value.join("");
         const after = before === "" ? before : rewrite(before, { element: s.frame, parents: s.parents });
         out.push(after === before ? s.raw.join("") : withLine(s.at, () => encodeText(after)));
+        if (after !== before && /^\s|\s$/.test(after) && !s.frame.attrs.has("xml:space") && rules.preserveSpace?.(s.frame, s.parents)) {
+          out[s.tag] = `${(out[s.tag] as string).slice(0, -1)} xml:space="preserve">`;
+        }
       }
       out.push(xml.slice(i, close + 1));
       i = close + 1;
@@ -278,6 +292,7 @@ export function rewriteXml(xml: string, rewrite: XmlRewrite, rules: RewriteRules
     }
     const frame: Frame = { name: name!, attrs };
     const parents = stack.slice();
+    rules.visit?.(frame, parents);
 
     let cursor = i;
     for (const s of spans) {
@@ -294,7 +309,7 @@ export function rewriteXml(xml: string, rewrite: XmlRewrite, rules: RewriteRules
       continue;
     }
     stack.push(frame);
-    if (rules.text(frame, parents)) selected = { frame, parents, raw: [], value: [], at: i };
+    if (rules.text(frame, parents)) selected = { frame, parents, raw: [], value: [], at: i, tag: out.length - 1 };
   }
 
   if (stack.length > 0) fail(xml.length, `<${stack[stack.length - 1]!.name}> is never closed`);
@@ -338,7 +353,9 @@ const SIG_ZIP64_LOCATOR = 0x07064b50;
 const SIG_DESCRIPTOR = 0x08074b50;
 const utf8 = new TextDecoder("utf-8");
 
-function readZip(bytes: Uint8Array): Zip {
+function readZip(input: Uint8Array): Zip {
+  // A plain view, never a Buffer: Buffer#slice shares memory, and the writer slices headers to patch them.
+  const bytes = new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let eocd = -1;
   for (let k = bytes.length - 22; k >= 0 && k >= bytes.length - 22 - 0xffff; k--) {
@@ -529,32 +546,65 @@ export function isXmlMember(name: string): boolean {
   return /\.(xml|rels)$/i.test(name);
 }
 
+const strictUtf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
+/** A member's XML text; throws ZipError or XmlError when it cannot be read as UTF-8 XML. */
+function memberXml(zip: Zip, e: Entry): string {
+  const data = memberData(zip, e);
+  if ((data[0] === 0xff && data[1] === 0xfe) || (data[0] === 0xfe && data[1] === 0xff)) throw new XmlError("UTF-16 XML is not supported");
+  try {
+    return strictUtf8.decode(data);
+  } catch {
+    throw new XmlError("not valid UTF-8");
+  }
+}
+
+export type OoxmlMember =
+  | { name: string; kind: "xml"; text: string }
+  | { name: string; kind: "other" }
+  | { name: string; kind: "error"; error: string };
+
+/**
+ * Every member in central directory order, XML members with their decoded
+ * text, for a handler that must read the parts before it rewrites them. Kinds
+ * are as in MemberResult. Throws ZipError when the archive itself cannot be read.
+ */
+export function readOoxml(bytes: Uint8Array): OoxmlMember[] {
+  const zip = readZip(bytes);
+  return zip.entries.map((e): OoxmlMember => {
+    if (e.name.endsWith("/") || !isXmlMember(e.name)) return { name: e.name, kind: "other" };
+    try {
+      return { name: e.name, kind: "xml", text: memberXml(zip, e) };
+    } catch (err) {
+      if (!(err instanceof XmlError || err instanceof ZipError)) throw err;
+      return { name: e.name, kind: "error", error: err.message };
+    }
+  });
+}
+
 /**
  * Rewrite the text nodes of every XML member of an OOXML zip. Members are
- * visited in central directory order and nodes in document order. Throws
- * ZipError when the archive itself cannot be read.
+ * visited in central directory order and nodes in document order. `rules` may
+ * be chosen per member by name. Throws ZipError when the archive itself cannot
+ * be read.
  */
-export function rewriteOoxml(bytes: Uint8Array, rewrite: OoxmlRewrite, rules: RewriteRules = defaultRules): OoxmlResult {
+export function rewriteOoxml(
+  bytes: Uint8Array,
+  rewrite: OoxmlRewrite,
+  rules: RewriteRules | ((member: string) => RewriteRules) = defaultRules,
+): OoxmlResult {
   const zip = readZip(bytes);
   const replaced = new Map<Entry, Replacement>();
   const members: MemberResult[] = [];
-  const strictUtf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
   for (const e of zip.entries) {
     if (e.name.endsWith("/") || !isXmlMember(e.name)) {
       members.push({ name: e.name, kind: "other" });
       continue;
     }
-    let text: string;
     try {
-      const data = memberData(zip, e);
-      if ((data[0] === 0xff && data[1] === 0xfe) || (data[0] === 0xfe && data[1] === 0xff)) throw new XmlError("UTF-16 XML is not supported");
-      try {
-        text = strictUtf8.decode(data);
-      } catch {
-        throw new XmlError("not valid UTF-8");
-      }
-      const out = rewriteXml(text, (v, ctx) => rewrite(v, { ...ctx, member: e.name }), rules);
+      const text = memberXml(zip, e);
+      const out = rewriteXml(text, (v, ctx) => rewrite(v, { ...ctx, member: e.name }), typeof rules === "function" ? rules(e.name) : rules);
       if (out === text) {
         members.push({ name: e.name, kind: "xml", changed: false });
         continue;

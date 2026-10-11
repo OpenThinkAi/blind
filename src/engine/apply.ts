@@ -1,4 +1,4 @@
-// The engine for CSV/TSV, JSON/JSONL and plain text: applies a saved spec to in-memory
+// The engine for CSV/TSV, JSON/JSONL, plain text and DOCX (see docx.ts): applies a saved spec to in-memory
 // files and returns the blinded bytes, a report per file, and the map. No file
 // system, no clock, no model: the output depends only on the inputs, the spec,
 // the salt and any earlier map.
@@ -48,11 +48,12 @@ import { isJsonNumber, type JsonFormat, JsonError, type JsonToken, quote, scanJs
 import type { BlindMap } from "./map.ts";
 import { type EntityEntry, Pseudonymizer } from "./pseudonym.ts";
 import { type ColumnStats, columnStats, isIdentifierLike, THRESHOLDS } from "./stats.ts";
+import { DocxError, type DocxPlan, planDocx, renderDocx, scanDocx } from "./docx.ts";
 import { NameRewriter, rewriteSpans } from "./names.ts";
 import { recurrenceForms, TextScanner } from "./recur.ts";
 import { EntityMatcher, type ExtraForm, keepDomains, type Span } from "./text.ts";
 
-export type EngineFormat = "csv" | "tsv" | "json" | "jsonl" | "text";
+export type EngineFormat = "csv" | "tsv" | "json" | "jsonl" | "text" | "docx";
 
 const EXTENSIONS: Record<string, EngineFormat> = {
   ".csv": "csv",
@@ -66,6 +67,7 @@ const EXTENSIONS: Record<string, EngineFormat> = {
   ".md": "text",
   ".markdown": "text",
   ".log": "text",
+  ".docx": "docx",
 };
 
 /** The format this engine handles a path as, or null when it does not handle it. */
@@ -129,6 +131,10 @@ export interface FileReport {
   mappedReplacements: number;
   /** Host names left as written because they are under a keep-list domain. */
   keptHosts: number;
+  /** DOCX only: identity metadata (authors, initials, creator, company) replaced as a whole. */
+  metadataReplacements?: number;
+  /** Parts of the file copied without blinding (images), for the report. */
+  warnings?: string[];
   changed: boolean;
 }
 
@@ -216,7 +222,13 @@ interface JsonPlan {
   columns: ColumnReport[];
 }
 
-type Plan = TablePlan | TextPlan | JsonPlan;
+interface DocxFilePlan {
+  kind: "docx";
+  input: InputFile;
+  docx: DocxPlan;
+}
+
+type Plan = TablePlan | TextPlan | JsonPlan | DocxFilePlan;
 
 type ColumnAction = { kind: "keep" } | { kind: "pseudo"; cls: PseudoClass } | { kind: "free" };
 
@@ -491,6 +503,19 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       skipped.push({ path: input.path, reason: "format not supported by this engine yet; not written" });
       continue;
     }
+    const rules = rulesByFile.get(input.path) ?? [];
+    if (format === "docx") {
+      if (rules.length > 0) {
+        throw new ApplyError(`${input.path}: the spec has column rules for a DOCX file; column rules apply to tables only`);
+      }
+      try {
+        plans.push({ kind: "docx", input, docx: planDocx(input.bytes) });
+      } catch (e) {
+        if (!(e instanceof DocxError)) throw e;
+        skipped.push({ path: input.path, reason: `${e.message}; not written` });
+      }
+      continue;
+    }
     let decoded;
     try {
       decoded = decode(input.bytes);
@@ -499,7 +524,6 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       skipped.push({ path: input.path, reason: `cannot decode: ${e.message}; not written` });
       continue;
     }
-    const rules = rulesByFile.get(input.path) ?? [];
     if (format === "text") {
       if (rules.length > 0) {
         throw new ApplyError(`${input.path}: the spec has column rules for a text file; column rules apply to tables only`);
@@ -545,13 +569,14 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   // Every column is decided: scan the rest of the text for patterns, entities and the values the
   // column pass (or an earlier map) pseudonymised.
   const forms = recurrenceForms(
-    plans.flatMap((p) => (p.kind === "text" ? [] : p.mapped)),
+    plans.flatMap((p) => (p.kind === "text" || p.kind === "docx" ? [] : p.mapped)),
     spec.entities,
     opts.map,
   );
   const scanner = new TextScanner(spec.entities, spec.patterns, keep, forms);
   for (const p of plans) {
     if (p.kind === "text") p.spans = scanner.free(p.text);
+    else if (p.kind === "docx") scanDocx(p.docx, (t) => scanner.free(t));
     else if (p.kind === "json") scanPending(p.pending, p.edits, scanner);
     else scanPending(p.pending, p.edits, scanner);
   }
@@ -561,7 +586,12 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   for (const p of plans) {
     for (const segment of p.input.path.split("/")) for (const t of tokens(segment)) avoid.add(t);
     if (p.kind === "text") for (const t of tokens(p.text)) avoid.add(t);
-    else if (p.kind === "json") {
+    else if (p.kind === "docx") {
+      for (const v of p.docx.values) {
+        avoid.add(v.trim());
+        for (const t of tokens(v)) avoid.add(t);
+      }
+    } else if (p.kind === "json") {
       for (const t of p.tokens) {
         if (t.kind === "literal") continue;
         avoid.add(t.value.trim());
@@ -591,6 +621,10 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       for (const s of p.spans) if (s.cls !== null) want(s.cls, s.value);
       continue;
     }
+    if (p.kind === "docx") {
+      for (const r of p.docx.requests) want(r.cls, r.value);
+      continue;
+    }
     if (p.kind === "json") {
       for (const [i, edit] of p.edits) {
         if (edit.kind === "spans") {
@@ -618,6 +652,26 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   const outputs: InputFile[] = [];
   const files: FileReport[] = [];
   for (const p of plans) {
+    if (p.kind === "docx") {
+      const r = renderDocx(p.docx, pz);
+      const outputPath = names.renamePath(p.input.path, pz);
+      files.push({
+        path: p.input.path,
+        outputPath,
+        format: "docx",
+        encoding: "utf8",
+        columns: [],
+        entityReplacements: r.entityReplacements,
+        patternReplacements: r.patternReplacements,
+        mappedReplacements: r.mappedReplacements,
+        keptHosts: r.keptHosts,
+        metadataReplacements: r.metadataReplacements,
+        warnings: p.docx.warnings,
+        changed: r.changed,
+      });
+      outputs.push({ path: outputPath, bytes: r.changed ? r.bytes : p.input.bytes });
+      continue;
+    }
     let text: string;
     let report: FileReport;
     if (p.kind === "text") {

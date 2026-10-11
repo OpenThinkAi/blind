@@ -30,7 +30,7 @@ const APPLY_HELP = [
   "Applies the saved spec (.blind/spec.json) to the inputs and writes blinded copies under <out>.",
   "Inputs are files or directories; spec rules name files by their path relative to the input",
   "directory (or by file name for a file input). Handles CSV/TSV, JSON/JSONL (.json, .jsonl,",
-  ".ndjson) and text (.txt, .md, .log); other files are reported and not written. File and",
+  ".ndjson), text (.txt, .md, .log) and DOCX; other files are reported and not written. File and",
   "folder names are blinded too; the report lists each renamed file. Host names under a domain",
   "in the blind.toml keep list are kept.",
   "",
@@ -152,6 +152,10 @@ export function renderReport(result: ApplyResult): string {
     if (f.mappedReplacements > 0) {
       lines.push(`  ${f.mappedReplacements} value${f.mappedReplacements === 1 ? "" : "s"} blinded in a column replaced again where ${f.mappedReplacements === 1 ? "it recurs" : "they recur"} outside it`);
     }
+    if ((f.metadataReplacements ?? 0) > 0) {
+      lines.push(`  metadata: ${f.metadataReplacements} author, creator or company value${f.metadataReplacements === 1 ? "" : "s"} replaced`);
+    }
+    for (const w of f.warnings ?? []) lines.push(`  warning: ${w}`);
     if (f.keptHosts > 0) {
       lines.push(`  kept ${f.keptHosts} host name${f.keptHosts === 1 ? "" : "s"} under a domain in the policy keep list`);
     }

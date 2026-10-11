@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { rewriteOoxml, rewriteXml, ZipError, XmlError, type RewriteRules, defaultRules, localName } from "../../src/formats/ooxml.ts";
+import { readOoxml, rewriteOoxml, rewriteXml, ZipError, XmlError, type RewriteRules, defaultRules, localName } from "../../src/formats/ooxml.ts";
 import { buildZip, readZip, type FixtureEntry } from "./zipfixture.ts";
 
 // Synthetic OOXML, generated here. Names and hosts are invented.
@@ -72,6 +72,16 @@ describe("rewriteOoxml", () => {
     expect(rewriteOoxml(r.bytes, (v) => v).bytes).toEqual(r.bytes);
   });
 
+  test("a Buffer input with a non-zero byte offset (as readFileSync gives) is written correctly", () => {
+    const input = buildZip(docx());
+    const pooled = Buffer.concat([Buffer.alloc(17, 0x41), Buffer.from(input)]).subarray(17);
+    expect(pooled.byteOffset).toBe(17);
+    const want = rewriteOoxml(input, upper).bytes;
+    const got = rewriteOoxml(pooled, upper).bytes;
+    expect(Buffer.from(got).equals(Buffer.from(want))).toBe(true);
+    expect(readZip(got).find((e) => e.name === "word/document.xml")!.text).toContain("DANA PELL");
+  });
+
   test("output is deterministic", () => {
     const input = buildZip(docx());
     expect(Buffer.from(rewriteOoxml(input, upper).bytes).equals(Buffer.from(rewriteOoxml(input, upper).bytes))).toBe(true);
@@ -117,6 +127,31 @@ describe("rewriteOoxml", () => {
     expect(r.bytes).toEqual(input);
   });
 
+  test("rules can be chosen per member", () => {
+    const seen: string[] = [];
+    rewriteOoxml(buildZip(docx()), (v, ctx) => (seen.push(`${ctx.member}:${v}`), v), (member) =>
+      member === "word/document.xml" ? defaultRules : { text: () => false, attribute: () => false },
+    );
+    expect(seen).toEqual(["word/document.xml:Dana Pell ", "word/document.xml:met Orbit & Co at A7"]);
+  });
+
+  test("readOoxml lists every member with its kind and the decoded text of XML members", () => {
+    const entries = docx();
+    entries.push({ name: "word/bad.xml", data: new Uint8Array([0x3c, 0x61, 0x3e, 0xff, 0x3c, 0x2f, 0x61, 0x3e]) });
+    const members = readOoxml(buildZip(entries));
+    expect(members.map((m) => [m.name, m.kind])).toEqual([
+      ["[Content_Types].xml", "xml"],
+      ["_rels/.rels", "xml"],
+      ["word/document.xml", "xml"],
+      ["word/media/image1.png", "other"],
+      ["word/bad.xml", "error"],
+    ]);
+    const doc = members[2]!;
+    expect(doc.kind === "xml" && doc.text).toContain("<w:t>met Orbit &amp; Co at &#x41;7</w:t>");
+    expect(members[4]).toEqual({ name: "word/bad.xml", kind: "error", error: "not valid UTF-8" });
+    expect(() => readOoxml(new TextEncoder().encode("not a zip"))).toThrow(ZipError);
+  });
+
   test("an unreadable archive throws ZipError", () => {
     expect(() => rewriteOoxml(new TextEncoder().encode("not a zip"), upper)).toThrow(ZipError);
     const z = buildZip([{ name: "a.xml", data: "<a/>" }]);
@@ -153,6 +188,23 @@ describe("rewriteXml", () => {
     expect(seen).toEqual(["name=Dana & Pell"]);
     expect(out).toBe(`<s><sheet  name = 'O&apos;Co &quot;x&quot;' r:id="Dana"/></s>`);
     expect(rewriteXml(`<s><sheet name="a&#10;b"/></s>`, id, rules)).toBe(`<s><sheet name="a&#10;b"/></s>`);
+  });
+
+  test("preserveSpace adds xml:space only to rewritten values with edge whitespace and no xml:space yet", () => {
+    const rules: RewriteRules = { ...defaultRules, preserveSpace: (el) => el.name === "w:t" };
+    const xml = '<w:p><w:t>a b</w:t><w:t >c</w:t><w:t xml:space="default">d</w:t><a:t>e</a:t></w:p>';
+    expect(rewriteXml(xml, (v) => ` ${v}`, rules)).toBe('<w:p><w:t xml:space="preserve"> a b</w:t><w:t  xml:space="preserve"> c</w:t><w:t xml:space="default"> d</w:t><a:t> e</a:t></w:p>');
+    expect(rewriteXml(xml, (v) => v.toUpperCase(), rules)).toBe('<w:p><w:t>A B</w:t><w:t >C</w:t><w:t xml:space="default">D</w:t><a:t>E</a:t></w:p>');
+    expect(rewriteXml(xml, (v) => v, rules)).toBe(xml);
+    // Without the rule nothing is added.
+    expect(rewriteXml("<w:p><w:t>a</w:t></w:p>", (v) => ` ${v}`)).toBe("<w:p><w:t> a</w:t></w:p>");
+  });
+
+  test("visit sees every start tag, self-closing ones included, in document order", () => {
+    const seen: string[] = [];
+    const rules: RewriteRules = { ...defaultRules, visit: (el, parents) => seen.push(`${parents.length}:${el.name}`) };
+    rewriteXml('<p><r><t>a</t></r><r><tab/></r><br x="1"/></p>', (v) => (seen.push(`text:${v}`), v), rules);
+    expect(seen).toEqual(["0:p", "1:r", "2:t", "text:a", "1:r", "2:tab", "1:br"]);
   });
 
   test("empty and self-closing text elements are not offered", () => {

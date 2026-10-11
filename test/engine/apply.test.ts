@@ -415,6 +415,7 @@ describe("engineFormat", () => {
     ["a.json", "json"],
     ["a.jsonl", "jsonl"],
     ["A.NDJSON", "jsonl"],
+    ["a.docx", "docx"],
     ["a.xlsx", null],
     ["Makefile", null],
     [".csv", null],

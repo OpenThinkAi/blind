@@ -324,10 +324,28 @@ the same code as the commands themselves.
   Text that happens to equal a pseudonym is restored too.
 - **Formats.** CSV/TSV cell by cell (a restored value that needs quoting is quoted), JSON and JSONL
   string by string (spliced in, the rest of the text unchanged), and text (`.txt`, `.md`, `.log`),
-  with the file's encoding kept. Other formats, XLSX and DOCX among them, have no reversal path yet: a single file is refused
-  (exit 2); in a tree it is listed and not revealed (exit 1). A file that does not parse is treated
-  the same way. Two keys of one JSON object, or two files, that would reveal to the same name are
-  refused (exit 2, nothing written).
+  with the file's encoding kept. XLSX and DOCX are restored at the zip and XML level in exactly the
+  places `blind apply` rewrites (every other byte is copied): cells, shared and inline strings,
+  formulas, comments, metadata, pivot and chart caches; paragraphs (tracked insertions and
+  deletions each in their own revision), field instructions, drawing text, authors and document
+  properties. Rich text is read as one text, so a pseudonym that an editor split across runs is
+  restored too: the original goes into the run where the pseudonym starts and the rest of the
+  pseudonym is removed from the later runs. Runs, rows, cells, paragraphs and formulas are never
+  added or removed. Worksheet, defined and table names are restored with every formula,
+  hyperlink, structured reference and pivot source that names them, and a renumbered number gets
+  its digits back with its decimal point where it was. Values replaced whole (authors, creator,
+  company) come back from the map. Text apply merged into one run when a name crossed runs stays
+  in that run, and a phonetic guide apply emptied stays empty. A defined name blinded from part of
+  an identity comes back as the whole recorded form, with each character a defined name cannot
+  hold written `_` (`Avery_Total` returns as `Avery_Quill_Total`), the same in every formula. A
+  workbook or document is revealed whole or not at all: a member that cannot be read, a restored
+  worksheet name the spreadsheet would refuse, two worksheet or defined names that would reveal to
+  one name, or a pseudonym that reads differently with tracked changes accepted and rejected
+  refuses the file. Office's own structural IDs (`w:rsid*`, paragraph IDs, `xr:uid`) are not
+  identities and are not touched. Other formats have no reversal path: a single file is refused
+  (exit 2); in a tree it is listed and not revealed (exit 1). A file that does not parse, or is
+  refused as above, is treated the same way. Two keys of one JSON object, or two files, that would
+  reveal to the same name are refused (exit 2, nothing written).
 - **Where it goes.** Revealed files hold the original values, so they are secrets like the map.
   They are written under `.blind/revealed/` (or `-o <dir>`), with each file's revealed name and
   path, folders mode 0700 and files mode 0600 (created that way, never changed afterwards). `-o`

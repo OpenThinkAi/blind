@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { runApply } from "../src/apply.ts";
 import { runReveal } from "../src/reveal.ts";
+import { buildWorkbook } from "./formats/xlsxfixture.ts";
+import { buildZip, readZip } from "./formats/zipfixture.ts";
 
 // Synthetic corpus only (invented names, example.com, RFC 5737 IPs).
 const SPEC = {
@@ -20,6 +22,11 @@ const SPEC = {
 };
 const STAFF = 'Owner,Box,Status\n"Quill, Robin",192.0.2.10,open\nAvery Quill,app01.corp.example.com,closed\n';
 const NOTE = "Avery Quill checked 192.0.2.10 today.\n";
+const DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+const memo = buildZip([
+  { name: "[Content_Types].xml", data: `${DECL}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>` },
+  { name: "word/document.xml", data: `${DECL}<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Avery Quill signed.</w:t></w:r></w:p></w:body></w:document>` },
+]);
 
 let dir: string;
 beforeEach(async () => {
@@ -107,16 +114,42 @@ test("an existing revealed copy is not replaced without --force", async () => {
 });
 
 test("a format with no reversal path: refused for a file (2), listed for a tree (1)", async () => {
-  writeFileSync(join(dir, "out", "book.xlsx"), "PK");
-  const one = await reveal("out/book.xlsx");
+  writeFileSync(join(dir, "out", "scan.pdf"), "%PDF");
+  const one = await reveal("out/scan.pdf");
   expect(one.code).toBe(2);
-  expect(one.err).toContain("no reversal path for .xlsx files");
+  expect(one.err).toContain("no reversal path for .pdf files");
   expect(existsSync(join(dir, ".blind", "revealed"))).toBe(false);
   const tree = await reveal("out");
   expect(tree.code).toBe(1);
-  expect(tree.err).toContain("book.xlsx: no reversal path");
+  expect(tree.err).toContain("scan.pdf: no reversal path");
   expect(existsSync(join(dir, ".blind", "revealed", "staff.csv"))).toBe(true);
-  expect(existsSync(join(dir, ".blind", "revealed", "book.xlsx"))).toBe(false);
+  expect(existsSync(join(dir, ".blind", "revealed", "scan.pdf"))).toBe(false);
+});
+
+test("a blinded workbook and document reveal through the CLI; one that cannot be read is listed, never partly revealed", async () => {
+  mkdirSync(join(dir, "office"));
+  writeFileSync(join(dir, "office", "book.xlsx"), buildWorkbook());
+  writeFileSync(join(dir, "office", "memo.docx"), memo);
+  const applied = new PassThrough();
+  expect(await runApply(["office", "-o", "office-out", "--map-out", ".blind/office-map.json"], { out: applied, err: new PassThrough(), cwd: dir })).toBe(0);
+  const blinded = readFileSync(join(dir, "office-out", "memo.docx"));
+  expect(readZip(blinded).map((e) => e.text).join("")).not.toContain("Avery Quill");
+  const r = await reveal("office-out", "--map", ".blind/office-map.json");
+  expect(r.code).toBe(0);
+  const back = join(dir, ".blind", "revealed");
+  expect(readZip(readFileSync(join(back, "memo.docx"))).find((e) => e.name === "word/document.xml")?.text).toContain("<w:t>Avery Quill signed.</w:t>");
+  expect(readZip(readFileSync(join(back, "book.xlsx"))).find((e) => e.name === "xl/workbook.xml")?.text).toContain('<sheet name="Avery Quill"');
+  expect(mode(join(back, "book.xlsx"))).toBe(0o600);
+  expect(r.out).not.toContain("Quill");
+
+  // A member that cannot be read: the document is listed and not written, the workbook still is.
+  const broken = readZip(blinded).map((e) => ({ name: e.name, data: e.name === "word/document.xml" ? e.text.replace("</w:body>", "") : e.text }));
+  writeFileSync(join(dir, "office-out", "memo.docx"), buildZip(broken));
+  const again = await reveal("office-out", "--map", ".blind/office-map.json", "-o", ".blind/again");
+  expect(again.code).toBe(1);
+  expect(again.err).toContain("memo.docx: cannot read it as DOCX: part word/document.xml cannot be read");
+  expect(existsSync(join(dir, ".blind", "again", "memo.docx"))).toBe(false);
+  expect(existsSync(join(dir, ".blind", "again", "book.xlsx"))).toBe(true);
 });
 
 test("a missing or invalid map, a missing input and usage errors exit 2", async () => {

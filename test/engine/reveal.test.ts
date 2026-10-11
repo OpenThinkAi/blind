@@ -103,7 +103,8 @@ describe("revealFile", () => {
   });
 
   test("formats with no reversal path, and files that do not parse, are refused", () => {
-    expect(() => revealFile("book.xlsx", bytes("PK"), rv)).toThrow(/no reversal path for \.xlsx/);
+    expect(() => revealFile("scan.pdf", bytes("%PDF"), rv)).toThrow(/no reversal path for \.pdf/);
+    expect(() => revealFile("book.xlsx", bytes("PK"), rv)).toThrow(/cannot read it as XLSX/);
     expect(() => revealFile("doc.docx", bytes("PK"), rv)).toThrow(RevealError);
     expect(() => revealFile("noext", bytes("x"), rv)).toThrow(/no extension/);
     expect(() => revealFile("bad.json", bytes("{"), rv)).toThrow(RevealError);

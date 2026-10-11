@@ -39,7 +39,7 @@ const DEFINED_NAME_RE = /^[\p{L}_\\][\p{L}\p{N}_.]*$/u;
 const DEFINED_NAME_MAX = 255;
 
 /** Why `name` cannot fill `slot`, or null when it can. */
-function violation(slot: NameSlot, name: string): string | null {
+export function violation(slot: NameSlot, name: string): string | null {
   if (slot === "sheet") {
     if ([...name].length > SHEET_MAX) return `is longer than ${SHEET_MAX} characters`;
     if (SHEET_FORBIDDEN.test(name) || name.startsWith("'") || name.endsWith("'")) {

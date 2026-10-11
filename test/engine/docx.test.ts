@@ -347,3 +347,23 @@ describe("DOCX: fail closed", () => {
     expect(() => run(docx(), spec)).toThrow(ApplyError);
   });
 });
+
+describe("DOCX: recurring values from other files", () => {
+  test("a value a CSV column blinded is replaced in a DOCX paragraph, even split across runs", () => {
+    const csv: InputFile = { path: "staff.csv", bytes: Buffer.from("Owner,Status\nKestrel Vantwerp,open\nMarlo Quist,closed\n") };
+    const spec: Spec = {
+      ...SPEC,
+      entities: {},
+      columns: [{ file: "staff.csv", header: "Owner", class: "person", treatment: "blind", confidence: 1, source: "human" }],
+    };
+    const body = p(r("Escalate to "), r("Kes", "<w:b/>"), r("trel Vant", "<w:i/>"), r("werp today."));
+    const res = applySpec([csv, docx(entries({ body }))], spec, { salt: SALT });
+    const kestrel = pseudo(res, "person", "Kestrel Vantwerp");
+    const out = res.outputs.find((o) => o.path === "contract.docx")!;
+    const doc = readZip(out.bytes).find((e) => e.name === "word/document.xml")!.text;
+    expect(doc).not.toContain("Kes");
+    expect(doc).toContain(`<w:rPr><w:b/></w:rPr><w:t>${kestrel}</w:t></w:r><w:r><w:rPr><w:i/></w:rPr><w:t></w:t></w:r><w:r><w:t xml:space="preserve"> today.</w:t>`);
+    expect(Buffer.from(res.outputs.find((o) => o.path === "staff.csv")!.bytes).toString()).toContain(kestrel);
+    expect(res.files.find((f) => f.path === "contract.docx")!.mappedReplacements).toBe(1);
+  });
+});

@@ -6,7 +6,8 @@
 // therefore matched per paragraph: the text nodes of one paragraph are joined
 // (with a separator wherever a tab, break, field character or other object sits
 // between them, so "Acme<tab/>Corp" never reads as "AcmeCorp"), the spec's
-// patterns and entities are found in the joined text, and each match is written
+// patterns and entities and the corpus's recurring values (recur.ts) are found
+// in the joined text, and each match is written
 // back into the runs it came from: its pseudonym goes where the match starts
 // (the formatting of that run carries it) and the rest of the match is removed
 // from the later runs. No run, property or paragraph is added or removed.
@@ -50,6 +51,8 @@ export interface DocxPlan {
   /** Unique matches across the package. */
   edits: Edit[];
   wholes: Node[];
+  /** Paragraph text, field instructions and single values, in document order. */
+  units: Unit[];
   /** Host matches kept because they are under a keep-list domain. */
   keptHosts: number;
   /** Pseudonyms the render needs, for the caller to derive in sorted order. */
@@ -64,6 +67,8 @@ export interface DocxRender {
   changed: boolean;
   entityReplacements: number;
   patternReplacements: number;
+  /** Values a column pass pseudonymised elsewhere in the corpus, found again here. */
+  mappedReplacements: number;
   keptHosts: number;
   /** Identity metadata values replaced as a whole. */
   metadataReplacements: number;
@@ -259,17 +264,18 @@ const IMAGE = /\.(png|jpe?g|gif|bmp|tiff?|emf|wmf|svg|ico|webp)$/i;
 const FONT = /\.(odttf|ttf|otf|fntdata)$/i;
 
 /**
- * Read the package and plan every edit. `spanner` finds the spec's patterns
- * and entities in a string. Throws DocxError when the package must not be written.
+ * Read the package and collect its text units. Throws DocxError when the package
+ * must not be written. Matching waits for scanDocx, once every column in the
+ * corpus is decided.
  */
-export function planDocx(bytes: Uint8Array, spanner: (s: string) => Span[]): DocxPlan {
+export function planDocx(bytes: Uint8Array): DocxPlan {
   let members;
   try {
     members = readOoxml(bytes);
   } catch (e) {
     throw new DocxError(`not a readable DOCX package (${(e as Error).message})`);
   }
-  const plan: DocxPlan = { bytes, nodes: new Map(), kinds: new Map(), edits: [], wholes: [], keptHosts: 0, requests: [], values: [], warnings: [] };
+  const plan: DocxPlan = { bytes, nodes: new Map(), kinds: new Map(), edits: [], wholes: [], units: [], keptHosts: 0, requests: [], values: [], warnings: [] };
 
   const images: string[] = [];
   for (const m of members) {
@@ -281,7 +287,7 @@ export function planDocx(bytes: Uint8Array, spanner: (s: string) => Span[]): Doc
     plan.warnings.push(`${images.length} image${images.length === 1 ? "" : "s"} copied unchanged (images are not blinded): ${images.join(", ")}`);
   }
 
-  const units: Unit[] = [];
+  const units = plan.units;
   for (const m of members) {
     if (m.kind === "other") continue;
     if (m.kind === "error") throw new DocxError(`part ${m.name} cannot be read (${m.error})`);
@@ -362,8 +368,15 @@ export function planDocx(bytes: Uint8Array, spanner: (s: string) => Span[]): Doc
     }
   }
 
-  for (const unit of units) planUnit(unit, spanner, plan);
   return plan;
+}
+
+/**
+ * Match every unit and record the edits on its nodes. `spanner` finds the spec's patterns, its
+ * entities and the corpus's recurring values in a string (TextScanner.free).
+ */
+export function scanDocx(plan: DocxPlan, spanner: (s: string) => Span[]): void {
+  for (const unit of plan.units) planUnit(unit, spanner, plan);
 }
 
 /** Match one unit (a paragraph's text, its instructions, or a single value) and record the edits on its nodes. */
@@ -464,6 +477,7 @@ export function renderDocx(plan: DocxPlan, pz: Pseudonymizer): DocxRender {
     changed: result.members.some((m) => m.kind === "xml" && m.changed),
     entityReplacements: plan.edits.filter((e) => e.source === "entity").length,
     patternReplacements: plan.edits.filter((e) => e.source === "pattern").length,
+    mappedReplacements: plan.edits.filter((e) => e.source === "map").length,
     keptHosts: plan.keptHosts,
     metadataReplacements,
   };

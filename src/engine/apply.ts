@@ -48,7 +48,7 @@ import { isJsonNumber, type JsonFormat, JsonError, type JsonToken, quote, scanJs
 import type { BlindMap } from "./map.ts";
 import { type EntityEntry, Pseudonymizer } from "./pseudonym.ts";
 import { type ColumnStats, columnStats, isIdentifierLike, THRESHOLDS } from "./stats.ts";
-import { DocxError, type DocxPlan, planDocx, renderDocx } from "./docx.ts";
+import { DocxError, type DocxPlan, planDocx, renderDocx, scanDocx } from "./docx.ts";
 import { NameRewriter, rewriteSpans } from "./names.ts";
 import { recurrenceForms, TextScanner } from "./recur.ts";
 import { EntityMatcher, type ExtraForm, keepDomains, type Span } from "./text.ts";
@@ -509,7 +509,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         throw new ApplyError(`${input.path}: the spec has column rules for a DOCX file; column rules apply to tables only`);
       }
       try {
-        plans.push({ kind: "docx", input, docx: planDocx(input.bytes, spanner) });
+        plans.push({ kind: "docx", input, docx: planDocx(input.bytes) });
       } catch (e) {
         if (!(e instanceof DocxError)) throw e;
         skipped.push({ path: input.path, reason: `${e.message}; not written` });
@@ -569,13 +569,14 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   // Every column is decided: scan the rest of the text for patterns, entities and the values the
   // column pass (or an earlier map) pseudonymised.
   const forms = recurrenceForms(
-    plans.flatMap((p) => (p.kind === "text" ? [] : p.mapped)),
+    plans.flatMap((p) => (p.kind === "text" || p.kind === "docx" ? [] : p.mapped)),
     spec.entities,
     opts.map,
   );
   const scanner = new TextScanner(spec.entities, spec.patterns, keep, forms);
   for (const p of plans) {
     if (p.kind === "text") p.spans = scanner.free(p.text);
+    else if (p.kind === "docx") scanDocx(p.docx, (t) => scanner.free(t));
     else if (p.kind === "json") scanPending(p.pending, p.edits, scanner);
     else scanPending(p.pending, p.edits, scanner);
   }
@@ -662,6 +663,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         columns: [],
         entityReplacements: r.entityReplacements,
         patternReplacements: r.patternReplacements,
+        mappedReplacements: r.mappedReplacements,
         keptHosts: r.keptHosts,
         metadataReplacements: r.metadataReplacements,
         warnings: p.docx.warnings,

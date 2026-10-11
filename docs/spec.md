@@ -168,7 +168,8 @@ blinding a column. Rows above the header and the header row itself are treated a
 
 **Recurring values.** Once every column is decided, each value a column rule pseudonymised, and each
 value an earlier map holds, is replaced with the same pseudonym wherever else it appears: in text
-files, header and preamble rows, cells kept as text or under `keep`, and JSON strings and keys. The
+files, header and preamble rows, cells kept as text or under `keep`, JSON strings and keys, and DOCX free text (matched across runs
+like any other DOCX match). The
 value as written matches, and so does its canonical form when that differs by more than case ("Example
 Widgets" for "Example Widgets, Inc."). Matching is by whole token, with the entity case rules: a short
 all-capitals code only exactly, a single capitalised word only where the text is capitalised too,

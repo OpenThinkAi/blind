@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "columns": [
+    { "file": "staff.csv", "header": "Owner", "class": "person", "treatment": "blind", "confidence": 0.95, "source": "analyst" },
+    { "file": "assets.xlsx", "sheet": "Servers", "header": "Hostname", "class": "host", "treatment": "blind", "confidence": 0.9, "source": "heuristic" },
+    { "file": "assets.xlsx", "sheet": "Servers", "header": "Status", "class": "vocabulary", "treatment": "keep", "confidence": 1, "source": "human" },
+    { "file": "tickets.json", "jsonPath": "$.items[*].ref_code", "class": "unknown", "treatment": "value", "confidence": 0.4, "source": "analyst" }
+  ],
+  "entities": {
+    "person": [
+      { "canonical": "Avery Quill", "aliases": ["A. Quill", "Quill, Avery", "Aves"], "parts": ["Avery", "Quill"] }
+    ],
+    "org": [
+      { "canonical": "Example Widgets", "aliases": ["Example Widgets Ltd", "EXW"], "parts": [] }
+    ],
+    "host": [
+      { "canonical": "db01.example.com", "aliases": ["db01"], "parts": [] }
+    ]
+  },
+  "patterns": { "ip": true, "email": true, "host": true, "guid": true, "mac": false },
+  "questions": [
+    { "id": "q1", "text": "Values under ref_code look like internal project IDs. Hide them?", "options": ["blind", "keep"], "answer": null },
+    { "id": "q2", "text": "Is \"Aves\" a nickname for Avery Quill?", "options": ["yes", "no"], "answer": "yes" }
+  ]
+}

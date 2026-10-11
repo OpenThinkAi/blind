@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openthink.dev/blind/profile.schema.json",
+  "title": "blind corpus profile",
+  "description": "Statistics and short excerpts describing a corpus. The only thing a model ever sees. Every document-derived excerpt is at most 120 characters. See docs/spec.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "sampleCount", "files", "tables", "jsonKeys", "documents", "transcripts", "cooccurrence"],
+  "properties": {
+    "version": { "const": 1 },
+    "sampleCount": { "type": "integer", "minimum": 0 },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "format", "size"],
+        "properties": {
+          "path": { "$ref": "#/$defs/nonEmpty" },
+          "format": {
+            "enum": ["csv", "tsv", "json", "jsonl", "xlsx", "docx", "text", "markdown", "log", "vtt", "srt"]
+          },
+          "size": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "tables": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "headerRow", "columns"],
+        "properties": {
+          "file": { "$ref": "#/$defs/nonEmpty" },
+          "sheet": { "$ref": "#/$defs/excerpt" },
+          "headerRow": { "type": "integer", "minimum": 1 },
+          "columns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["header", "stats"],
+              "properties": {
+                "header": { "$ref": "#/$defs/excerpt" },
+                "stats": { "$ref": "#/$defs/stats" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "jsonKeys": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "path", "stats"],
+        "properties": {
+          "file": { "$ref": "#/$defs/nonEmpty" },
+          "path": { "$ref": "#/$defs/nonEmpty" },
+          "stats": { "$ref": "#/$defs/stats" }
+        }
+      }
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "outline", "sampleSentences"],
+        "properties": {
+          "file": { "$ref": "#/$defs/nonEmpty" },
+          "outline": { "$ref": "#/$defs/excerpts" },
+          "sampleSentences": { "$ref": "#/$defs/excerpts" }
+        }
+      }
+    },
+    "transcripts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "speakers", "sampleLines"],
+        "properties": {
+          "file": { "$ref": "#/$defs/nonEmpty" },
+          "speakers": { "$ref": "#/$defs/excerpts" },
+          "sampleLines": { "$ref": "#/$defs/excerpts" }
+        }
+      }
+    },
+    "cooccurrence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["a", "b", "shared"],
+        "properties": {
+          "a": { "$ref": "#/$defs/location" },
+          "b": { "$ref": "#/$defs/location" },
+          "shared": { "type": "integer", "minimum": 1 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "nonEmpty": { "type": "string", "minLength": 1 },
+    "excerpt": { "type": "string", "maxLength": 120 },
+    "excerpts": { "type": "array", "items": { "$ref": "#/$defs/excerpt" } },
+    "ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+    "stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "distinctRatio", "digitRatio", "dictionaryRatio", "meanLength", "detectorRates", "samples"],
+      "properties": {
+        "count": { "type": "integer", "minimum": 0 },
+        "distinctRatio": { "$ref": "#/$defs/ratio" },
+        "digitRatio": { "$ref": "#/$defs/ratio" },
+        "dictionaryRatio": { "$ref": "#/$defs/ratio" },
+        "meanLength": { "type": "number", "minimum": 0 },
+        "detectorRates": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ip", "email", "host", "guid", "mac"],
+          "properties": {
+            "ip": { "$ref": "#/$defs/ratio" },
+            "email": { "$ref": "#/$defs/ratio" },
+            "host": { "$ref": "#/$defs/ratio" },
+            "guid": { "$ref": "#/$defs/ratio" },
+            "mac": { "$ref": "#/$defs/ratio" }
+          }
+        },
+        "samples": { "$ref": "#/$defs/excerpts" }
+      }
+    },
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file"],
+      "oneOf": [{ "required": ["header"] }, { "required": ["jsonPath"] }],
+      "properties": {
+        "file": { "$ref": "#/$defs/nonEmpty" },
+        "sheet": { "$ref": "#/$defs/excerpt" },
+        "header": { "$ref": "#/$defs/excerpt" },
+        "jsonPath": { "$ref": "#/$defs/nonEmpty" }
+      }
+    }
+  }
+}

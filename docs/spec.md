@@ -151,8 +151,8 @@ plan (exit 2) before anything is profiled or sent.
 `blind apply <inputs> -o <out>` reads `.blind/spec.json` and `.blind/salt` and refuses (exit 2,
 nothing written) if either is missing or the spec is invalid. Spec `file` values are paths relative
 to an input directory, or the file name for a file named directly. This release handles CSV/TSV,
-JSON and JSONL (`.json`, `.jsonl`, `.ndjson`) and text (`.txt`, `.md`, `.log`); any other file is
-listed and not written (exit 1).
+JSON and JSONL (`.json`, `.jsonl`, `.ndjson`), text (`.txt`, `.md`, `.log`) and DOCX (`.docx`);
+any other file is listed and not written (exit 1).
 
 **Table columns.** The header row is found the same way `blind profile` finds it, so spec headers always match: the earliest of the first 20 rows that fills more than half the table's width and is mostly non-numeric text, or row 1 if no row qualifies.
 
@@ -214,6 +214,28 @@ how the form is written:
 stays, `badvendor.example.net` does not. Terms without a dot never keep a host, and the keep list
 does not keep email addresses. Each file's report counts the hosts kept this way. Without a
 `blind.toml` no host is kept; an invalid one is refused (exit 2).
+
+**DOCX.** Column rules do not apply (a rule naming a DOCX file is an error). Every part is
+rewritten at the XML level, so everything not blinded is copied byte for byte:
+
+- Text is free text, matched per paragraph across runs: Word splits `Acme Corp` into runs such as
+  `Ac` + `me Corp`, and the match is still found. Its pseudonym goes into the run where the match
+  starts and the rest of the match is removed from the later runs, so the number of runs, their
+  formatting and the paragraphs are unchanged. A tab, break, field character or other object
+  between runs separates words.
+- This covers the body, tables, headers, footers, footnotes, endnotes, comments, text boxes, chart
+  labels and field instructions (`w:instrText`, matched apart from the visible text).
+- Tracked changes: a paragraph with insertions or deletions is matched both as accepted and as
+  rejected, and every match from either reading is replaced, including in deleted text
+  (`w:delText`).
+- Authors and initials on comments and revisions (`w:author`, `w:initials`), people and presence
+  IDs, `dc:creator`, `cp:lastModifiedBy`, Manager and Company are replaced as a whole with a
+  `Person_`, `Id_` or `Org_` pseudonym even when the spec does not list them. Other document
+  properties (core, app, custom), drawing names and alt text, form-field and content-control text,
+  document variables, mail-merge strings and external hyperlink targets are free text.
+- Images are copied unchanged and listed as a warning. A package that cannot be read, has a part
+  this handler does not know that holds text, or embeds another file (an OLE object, a chart's
+  workbook, macros) is listed and not written (exit 1).
 
 **File and folder names.** Every folder name and every file name (without its extension) in the
 output tree is rewritten like free text: enabled patterns, spec entities, and also every cell value

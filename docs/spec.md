@@ -405,9 +405,10 @@ up to three layers, mechanical, semantic, then model; the report lists the layer
   class `model:<reason>`, located at the quote (or at the line when the quote is not on it; under
   `profile-only`, in the file the token names, without a position when the quote is not found). The
   model can only add: an empty list, or any claim that the output is clean, changes no finding and
-  no status. A reply that fails the schema twice, names a line or file that was not sent, or a call
-  that fails, stops the layer and is itself a candidate (`model:unchecked`, file `(model)`) saying
-  which chunks were not checked, so the report is not `clean`; the other layers' findings stand. A
+  no status. A reply that names a line or file that was not sent is rejected whole, and that chunk
+  is not checked; a reply that fails the schema twice, or a call that fails, stops the layer. Each
+  is itself a candidate (`model:unchecked`, file `(model)`) saying which chunks were not checked,
+  so the report is not `clean`; the other layers' findings stand. A
   call refused before sending (the privacy mode, endpoint or key setting) exits 3 and nothing is
   printed. The JSON report's `model` field gives the backend, model, mode, what was sent, the
   number of chunks and accepted answers, and what was not sent.

@@ -1,6 +1,7 @@
 import pkg from "../package.json" with { type: "json" };
 import { processPlanIO, runPlan } from "./analyst/plan.ts";
 import { processApplyIO, runApply } from "./apply.ts";
+import { processAuditIO, runAudit } from "./audit/command.ts";
 import { processIO, runInit } from "./init.ts";
 import { runProfile } from "./profile/command.ts";
 
@@ -20,6 +21,7 @@ const HANDLERS: Partial<Record<(typeof COMMANDS)[number]["name"], (args: string[
   profile: (args) => runProfile(args, processIO()),
   plan: (args) => runPlan(args, processPlanIO()),
   apply: (args) => runApply(args, processApplyIO()),
+  audit: (args) => runAudit(args, processAuditIO()),
 };
 
 export function helpText(): string {

@@ -9,7 +9,7 @@ test("help lists every planned command", () => {
 });
 
 test("stub commands exit 2", async () => {
-  expect(await main(["audit"])).toBe(2);
+  expect(await main(["bench"])).toBe(2);
 });
 
 test("init is wired and no longer listed as not implemented", async () => {

@@ -64,7 +64,9 @@ One rule per table column or JSON key path. An array, possibly empty. Each rule:
 | `source` | `analyst` \| `human` \| `heuristic` | yes | Who wrote the rule: the model analyst, you, or the built-in heuristics. |
 
 A rule sets exactly one of `header` and `jsonPath`; neither, or both, is an error. Two rules for
-the same column (same `file`, `sheet`, and `header` or `jsonPath`) are an error: keep one.
+the same column (same `file`, `sheet`, and `header` or `jsonPath`) are an error: keep one. A rule
+with class `unknown` cannot use treatment `keep`: an undecided column never passes through
+unchanged. To keep it, classify it (for example as `vocabulary`).
 
 ### `entities`
 

@@ -212,6 +212,13 @@ export function validateSpec(value: unknown): Validation<Spec> {
 
   const targets = new Map<string, number>();
   spec.columns.forEach((c, i) => {
+    // Fail closed: "unknown" means nobody decided, so it may never pass through unchanged.
+    if (c.class === "unknown" && c.treatment === "keep") {
+      issues.push({
+        path: `$.columns[${i}].treatment`,
+        message: `class "unknown" cannot use treatment "keep"; use "value" or "blind", or classify the column (e.g. "vocabulary") to keep it`,
+      });
+    }
     const key = locationKey(c);
     const first = targets.get(key);
     if (first !== undefined) {

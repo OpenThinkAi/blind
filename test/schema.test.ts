@@ -42,6 +42,7 @@ describe("spec", () => {
     ["column treatment", (d) => (d.columns[1].treatment = "hide"), "$.columns[1].treatment", /must be one of "blind", "keep", "value"/],
     ["column confidence", (d) => (d.columns[0].confidence = 1.5), "$.columns[0].confidence", /must be <= 1/],
     ["column confidence type", (d) => (d.columns[0].confidence = "high"), "$.columns[0].confidence", /must be number, got string/],
+    ["unknown column kept", (d) => (d.columns[3].treatment = "keep"), "$.columns[3].treatment", /class "unknown" cannot use treatment "keep"/],
     ["column source", (d) => (d.columns[0].source = "model"), "$.columns[0].source", /must be one of/],
     ["column unknown field", (d) => (d.columns[0].note = "x"), "$.columns[0].note", /unknown field/],
     ["column missing file", (d) => delete d.columns[0].file, "$.columns[0].file", /is required/],

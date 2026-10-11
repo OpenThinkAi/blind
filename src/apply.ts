@@ -3,14 +3,14 @@
 // writes the map (0600) and then the blinded files, and prints a report per
 // file. Nothing is written unless the spec, the salt and every input check out.
 
-import { lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { type ApplyResult, ApplyError, applySpec, type FileReport, type InputFile } from "./engine/apply.ts";
 import { type BlindMap, MapError, readMap, writeMap } from "./engine/map.ts";
 import { MIN_SALT_BYTES, PseudonymError } from "./engine/pseudonym.ts";
 import { BLIND_DIR, SALT_FILE } from "./init.ts";
-import { POLICY_FILE } from "./policy.ts";
+import { loadPolicy, POLICY_FILE, PolicyError } from "./policy.ts";
 import type { Spec } from "./schema.ts";
 import { parseSpec, SchemaError } from "./validate.ts";
 
@@ -30,7 +30,9 @@ const APPLY_HELP = [
   "Applies the saved spec (.blind/spec.json) to the inputs and writes blinded copies under <out>.",
   "Inputs are files or directories; spec rules name files by their path relative to the input",
   "directory (or by file name for a file input). Handles CSV/TSV, JSON/JSONL (.json, .jsonl,",
-  ".ndjson) and text (.txt, .md, .log); other files are reported and not written.",
+  ".ndjson) and text (.txt, .md, .log); other files are reported and not written. File and",
+  "folder names are blinded too; the report lists each renamed file. Host names under a domain",
+  "in the blind.toml keep list are kept.",
   "",
   "Options:",
   "  -o, --out <dir>       Output directory (must not overlap an input)",
@@ -129,6 +131,7 @@ export function renderReport(result: ApplyResult): string {
     if (f.delimiter !== undefined) head.push(`${DELIMITER_NAMES[f.delimiter] ?? "other"}-delimited`);
     if (f.headerRow !== undefined) head.push(f.noHeader ? "no header row found, row 1 used" : `header row ${f.headerRow}`);
     lines.push(`${f.path} (${head.join(", ")})${f.changed ? "" : ": unchanged"}`);
+    if (f.outputPath !== f.path) lines.push(`  written as ${f.outputPath}`);
     for (const c of f.columns) {
       const label = c.jsonPath !== undefined ? `key ${JSON.stringify(c.jsonPath)}` : c.header === "" ? `column ${c.index + 1} (blank header)` : JSON.stringify(c.header);
       const unit = c.jsonPath !== undefined ? "value" : "cell";
@@ -145,6 +148,9 @@ export function renderReport(result: ApplyResult): string {
     }
     if (f.entityReplacements + f.patternReplacements > 0) {
       lines.push(`  free text: ${f.entityReplacements} entity and ${f.patternReplacements} pattern replacements`);
+    }
+    if (f.keptHosts > 0) {
+      lines.push(`  kept ${f.keptHosts} host name${f.keptHosts === 1 ? "" : "s"} under a domain in the policy keep list`);
     }
   }
   return lines.length > 0 ? `${lines.join("\n")}\n` : "";
@@ -178,6 +184,8 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
 
   try {
     const spec = loadSpec(io.cwd);
+    // The keep list's domains keep vendor host names as written. Without a policy nothing is kept.
+    const keep = existsSync(join(io.cwd, POLICY_FILE)) ? loadPolicy(io.cwd).keep.terms : [];
     const salt = readSecret(join(io.cwd, BLIND_DIR, SALT_FILE), "salt", "run `blind init` first");
     if (salt.length < MIN_SALT_BYTES) throw new Refusal(`${join(io.cwd, BLIND_DIR, SALT_FILE)} is too short; re-run \`blind init --force\``);
 
@@ -209,7 +217,7 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
       if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw new Refusal(`${mapPath}: cannot read the map`);
     }
 
-    const result = applySpec(files, spec, { salt, map });
+    const result = applySpec(files, spec, { salt, map, keep });
 
     // The map first: if writing the outputs fails part-way, what was written can still be reversed.
     try {
@@ -242,7 +250,7 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
     }
     return 0;
   } catch (e) {
-    if (e instanceof Refusal || e instanceof SchemaError || e instanceof ApplyError || e instanceof MapError || e instanceof PseudonymError) {
+    if (e instanceof Refusal || e instanceof PolicyError || e instanceof SchemaError || e instanceof ApplyError || e instanceof MapError || e instanceof PseudonymError) {
       io.err.write(`blind apply: ${e.message}\nnothing was written\n`);
       return 2;
     }

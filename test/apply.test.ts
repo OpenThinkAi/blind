@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { runApply } from "../src/apply.ts";
+import { defaultPolicy, renderPolicy } from "../src/policy.ts";
 import { helpText } from "../src/cli.ts";
 
 // Synthetic corpus only.
@@ -143,6 +144,17 @@ describe("blind apply", () => {
       await refuses(["in", "-o", "out"], /cannot use treatment "keep"/);
     });
 
+    test("an invalid blind.toml", async () => {
+      writeFileSync(join(dir, "blind.toml"), "[keep\n");
+      await refuses(["in", "-o", "out"], /blind\.toml: sensitive must be a table/);
+    });
+
+    test("two inputs whose blinded names coincide", async () => {
+      writeFileSync(join(dir, "in", "Avery.txt"), "a\n");
+      writeFileSync(join(dir, "in", "Avery Quill.txt"), "b\n");
+      await refuses(["in", "-o", "out"], /would both be written as Person_[0-9A-F]{4}\.txt/);
+    });
+
     test("missing salt", async () => {
       rmSync(join(dir, ".blind", "salt"));
       await refuses(["in", "-o", "out"], /salt not found; run `blind init`/);
@@ -179,6 +191,26 @@ describe("blind apply", () => {
     test("map inside an input", async () => {
       await refuses(["in", "-o", "out", "--map-out", "in/map.json"], /inside an input/);
     });
+  });
+
+  test("file and folder names are blinded and the report maps them; keep-list hosts stay", async () => {
+    const policy = defaultPolicy();
+    policy.keep.terms = ["vendor.example.net"];
+    writeFileSync(join(dir, "blind.toml"), renderPolicy(policy));
+    mkdirSync(join(dir, "in", "db01.example.com"));
+    writeFileSync(join(dir, "in", "db01.example.com", "Avery Quill.md"), "Pulled from api.vendor.example.net and db02.example.com.\n");
+    const r = await apply("in", "-o", "out");
+    expect(r.code).toBe(0);
+    const line = r.out.split("\n").find((l) => l.startsWith("  written as ")) as string;
+    const renamed = line.slice("  written as ".length);
+    expect(renamed).toMatch(/^[a-z0-9.-]+\/Person_[0-9A-F]{4}\.md$/);
+    expect(renamed).not.toContain("db01");
+    expect(r.out).toContain("db01.example.com/Avery Quill.md (text, utf8)");
+    const body = read("out", ...renamed.split("/"));
+    expect(body).toContain("api.vendor.example.net");
+    expect(body).not.toContain("db02.example.com");
+    expect(r.out).toContain("kept 1 host name under a domain in the policy keep list");
+    expect(existsSync(join(dir, "out", "db01.example.com"))).toBe(false);
   });
 
   test("apply is wired into the CLI", () => {

@@ -1,4 +1,5 @@
 import pkg from "../package.json" with { type: "json" };
+import { processIO, runInit } from "./init.ts";
 
 export const COMMANDS = [
   { name: "init", usage: "init [dir]", summary: "Write blind.toml (policy) and .blind/ (salt)" },
@@ -11,9 +12,13 @@ export const COMMANDS = [
   { name: "bench", usage: "bench <kit>", summary: "Evaluation harness on a synthetic kit" },
 ] as const;
 
+const HANDLERS: Partial<Record<(typeof COMMANDS)[number]["name"], (args: string[]) => Promise<number>>> = {
+  init: (args) => runInit(args, processIO()),
+};
+
 export function helpText(): string {
   const width = Math.max(...COMMANDS.map((c) => c.usage.length));
-  const rows = COMMANDS.map((c) => `  ${c.usage.padEnd(width)}  ${c.summary} (not implemented)`);
+  const rows = COMMANDS.map((c) => `  ${c.usage.padEnd(width)}  ${c.summary}${Object.hasOwn(HANDLERS, c.name) ? "" : " (not implemented)"}`);
   return [
     `blind ${pkg.version}`,
     "",
@@ -39,6 +44,8 @@ export async function main(argv: string[]): Promise<number> {
     process.stdout.write(`${pkg.version}\n`);
     return 0;
   }
+  const handler = Object.hasOwn(HANDLERS, cmd) ? HANDLERS[cmd as keyof typeof HANDLERS] : undefined;
+  if (handler !== undefined) return handler(argv.slice(1));
   if (COMMANDS.some((c) => c.name === cmd)) {
     process.stderr.write(`blind ${cmd}: not implemented\n`);
     return 2;

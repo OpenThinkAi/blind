@@ -111,7 +111,9 @@ nickname as last editor in `docProps/core.xml`.
 **`meetings/renewal-call.docx`** and **`meetings/renewal-call.vtt`**: one Teams meeting, saved
 both ways. The Word copy has a speaker-and-time paragraph per turn (`Marisol Penhallow   0:17`,
 every other one split across two runs, as Word does after an edit) followed by the turn's text; the
-WebVTT copy has a GUID cue identifier and a voice tag per turn. The turns mention people in all
+WebVTT copy has a voice tag per turn. It has no cue identifiers: Teams' cue GUIDs are replaced with
+GUIDs drawn from the salt, whose groups can be all digits and equal a real 4-digit ID, which would
+fail the bench at random (a known engine gap). The turns mention people in all
 their forms and organisations by name, short name and acronym.
 
 **`exports/scopes.json`**: a scope list with snake_case keys, `scope_id` hex IDs (8 characters),

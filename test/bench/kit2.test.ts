@@ -138,7 +138,6 @@ describe("synthetic kit v2", () => {
     for (let i = 1; i < paras.length; i += 2) docTurns.push(`${(paras[i] as string).replace(/ {3}\d+:\d{2}$/, "")}|${paras[i + 1]}`);
     expect(docTurns).toEqual(vttTurns);
     expect(doc).toMatch(/<w:p><w:r><w:t>[^<]{4}<\/w:t><\/w:r><w:r><w:t>/); // a speaker name split across runs
-    expect(vtt).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}\/\d+-0$/m);
   });
 
   test("the JSON scope list has snake_case keys, hex IDs and 4-digit IDs written as strings", () => {
@@ -244,4 +243,25 @@ describe("blind bench on kit v2", () => {
     const where = new Set(r.report.leaks.items.map((l) => `${l.file} ${l.part} ${l.class}`));
     expect(where).toEqual(new Set([`${CONTAINER_LOG}  id`, `${ACCESS_XLSX} xl/sharedStrings.xml id`, `${ACCESS_XLSX} xl/sharedStrings.xml org`]));
   }, BENCH_TIMEOUT);
+});
+
+// Engine gap found by kit v2 (why its WebVTT has no cue GUIDs): a Teams cue GUID is replaced with a
+// GUID drawn from the salt, and a 4-character group of it can come out all digits and equal a real
+// 4-digit ID elsewhere in the corpus, which then reads as that ID left in the output. Numeric IDs
+// avoid every real value (AGT-1785); GUID groups do not yet. Over 200 fixed salts some output always
+// collides today; once GUID pseudonyms avoid real values none will, and this must become `test`.
+test.failing("GUID pseudonyms never reproduce a real 4-digit ID of the corpus as one of their groups", () => {
+  const v1 = generateKit(DEFAULT_SEED);
+  const ids = new Set(v1.oracle.values.filter((v) => v.class === "id" && /^\d{4}$/.test(v.value)).map((v) => v.value));
+  const hex = (n: number, i: number) => createHash("sha256").update(`cue ${i}`).digest("hex").slice(0, n);
+  const vtt = `WEBVTT\n\n${Array.from({ length: 60 }, (_, i) => `${hex(8, i)}-${hex(4, i + 100)}-4${hex(3, i + 200)}-8${hex(3, i + 300)}-${hex(12, i + 400)}/${i + 10}-0\n00:00:${String(i % 60).padStart(2, "0")}.000 --> 00:00:${String(i % 60).padStart(2, "0")}.500\n<v Marisol Penhallow>Next item.</v>`).join("\n\n")}\n`;
+  const inputs = [...v1.files.map((f) => ({ path: f.path, bytes: kitFileBytes(f) })), { path: CALL_VTT, bytes: new TextEncoder().encode(vtt) }];
+  const collisions: number[] = [];
+  for (let salt = 0; salt < 200; salt++) {
+    const r = applySpec(inputs, v1.spec, { salt: Uint8Array.from({ length: 32 }, (_, i) => (salt * 31 + i) & 0xff) });
+    const out = new TextDecoder().decode(r.outputs.find((o) => o.path === CALL_VTT)?.bytes);
+    const groups = [...out.matchAll(/\b[0-9a-f]{8}-([0-9a-f]{4})-([0-9a-f]{4})-([0-9a-f]{4})-[0-9a-f]{12}\b/gi)].flatMap((m) => [m[1], m[2], m[3]]);
+    if (groups.some((g) => ids.has(g as string))) collisions.push(salt);
+  }
+  expect(collisions).toEqual([]);
 });

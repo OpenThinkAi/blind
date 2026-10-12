@@ -711,8 +711,8 @@ describe("blind plan --no-model", () => {
 test("the review shows blind.toml [patterns] switches over the spec's, naming both", () => {
   const spec: Spec = { version: 1, columns: [], entities: {}, patterns: { ip: false, email: true, host: false, guid: true, mac: false }, questions: [] };
   const line = (text: string) => text.split("\n").find((l) => l.startsWith("patterns:"));
-  expect(line(renderSpec(spec))).toBe("patterns: ip off, email on, host off, guid on, mac off, phone on, address off, secret off");
+  expect(line(renderSpec(spec))).toBe("patterns: ip off, email on, host off, guid on, mac off, phone on, card off, address off, secret off");
   expect(line(renderSpec(spec, { ip: true, host: false, email: false }))).toBe(
-    "patterns: ip on (blind.toml; spec: off), email off (blind.toml; spec: on), host off, guid on, mac off, phone on, address off, secret off",
+    "patterns: ip on (blind.toml; spec: off), email off (blind.toml; spec: on), host off, guid on, mac off, phone on, card off, address off, secret off",
   );
 });

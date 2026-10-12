@@ -95,6 +95,8 @@ export type WbCell = string | number;
 export interface WbSheet {
   name: string;
   rows: WbCell[][];
+  /** The sheet's visibility; absent is visible. */
+  state?: "hidden" | "veryHidden";
   /** Internal hyperlinks: cell reference to a location such as `'Sheet'!A1`, with display text. */
   hyperlinks?: { ref: string; location: string; display: string }[];
 }
@@ -199,7 +201,7 @@ export function buildWorkbook(wb: Workbook): Uint8Array {
       name: "xl/workbook.xml",
       data:
         `${DECL}<workbook xmlns="${MAIN}" xmlns:r="${REL}"><sheets>` +
-        wb.sheets.map((s, i) => `<sheet name="${esc(s.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("") +
+        wb.sheets.map((s, i) => `<sheet name="${esc(s.name)}"${s.state === undefined ? "" : ` state="${s.state}"`} sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("") +
         "</sheets>" +
         (wb.definedNames.length ? `<definedNames>${wb.definedNames.map((d) => `<definedName name="${esc(d.name)}">${esc(d.formula)}</definedName>`).join("")}</definedNames>` : "") +
         (pivot ? `<pivotCaches><pivotCache cacheId="1" r:id="rId${n + 2}"/></pivotCaches>` : "") +

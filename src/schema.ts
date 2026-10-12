@@ -22,15 +22,17 @@ export type ColumnSource = Source | "policy";
 
 /** What a `redact` treatment writes in place of each non-empty value. */
 export const REDACTED_VALUE = "REDACTED";
-export type PatternName = "ip" | "email" | "host" | "guid" | "mac" | "phone" | "secret" | "address";
-export type Patterns = Record<Exclude<PatternName, "phone" | "secret" | "address">, boolean> & { phone?: boolean; secret?: boolean; address?: boolean };
+export type PatternName = "ip" | "email" | "host" | "guid" | "mac" | "phone" | "card" | "secret" | "address";
+export type Patterns = Record<Exclude<PatternName, "phone" | "card" | "secret" | "address">, boolean> & { phone?: boolean; card?: boolean; secret?: boolean; address?: boolean };
 
 /**
  * Whether a pattern is on. `phone`, `secret` and `address` are absent from specs written before they existed:
  * absent `phone` means on (fail closed); absent `secret` and `address` mean off, so an older spec keeps its output
- * (blind init's `[patterns] secret = true` turns it on whatever the spec says).
+ * (blind init's `[patterns] secret = true` turns it on whatever the spec says). `card` follows `secret`
+ * unless it is set itself (blind.toml's `[patterns] card`, or the spec's own).
  */
-export const patternOn = (patterns: Patterns, name: PatternName): boolean => patterns[name] ?? name === "phone";
+export const patternOn = (patterns: Patterns, name: PatternName): boolean =>
+  patterns[name] ?? (name === "phone" ? true : name === "card" ? patterns.secret === true : false);
 
 /** Where a value lives: a table column (`header`, optionally on a `sheet`) or a JSON key path. */
 export type Location =
@@ -87,7 +89,7 @@ export interface ProfileFile {
 }
 
 /** Profile detectors: the spec's shape patterns plus `numericId`, which has no free-text pattern. */
-export type DetectorName = Exclude<PatternName, "phone" | "secret"> | "numericId";
+export type DetectorName = Exclude<PatternName, "phone" | "card" | "secret"> | "numericId";
 
 /** `address` is absent from profiles written before it existed. */
 export type DetectorRates = Record<Exclude<DetectorName, "address">, number> & { address?: number };

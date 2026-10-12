@@ -141,7 +141,7 @@ describe("tables", () => {
   });
 });
 
-const NONE: Record<PatternName, boolean> = { ip: false, email: false, host: false, guid: false, mac: false, phone: false, address: false, secret: false };
+const NONE: Record<PatternName, boolean> = { ip: false, email: false, host: false, guid: false, mac: false, phone: false, card: false, address: false, secret: false };
 const spec = (): Spec => ({ version: 1, columns: [], entities: {}, patterns: NONE, questions: [] });
 const SALT = new Uint8Array(32).fill(5);
 const enc = (s: string) => new TextEncoder().encode(s);

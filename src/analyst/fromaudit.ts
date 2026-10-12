@@ -38,7 +38,7 @@ export class FromAuditError extends Error {
 /** Classes an accepted candidate may become: every entity class but vocabulary, which is what a rejection writes. */
 export type AcceptClass = Exclude<EntityClassName, "unknown" | "vocabulary" | "secret">;
 export const ACCEPT_CLASSES: readonly AcceptClass[] = ["person", "org", "host", "email", "id", "location"];
-const PATTERN_NAMES: readonly PatternName[] = ["email", "ip", "mac", "guid", "phone", "address", "host", "secret"];
+const PATTERN_NAMES: readonly PatternName[] = ["email", "ip", "mac", "guid", "phone", "card", "address", "host", "secret"];
 
 type Source = "entity" | "map" | "pattern" | "spec" | "scan" | "semantic" | "model";
 const SOURCES: readonly Source[] = ["entity", "map", "pattern", "spec", "scan", "semantic", "model"];
@@ -305,7 +305,7 @@ const SEMANTIC_CLASS: Record<string, AcceptClass | null> = {
   "semantic:phrase": null,
 };
 // A surviving secret is accepted as an `id` entity: the value is pseudonymised from then on.
-const PATTERN_CLASS: Record<PatternName, AcceptClass> = { email: "email", ip: "host", host: "host", guid: "id", mac: "id", phone: "id", address: "location", secret: "id" };
+const PATTERN_CLASS: Record<PatternName, AcceptClass> = { email: "email", ip: "host", host: "host", guid: "id", mac: "id", phone: "id", card: "id", address: "location", secret: "id" };
 
 /** The class a finding suggests for its value, or null when only the human can say. */
 function suggestion(f: ReportFinding): AcceptClass | null {
@@ -329,7 +329,7 @@ function suggestion(f: ReportFinding): AcceptClass | null {
 /** The shape pattern the whole value matches, or null. */
 export function shapeOf(value: string): PatternName | null {
   for (const name of PATTERN_NAMES) {
-    const only = { ip: false, email: false, host: false, guid: false, mac: false, phone: false, address: false, secret: false, [name]: true };
+    const only = { ip: false, email: false, host: false, guid: false, mac: false, phone: false, card: false, address: false, secret: false, [name]: true };
     const [s] = findPatternSpans(value, only);
     if (s !== undefined && s.start === 0 && s.end === value.length) return name;
   }
@@ -450,8 +450,8 @@ export function keptValues(root: string, spec: Spec, terms: readonly string[]): 
 
 /** Why `--accept-leaks` leaves a value out, or null when it is for the spec: it is not sensitive, or the owner keeps it. */
 function notSensitive(c: Candidate, vocabulary: ReadonlySet<string>, kept: KeptValues): string | null {
-  // A secret (a password, gate code, safe combination) is sensitive whatever it looks like: never skipped.
-  if (c.kinds.includes("pattern:secret")) return null;
+  // A secret (a password, gate code, safe combination) or a card number is sensitive whatever it looks like: never skipped.
+  if (c.kinds.includes("pattern:secret") || c.kinds.includes("pattern:card")) return null;
   const v = c.value.trim();
   const f = fold(v);
   if (kept.terms.has(f)) return "a [keep].terms entry: kept by policy";

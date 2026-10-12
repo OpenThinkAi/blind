@@ -2,7 +2,7 @@
 // worksheets): what a spec rule, or its absence, does to a column's cells.
 
 import type { ColumnRule, EntityClassName } from "../schema.ts";
-import type { PseudoClass } from "./canonical.ts";
+import { type PseudoClass, phoneDigits } from "./canonical.ts";
 import { isPersonColumn } from "./prose.ts";
 import type { ExtraForm } from "./text.ts";
 import { type ColumnContext, type ColumnStats, columnStats, isIdentifierLike, THRESHOLDS } from "./stats.ts";
@@ -65,10 +65,37 @@ export interface Decision {
 export function decide(rule: ColumnRule | undefined, values: readonly string[], ctx: ColumnContext = {}, unruled: ColumnDefault = "fallback"): Decision {
   const planned = rule === undefined ? "heuristic" : ruleAction(rule);
   if (planned !== "heuristic") return { action: planned, stats: undefined, outcome: outcomeOf(planned, undefined) };
-  if (unruled === "scan") return { action: { kind: "free" }, stats: undefined, outcome: "unknown-scanned" };
+  // A column of phone numbers, bare ones among them, is not free text: the free-text scanner cannot tell
+  // a lone bare digit run from an accession number, but the column can (AGT-1848).
+  const phones = isPhoneColumn(values);
+  if (unruled === "scan") {
+    return phones
+      ? { action: { kind: "pseudo", cls: "id" }, stats: undefined, outcome: "unknown-pseudonymised" }
+      : { action: { kind: "free" }, stats: undefined, outcome: "unknown-scanned" };
+  }
   const stats = columnStats(values, ctx);
+  if (!isIdentifierLike(stats) && phones) return { action: { kind: "pseudo", cls: "id" }, stats, outcome: "unknown-pseudonymised" };
   const action: ColumnAction = isIdentifierLike(stats) ? { kind: "pseudo", cls: isPersonColumn(values) ? "person" : "value" } : { kind: "free" };
   return { action, stats, outcome: outcomeOf(action, stats) };
+}
+
+// A bare run of NANP digits: ten, or one and ten, the area code and exchange starting 2-9.
+const BARE_NANP_RE = /^1?[2-9]\d{2}[2-9]\d{6}$/;
+
+/**
+ * Every non-empty value is a whole phone number, at least two of them, and at least one has
+ * separators or a plus sign: a column of phones in which a bare 10-digit number is a phone too. A
+ * column of bare digit runs alone (accession or order numbers) is not one.
+ */
+export function isPhoneColumn(values: readonly string[]): boolean {
+  const filled = values.map((v) => v.trim()).filter((v) => v !== "");
+  if (filled.length < 2) return false;
+  let formatted = 0;
+  for (const v of filled) {
+    if (phoneDigits(v) !== undefined) formatted++;
+    else if (!BARE_NANP_RE.test(v)) return false;
+  }
+  return formatted > 0;
 }
 
 /** A column whose cell values are held whole on purpose (`keep`, `scan`, or the `scan` default): the fallback never pseudonymises them elsewhere. */

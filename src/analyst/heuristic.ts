@@ -22,7 +22,7 @@ const DETECTOR_CLASS: [DetectorName, SensitiveClass][] = [
   ["numericId", "id"],
 ];
 
-const PATTERN_CLASS: Record<PatternName, SensitiveClass> = { ip: "host", email: "email", host: "host", guid: "id", mac: "host", phone: "id", address: "location", secret: "secret" };
+const PATTERN_CLASS: Record<PatternName, SensitiveClass> = { ip: "host", email: "email", host: "host", guid: "id", mac: "host", phone: "id", card: "secret", address: "location", secret: "secret" };
 
 /** Every column and JSON key the profile describes, with its stats, in profile order. */
 export function profileLocations(profile: Profile): { loc: Location; stats: ValueStats }[] {

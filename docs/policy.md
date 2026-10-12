@@ -350,13 +350,14 @@ wins over the spec's `patterns` in both directions, every run, without editing
 | `host` | `true` or `false` | host names |
 | `guid` | `true` or `false` | GUIDs |
 | `mac` | `true` or `false` | MAC addresses |
-| `phone` | `true` or `false` | phone numbers (on when the spec says nothing: a spec written before `phone` existed has it on) |
+| `phone` | `true` or `false` | phone numbers, including `/`, `?` and Unicode-dash separators and bare 10-digit numbers that a nearby phone word or relation vouches for (on when the spec says nothing: a spec written before `phone` existed has it on) |
 | `address` | `true` or `false` | street addresses: a house number, street name and suffix, then an optional unit and `City ST ZIP` (off when the spec says nothing; `blind plan` turns it on when `location` is sensitive) |
+| `card` | `true` or `false` | payment card numbers (13-19 digits, a card prefix and a valid Luhn checksum), written as `REDACTED` (follows `secret` when unset: on whenever `secret` is on) |
 | `secret` | `true` or `false` | passwords, keys and tokens, written as `REDACTED` (off when the spec says nothing: a spec written before `secret` existed has it off) |
 
 `blind init` writes `ip = true`, `host = true` and `secret = true`, so addresses, host names and
 credential-shaped tokens in free text are replaced even when their class is not one of
-`[sensitive] classes`, and leaves the other four commented out (the spec decides). A `blind.toml` without the table behaves as before: the spec
+`[sensitive] classes`, and leaves the others commented out (the spec decides). A `blind.toml` without the table behaves as before: the spec
 decides every pattern. The [`address` pattern](#the-address-pattern) is described below. `blind plan` and `blind run` show the patterns in force, marking one that
 blind.toml changed: `ip on (blind.toml; spec: off)`. The spec file itself is never changed. A
 pattern turned off finds nothing new, but a value an earlier run already replaced is still in the

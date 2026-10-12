@@ -501,19 +501,19 @@ function scanView(view: View, ctx: Context, isName: boolean): Hit[] {
   }
   for (const s of ascii ? patternSpans(text, ctx, isName) : []) {
     if (isPseudonym(s.value, ctx.map) || masked(s.start, s.end) || onlyPseudonyms(s.start, s.end)) continue;
-    const name = patternName(s.value, ctx.spec.patterns);
+    const name = s.pattern ?? patternName(s.value, ctx.spec.patterns);
     push(s.start, s.end, { class: `pattern:${name}`, source: "pattern", severity: "leak", reason: `${name} pattern match that is not a pseudonym` });
   }
   return hits;
 }
 
-const PATTERN_NAMES: readonly PatternName[] = ["email", "ip", "mac", "guid", "phone", "address", "host", "secret"];
+const PATTERN_NAMES: readonly PatternName[] = ["email", "ip", "mac", "guid", "phone", "card", "address", "host", "secret"];
 
 /** Which enabled pattern matches the whole value (the span itself only records the pseudonym class). */
 function patternName(value: string, patterns: Patterns): PatternName | "pattern" {
   for (const name of PATTERN_NAMES) {
     if (!patternOn(patterns, name)) continue;
-    const only = { ip: false, email: false, host: false, guid: false, mac: false, phone: false, address: false, secret: false, [name]: true };
+    const only = { ip: false, email: false, host: false, guid: false, mac: false, phone: false, card: false, address: false, secret: false, [name]: true };
     const [s] = findPatternSpans(value, only);
     if (s !== undefined && s.start === 0 && s.end === value.length) return name;
   }
@@ -1033,7 +1033,7 @@ export function auditTree(entries: readonly TreeEntry[], spec: Spec, map: BlindM
     index: new NeedleIndex(buildNeedles(spec, map, keep)),
     keep: keepDomains(keep),
     keepTerms: new Set(keep.map(fold)),
-    shapes: { ...spec.patterns, secret: false },
+    shapes: { ...spec.patterns, card: patternOn(spec.patterns, "card"), secret: false },
     shield: shieldOf(entries, spec, map, rulesByFile, placeholders),
   };
 

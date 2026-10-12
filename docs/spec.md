@@ -153,7 +153,8 @@ plan (exit 2) before anything is profiled or sent.
 changes you decide. `<report.json>` is the output of `blind audit <out> --json`, and `-o` names the
 same blinded output tree. No model is called.
 
-- **Candidates.** The report shows masked values only, so each finding that points at one value
+- **Candidates.** The report masks the values it finds (file and member names are printed as on
+  disk), so each finding that points at one value
   (a byte offset, a decoding, a masked value) is mapped back to its place in `<out>` (the file, the
   zip member, its name or content) and the value is read there. It must mask exactly as the report
   says and must not be a pseudonym in the map (`--map`, default `.blind/map.json`); otherwise the
@@ -184,7 +185,9 @@ same blinded output tree. No model is called.
   entity or a value or canonical form from the map: as vocabulary it would be kept and would shield
   those words. Accept it or leave it undecided.
 - **Then** run `blind apply` and `blind audit` again. `--json` prints
-  `{ "spec", "candidates", "changes", "undecided", "other", "unmapped" }`.
+  `{ "spec", "candidates", "changes", "undecided", "other", "unmapped" }`. The candidates hold the
+  values read back from `<out>` in the clear, as the table does, so you can decide on them: treat
+  that output as you treat the spec, and do not save it where others can read it.
 
 ## How `blind apply` uses the spec
 

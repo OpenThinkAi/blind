@@ -9,7 +9,7 @@
 // Everything in the report except `timing` depends only on the kit: the order is fixed and no
 // value in it depends on the salt.
 
-import { closeSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { Writable } from "node:stream";
@@ -276,7 +276,11 @@ export async function runBench(argv: string[], io: BenchIO): Promise<number> {
     };
     try {
       mkdirSync(dirname(reportPath), { recursive: true });
-      writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+      // File, folder and member names in the report are as on disk, unmasked: private, like the kit.
+      const tmp = `${reportPath}.tmp`;
+      rmSync(tmp, { force: true });
+      writePrivate(tmp, `${JSON.stringify(report, null, 2)}\n`);
+      renameSync(tmp, reportPath);
     } catch (e) {
       throw new Refusal(`cannot write the report to ${reportPath}: ${(e as NodeJS.ErrnoException).code ?? "error"}`);
     }

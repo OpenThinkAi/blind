@@ -228,7 +228,9 @@ The bench is most useful on data like yours. Build the kit **outside the reposit
 4. Run `blind bench <kit>`.
 
 The oracle and the spec hold the sensitive values in the clear: keep the kit as private as the
-documents. The report masks every value.
+documents. The report masks every value it finds, but file, folder and archive member names are
+printed as they are on disk, so a leak in a name shows that name in full. `bench-report.json` is
+written 0600 for that reason; keep it with the kit.
 
 ## The walking-skeleton test
 

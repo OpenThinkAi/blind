@@ -36,7 +36,8 @@
         "guid": { "type": "boolean" },
         "mac": { "type": "boolean" },
         "phone": { "type": "boolean" },
-        "secret": { "type": "boolean" }
+        "secret": { "type": "boolean" },
+        "address": { "type": "boolean" }
       }
     },
     "questions": {

@@ -18,10 +18,11 @@ const DETECTOR_CLASS: [DetectorName, SensitiveClass][] = [
   ["mac", "host"],
   ["guid", "id"],
   ["host", "host"],
+  ["address", "location"],
   ["numericId", "id"],
 ];
 
-const PATTERN_CLASS: Record<PatternName, SensitiveClass> = { ip: "host", email: "email", host: "host", guid: "id", mac: "host", phone: "id", secret: "secret" };
+const PATTERN_CLASS: Record<PatternName, SensitiveClass> = { ip: "host", email: "email", host: "host", guid: "id", mac: "host", phone: "id", address: "location", secret: "secret" };
 
 /** Every column and JSON key the profile describes, with its stats, in profile order. */
 export function profileLocations(profile: Profile): { loc: Location; stats: ValueStats }[] {
@@ -38,7 +39,7 @@ export function profileLocations(profile: Profile): { loc: Location; stats: Valu
 type HeuristicPolicy = Pick<Policy, "sensitive"> & Partial<Pick<Policy, "patterns">>;
 
 /** The free-text pattern for each column shape; numericId has none. */
-const SHAPE_PATTERN: Partial<Record<DetectorName, PatternName>> = { email: "email", ip: "ip", guid: "guid", host: "host", mac: "mac" };
+const SHAPE_PATTERN: Partial<Record<DetectorName, PatternName>> = { email: "email", ip: "ip", guid: "guid", host: "host", mac: "mac", address: "address" };
 
 type Shape = { cls: SensitiveClass; rate: number; blind: boolean; pattern: PatternName | undefined };
 
@@ -52,7 +53,7 @@ type Shape = { cls: SensitiveClass; rate: number; blind: boolean; pattern: Patte
 function shapeOf(stats: ValueStats, policy: HeuristicPolicy): Shape | undefined {
   const defaults = heuristicPatterns(policy);
   for (const [detector, cls] of DETECTOR_CLASS) {
-    const rate = stats.detectorRates[detector];
+    const rate = stats.detectorRates[detector] ?? 0;
     if (rate < HEURISTIC_RATE) continue;
     const name = SHAPE_PATTERN[detector];
     const patternOn = name !== undefined && (policy.patterns?.[name] ?? defaults[name]) === true;
@@ -78,7 +79,7 @@ export function heuristicRule(loc: Location, stats: ValueStats, policy: Heuristi
 /** Patterns on for every shape whose class the policy calls sensitive. */
 export function heuristicPatterns(policy: Pick<Policy, "sensitive">): Spec["patterns"] {
   const on = (p: PatternName) => policy.sensitive.classes.includes(PATTERN_CLASS[p]);
-  return { ip: on("ip"), email: on("email"), host: on("host"), guid: on("guid"), mac: on("mac"), phone: on("phone"), secret: on("secret") };
+  return { ip: on("ip"), email: on("email"), host: on("host"), guid: on("guid"), mac: on("mac"), phone: on("phone"), address: on("address"), secret: on("secret") };
 }
 
 const fold = (s: string): string => s.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();

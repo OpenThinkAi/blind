@@ -35,6 +35,7 @@ import { type Entities, type PatternName, type Patterns, patternOn } from "../sc
 import { inDateContext, isDateWord } from "./datecontext.ts";
 import { type CellRule, cellValueSpan, type ContextOptions, findContextSpans } from "./context.ts";
 import { findSecretSpans, type SecretCarry, type SecretOptions, type SecretSpan } from "./secret.ts";
+import { findAddresses } from "./address.ts";
 import { findSpelledDigits, findSpokenEmails } from "./spelled.ts";
 import { DICTIONARY } from "./words.ts";
 import { isHonorificOrRole } from "./honorifics.ts";
@@ -72,7 +73,7 @@ export interface Span {
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 const IPV4_OCTET = "(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)";
-const PATTERN_RES: Record<Exclude<PatternName, "secret">, RegExp> = {
+const PATTERN_RES: Record<Exclude<PatternName, "secret" | "address">, RegExp> = {
   email: /(?<![\p{L}\p{N}._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+(?![\p{L}\p{N}-]|\.[A-Za-z0-9])/gu,
   ip: new RegExp(
     `(?<![\\d.])${IPV4_OCTET}(?:\\.${IPV4_OCTET}){3}(?!\\d|\\.\\d)|(?<![\\p{L}\\p{N}:])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![\\p{L}\\p{N}:]|\\.\\d)`,
@@ -101,16 +102,17 @@ export const PATTERN_CLASS: Record<PatternName, PseudoClass> = {
   guid: "id",
   host: "host",
   phone: "id",
+  address: "location",
   // Not a pseudonym: a secret is written as the fixed placeholder (secret.ts).
   secret: "redact",
 };
 
 // Fixed order: when two patterns match the same span, the earlier one wins.
 // `secret` is last: a token another pattern matches is never a secret.
-const PATTERN_ORDER: readonly PatternName[] = ["email", "ip", "mac", "guid", "phone", "host", "secret"];
+const PATTERN_ORDER: readonly PatternName[] = ["email", "ip", "mac", "guid", "phone", "address", "host", "secret"];
 
 /** Every shape but `secret`: what secret.ts asks about a token ("is this whole token an email, a phone ...?"). */
-const OTHER_SHAPES: Patterns = { email: true, ip: true, mac: true, guid: true, phone: true, host: true, secret: false };
+const OTHER_SHAPES: Patterns = { email: true, ip: true, mac: true, guid: true, phone: true, host: true, address: false, secret: false };
 
 // Two-label names count as hosts only under these suffixes, so "notes.txt" or
 // "report.md" is not a host; three or more labels ("db01.example.com") always count.
@@ -170,6 +172,10 @@ export function findPatternSpans(text: string, patterns: Patterns, keep: readonl
       for (const s of findSecretSpans(text, wholeOtherShape, carry === undefined ? {} : { carry })) {
         found.push({ start: s.start, end: s.end, cls: "redact", value: text.slice(s.start, s.end), source: "pattern", rank });
       }
+      return;
+    }
+    if (name === "address") {
+      for (const a of findAddresses(text)) found.push({ start: a.start, end: a.end, cls: "location", value: text.slice(a.start, a.end), source: "pattern", rank });
       return;
     }
     for (const m of text.matchAll(PATTERN_RES[name])) {

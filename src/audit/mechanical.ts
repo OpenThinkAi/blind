@@ -500,13 +500,13 @@ function scanView(view: View, ctx: Context, isName: boolean): Hit[] {
   return hits;
 }
 
-const PATTERN_NAMES: readonly PatternName[] = ["email", "ip", "mac", "guid", "phone", "host", "secret"];
+const PATTERN_NAMES: readonly PatternName[] = ["email", "ip", "mac", "guid", "phone", "address", "host", "secret"];
 
 /** Which enabled pattern matches the whole value (the span itself only records the pseudonym class). */
 function patternName(value: string, patterns: Patterns): PatternName | "pattern" {
   for (const name of PATTERN_NAMES) {
     if (!patternOn(patterns, name)) continue;
-    const only = { ip: false, email: false, host: false, guid: false, mac: false, phone: false, secret: false, [name]: true };
+    const only = { ip: false, email: false, host: false, guid: false, mac: false, phone: false, address: false, secret: false, [name]: true };
     const [s] = findPatternSpans(value, only);
     if (s !== undefined && s.start === 0 && s.end === value.length) return name;
   }

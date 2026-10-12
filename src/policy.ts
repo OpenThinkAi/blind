@@ -38,6 +38,7 @@ const PATTERN_HELP: Record<PatternName, string> = {
   guid: "GUIDs",
   mac: "MAC addresses",
   phone: "phone numbers",
+  address: "street addresses (a house number, street and suffix, then an optional unit and City ST ZIP)",
   secret: "passwords, keys and tokens (credential-shaped words), written as REDACTED",
 };
 export const POLICY_PATTERNS = Object.keys(PATTERN_HELP) as PatternName[];

@@ -106,7 +106,7 @@ describe("determinism", () => {
     "../formats/paths.ts": [],
     "../formats/officeids.ts": ["./ooxml.ts"],
     "../profile/table.ts": ["../schema.ts", "./stats.ts", "../engine/csv.ts"],
-    "../profile/stats.ts": ["../schema.ts", "../engine/words.ts", "../engine/epoch.ts"],
+    "../profile/stats.ts": ["../schema.ts", "../engine/words.ts", "../engine/epoch.ts", "../engine/address.ts"],
   };
 
   test("engine modules import only node:crypto, node:fs, each other and shared deterministic leaves", () => {

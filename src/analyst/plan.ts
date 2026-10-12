@@ -159,7 +159,7 @@ export function renderSpec(spec: Spec, policyPatterns: PolicyPatterns = {}): str
   out.push("");
   // blind.toml's [patterns] wins at apply time, so the review shows what will be used.
   const onOff = (on: boolean): string => (on ? "on" : "off");
-  const shown = (["ip", "email", "host", "guid", "mac", "phone", "secret"] as const).map((name) => {
+  const shown = (["ip", "email", "host", "guid", "mac", "phone", "address", "secret"] as const).map((name) => {
     const on = patternOn(spec.patterns, name);
     const set = policyPatterns[name as keyof PolicyPatterns];
     return set === undefined || set === on ? `${name} ${onOff(on)}` : `${name} ${onOff(set)} (blind.toml; spec: ${onOff(on)})`;

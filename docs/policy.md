@@ -267,18 +267,40 @@ wins over the spec's `patterns` in both directions, every run, without editing
 | `guid` | `true` or `false` | GUIDs |
 | `mac` | `true` or `false` | MAC addresses |
 | `phone` | `true` or `false` | phone numbers (on when the spec says nothing: a spec written before `phone` existed has it on) |
+| `address` | `true` or `false` | street addresses: a house number, street name and suffix, then an optional unit and `City ST ZIP` (off when the spec says nothing; `blind plan` turns it on when `location` is sensitive) |
 | `secret` | `true` or `false` | passwords, keys and tokens, written as `REDACTED` (off when the spec says nothing: a spec written before `secret` existed has it off) |
 
 `blind init` writes `ip = true`, `host = true` and `secret = true`, so addresses, host names and
 credential-shaped tokens in free text are replaced even when their class is not one of
 `[sensitive] classes`, and leaves the other four commented out (the spec decides). A `blind.toml` without the table behaves as before: the spec
-decides every pattern. `blind plan` and `blind run` show the patterns in force, marking one that
+decides every pattern. The [`address` pattern](#the-address-pattern) is described below. `blind plan` and `blind run` show the patterns in force, marking one that
 blind.toml changed: `ip on (blind.toml; spec: off)`. The spec file itself is never changed. A
 pattern turned off finds nothing new, but a value an earlier run already replaced is still in the
 map and is replaced again wherever it recurs.
 
 Turning a pattern off here also turns it off for `blind plan --from-audit`: a candidate accepted
 as a pattern sets it in the spec, but a `false` here still wins.
+
+### The `address` pattern
+
+A street address written only in prose, a cell kept as text or a JSON value, with no learned value
+behind it, is found by its shape: a house number, an optional direction, one to four capitalised
+street-name words and a street suffix (`St`, `Rd`, `Ave`, `Blvd`, `Ln`, `Dr`, `Way`, `Ct`, `Pkwy`, `Hwy`,
+`Loop` and the spelled-out forms; the full list is in [spec.md](spec.md#patterns)), then optionally a
+unit (`Apt 4`, `Unit 12`, `#3`) and `, City ST 12345`. The whole match is one `Loc_` pseudonym, so
+`77 Example Rd, Springfield UT 84000` never leaves a house number or suffix beside a token, even
+when a street-name word was already replaced (`9071 S Person_A1B2 Pkwy` is one address too).
+
+It is off when the spec says nothing, and `blind plan` turns it on when `location` is in
+`[sensitive] classes` (set `address = false` here to keep it off). A column where at least 80% of
+values hold an address is classed `location` by the heuristic, whatever its header (`line1`), so a
+nested `profile.address.line1` is blinded with its sibling `city`.
+
+Not an address: a street with no house number (`a car on Example Rd`); a measure, dose or time
+(`2 Tabs`, `3 doses daily`, `10 Days`, `5 Units`, `10:30 Sample Way`); a number that names a room,
+suite, bed or page (`Room 12 Oak Way`); `Dr` as an honorific (`Dr Sample`, `5 Mg Dr Sample`); a
+street written in lower case. The audit reads the same shape: a surviving match is a
+`pattern:address` leak.
 
 ### The `secret` pattern
 

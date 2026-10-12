@@ -78,7 +78,7 @@ const HOST_TLDS = new Set([
   "de", "fr", "nl", "eu", "ca", "au", "jp", "ch", "se", "no", "es", "it",
 ]);
 
-function validIpv6(s: string): boolean {
+export function validIpv6(s: string): boolean {
   if (!s.includes(":")) return false;
   const halves = s.split("::");
   if (halves.length > 2) return false;

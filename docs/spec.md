@@ -394,6 +394,15 @@ rewritten at the XML level, so everything not blinded is copied byte for byte:
 - A spec value or pattern match (any shape, as for a workbook) in a part or attribute nothing here
   rewrites, such as custom XML, stops the document (listed and not written, exit 1), naming the part
   and element but never the value.
+- **Custom XML data parts.** A part in no known OOXML namespace (`customXml/item1.xml`: a CRM or
+  line-of-business schema) is not rewritten at all, so it stops the document when it has any
+  non-empty attribute value or character data that is not structure: `custom XML part
+  customXml/item1.xml holds data blind cannot confirm it blinded; remove the part or save without it`.
+  The empty parts Word and Excel write themselves are allowed: a bibliography `b:Sources` with no
+  `b:Source` (only its style attributes), cover-page properties with empty values, and SharePoint
+  content-type and metadata stubs (`xsi:nil`, empty values, the type's own name and id). The same
+  rule applies to a workbook's `customXml/item*.xml`. The audit reports any other such part of a
+  written package as a `leak` of class `custom-xml`, naming the part.
 - Images are copied unchanged and listed as a warning. A package that cannot be read, has a part
   this handler does not know that holds text, or embeds another file (an OLE object, a chart's
   workbook, macros) is listed and not written (exit 1). So is one with a saved thumbnail

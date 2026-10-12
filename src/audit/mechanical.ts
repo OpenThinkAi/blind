@@ -40,6 +40,7 @@
 // did not read.
 
 import { type ColumnRule, type PatternName, type Patterns, patternOn, REDACTED_VALUE, type Spec } from "../schema.ts";
+import { customDataPart, customPartRefusal } from "../engine/customxml.ts";
 import { CsvError, parseCsv, sniffDelimiter } from "../engine/csv.ts";
 import { inDateContext, isDateWord } from "../engine/datecontext.ts";
 import { decode, EncodingError } from "../engine/encoding.ts";
@@ -625,7 +626,22 @@ function scanBytes(sink: PartSink, part: string, bytes: Uint8Array, depth: numbe
     }
     scanBytes(sink, memberPart, ooxml ? blankOoxmlUris(m.name, m.bytes) : m.bytes, depth + 1, ctx, budget);
     if (ooxml) accountFindings(sink, memberPart, m.name, m.bytes, ctx);
+    if (ooxml) customXmlFinding(sink, memberPart, m.name, m.bytes);
   }
+}
+
+/**
+ * A custom XML data part (customXml/item*.xml) of an OOXML package holding any attribute value or
+ * text that is not empty or structure. Blind rewrites nothing in such a part, so a written package
+ * that still has one is a leak whatever the values are; the finding names the part, never a value.
+ * The empty parts Word and Excel write themselves (a bibliography with no sources, cover-page and
+ * SharePoint stubs) are not reported.
+ */
+function customXmlFinding(sink: PartSink, part: string, member: string, bytes: Uint8Array) {
+  if (!customDataPart(member) || bytes.length === 0 || looksLikeZip(bytes)) return;
+  const reason = customPartRefusal(member, xmlBaseView(bytes).text);
+  if (reason === null) return;
+  sink.findings.push({ file: sink.file, part, in: "content", offset: null, line: null, class: "custom-xml", source: "scan", severity: "leak", masked: "", reason, encoding: null });
 }
 
 /** app.xml elements whose text is a path. */

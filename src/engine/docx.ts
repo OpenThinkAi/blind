@@ -48,6 +48,7 @@ import type { PseudoClass } from "./canonical.ts";
 import { type HexNamer, rewriteOfficeId } from "./officeid.ts";
 import type { Pseudonymizer } from "./pseudonym.ts";
 import type { ExtraForm, Span } from "./text.ts";
+import { customPartRefusal } from "./customxml.ts";
 import { refuseUnrewritten } from "./unrewritten.ts";
 
 export interface DocxRequest {
@@ -300,18 +301,12 @@ function kindRules(kind: PartKind, visit?: RewriteRules["visit"]): RewriteRules 
     case "rels":
       return { text: none, attribute: (el, attr) => localName(el.name) === "Relationship" && attr === "Target" && el.attrs.get("TargetMode") === "External" };
     case "unknown":
-      // Character data in an unknown part refuses the package (see planDocx); its attributes are free text.
-      return { text: none, attribute: (_el, attr) => attr !== "xmlns" && !attr.startsWith("xmlns:") };
+      // A part with any value blind cannot confirm is structure refuses the package (planDocx), so
+      // nothing in one is rewritten; the unrewritten scan still reads what is left.
+      return { text: none, attribute: none };
     case "inert":
       return { text: none, attribute: none };
   }
-}
-
-/** Character data (text or CDATA) anywhere in `xml`, outside markup. */
-function hasCharacterData(xml: string): boolean {
-  if (xml.includes("<![CDATA[")) return true;
-  const stripped = xml.replace(/<!--[\s\S]*?-->|<\?[\s\S]*?\?>/g, "").replace(/<(?:[^>"']|"[^"]*"|'[^']*')*>/g, "");
-  return /[^ \t\r\n﻿]/.test(stripped);
 }
 
 /** Package members copied unchanged and reported: images (never blinded) and embedded fonts. Any other non-XML member stops the package. */
@@ -360,8 +355,9 @@ export function planDocx(bytes: Uint8Array): DocxPlan {
       throw e;
     }
     const kind = partKind(root as Frame);
-    if (kind === "unknown" && hasCharacterData(m.text)) {
-      throw new DocxError(`part ${m.name} is not a part this handler knows and holds text it cannot blind`);
+    if (kind === "unknown") {
+      const refusal = customPartRefusal(m.name, m.text);
+      if (refusal !== null) throw new DocxError(refusal);
     }
     plan.kinds.set(m.name, kind);
     // Parsed above, so this cannot throw.

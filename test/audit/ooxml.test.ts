@@ -137,6 +137,18 @@ describe("OOXML packages: namespace, content-type and relationship-type URIs are
     expect(leaks(audit([file("memo.docx", planted)], map)).map((f) => [f.part, f.class])).toEqual([["docProps/custom.xml", "pattern:guid"]]);
   });
 
+  test("a non-structural value in a custom XML data part of a package is a leak naming the part, not the value (AGT-1840)", () => {
+    const { bytes, map } = blindedDocx();
+    const add = (name: string, data: string) => makeZip([...readZip(bytes).map((m) => ({ name: m.name, data: m.bytes as Uint8Array })), { name, data }]);
+    const crm = '<?xml version="1.0"?><crm><contact name="Dana Example" acct="AC-55501"/></crm>';
+    const r = audit([file("memo.docx", add("customXml/item1.xml", crm))], map);
+    expect(leaks(r).map((f) => [f.part, f.class, f.masked])).toEqual([["customXml/item1.xml", "custom-xml", ""]]);
+    expect(JSON.stringify(leaks(r))).not.toMatch(/Dana|AC-55501/);
+    const BIB = "http://schemas.openxmlformats.org/officeDocument/2006/bibliography";
+    const empty = `<?xml version="1.0"?><b:Sources SelectedStyle="\\APA.XSL" StyleName="APA" xmlns:b="${BIB}"/>`;
+    expect(leaks(audit([file("memo.docx", add("customXml/item1.xml", empty))], map))).toEqual([]);
+  });
+
   test("a zip that is not an OOXML package gets no exemption", () => {
     const xml = '<?xml version="1.0"?><a xmlns="http://schemas.openxmlformats.org/x"/>';
     const r = audit([file("pack.zip", makeZip([{ name: "a.xml", data: xml }]))]);

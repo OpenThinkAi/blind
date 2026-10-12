@@ -116,7 +116,7 @@ documents ------------ engine (deterministic) ---------------+--> blinded docume
 File and folder names are blinded too. Files in any other format (PDF, images, PPTX, email, HTML,
 legacy `.doc` and `.xls`, ...) are listed and not written, and the command exits 1; blind does not
 edit PDFs or read text out of images. A workbook or document that contains something blind cannot
-read (an embedded file, a macro, an unknown part with text) is listed and not written.
+read (an embedded file, a macro, a custom XML data part with values) is listed and not written.
 
 ## Reversal and the map
 

@@ -286,15 +286,15 @@ describe("XLSX apply: round trip", () => {
 
 describe("XLSX apply: fail closed", () => {
   test("a spec value in a part blind does not rewrite stops the file", () => {
-    const bytes = buildWorkbook({ extra: [{ name: "customXml/item1.xml", data: "<root><owner>Avery Quill</owner></root>" }] });
+    const bytes = buildWorkbook({ extra: [{ name: "xl/notes/extra.xml", data: "<root><owner>Avery Quill</owner></root>" }] });
     const r = run(bytes);
     expect(r.outputs).toEqual([]);
-    expect(r.skipped[0]?.reason).toMatch(/customXml\/item1\.xml <owner> text/);
+    expect(r.skipped[0]?.reason).toMatch(/xl\/notes\/extra\.xml <owner> text/);
     expect(r.skipped[0]?.reason).not.toContain("Avery");
   });
 
   test("...and a column value in an attribute blind does not rewrite, too", () => {
-    const bytes = buildWorkbook({ extra: [{ name: "customXml/item1.xml", data: '<root owner="Sam Placeholder"/>' }] });
+    const bytes = buildWorkbook({ extra: [{ name: "xl/notes/extra.xml", data: '<root owner="Sam Placeholder"/>' }] });
     expect(run(bytes).skipped[0]?.reason).toMatch(/attribute owner/);
   });
 
@@ -322,9 +322,30 @@ describe("XLSX apply: fail closed", () => {
     expect(run(buildWorkbook({ extra: [{ name: "xl/other.xml", data: part }] })).skipped).toEqual([]);
   });
 
-  test("text there without spec values does not stop it", () => {
-    const bytes = buildWorkbook({ extra: [{ name: "customXml/item1.xml", data: "<root><v>quarterly</v></root>" }] });
-    expect(run(bytes).skipped).toEqual([]);
+  test("a custom XML data part with values blind cannot confirm is refused, naming the part and not the value (AGT-1840)", () => {
+    const item = '<?xml version="1.0"?><crm><contact name="Dana Example" email="dana@example.com" host="crm01.example.net" acct="AC-55501"/></crm>';
+    for (const data of [item, "<root><v>quarterly</v></root>", "<root><![CDATA[note]]></root>"]) {
+      const r = run(buildWorkbook({ extra: [{ name: "customXml/item1.xml", data }] }));
+      expect(r.outputs).toEqual([]);
+      expect(r.skipped[0]?.reason).toBe("custom XML part customXml/item1.xml holds data blind cannot confirm it blinded; remove the part or save without it; not written");
+    }
+  });
+
+  test("empty and structural custom XML parts do not stop the workbook (AGT-1840)", () => {
+    const BIB = "http://schemas.openxmlformats.org/officeDocument/2006/bibliography";
+    const parts = [
+      `<?xml version="1.0"?><b:Sources SelectedStyle="\\APA.XSL" StyleName="APA" xmlns:b="${BIB}" xmlns="${BIB}"/>`,
+      '<?xml version="1.0"?><crm><contact name="" email=""/><note/></crm>',
+      '<?xml version="1.0"?><CoverPageProperties xmlns="http://schemas.microsoft.com/office/2006/coverPageProps"><PublishDate/><Abstract/></CoverPageProperties>',
+      '<?xml version="1.0"?><p:properties xmlns:p="http://schemas.microsoft.com/office/2006/metadata/properties" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><documentManagement><Title xsi:nil="true"/></documentManagement></p:properties>',
+    ];
+    for (const data of parts) expect(run(buildWorkbook({ extra: [{ name: "customXml/item1.xml", data }] })).skipped).toEqual([]);
+  });
+
+  test("a bibliography with a source in it is refused (AGT-1840)", () => {
+    const BIB = "http://schemas.openxmlformats.org/officeDocument/2006/bibliography";
+    const data = `<b:Sources xmlns:b="${BIB}"><b:Source><b:Tag>x</b:Tag></b:Source></b:Sources>`;
+    expect(run(buildWorkbook({ extra: [{ name: "customXml/item1.xml", data }] })).skipped[0]?.reason).toMatch(/^custom XML part customXml\/item1\.xml holds data/);
   });
 
   test("structural worksheet attributes (row r, cell r, spans) are not a hit when a renumbered id has the same digits", () => {

@@ -76,7 +76,7 @@
         "class": {
           "enum": ["person", "org", "host", "email", "id", "location", "vocabulary", "unknown"]
         },
-        "treatment": { "enum": ["blind", "keep", "value", "drop", "redact"] },
+        "treatment": { "enum": ["blind", "keep", "value", "drop", "redact", "scan"] },
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
         "source": { "enum": ["analyst", "human", "heuristic", "policy"] }
       }

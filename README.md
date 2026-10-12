@@ -28,8 +28,11 @@ apply and audit again, so the loop closes without you or a model; candidates are
 decide. `blind <command> --help` lists every option and exit status.
 
 Columns you already know about can be decided in `blind.toml`, with no model at all: a
-`[[columns]]` rule matches headers by glob and keeps, drops, blinds or redacts them (see
-[docs/policy.md](docs/policy.md#columns)).
+`[[columns]]` rule matches headers by glob and keeps, scans, drops, blinds or redacts them (see
+[docs/policy.md](docs/policy.md#columns)). `scan` is the one for notes, remarks and diagnoses:
+the cell is kept as written except for what the free-text scanner finds in it (phones, emails,
+names, a plate or gate code after its keyword). `[defaults] columns = "scan"` gives every column no
+rule decides that treatment too, instead of pseudonymising identifier-like ones whole.
 
 ## What a model sees
 

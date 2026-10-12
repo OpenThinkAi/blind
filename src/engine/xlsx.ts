@@ -47,7 +47,7 @@ import {
 import { detectHeaderRow } from "../profile/table.ts";
 import type { ColumnReport } from "./apply.ts";
 import { PSEUDO_CLASSES, type PseudoClass, type RealPseudoClass } from "./canonical.ts";
-import { type ColumnAction, decide, outcomeOf, removedForms } from "./columns.ts";
+import { type ColumnAction, type ColumnDefault, decide, isFallback, removedForms } from "./columns.ts";
 import { type ContextOptions, pairCells } from "./context.ts";
 import type { NameSlot } from "./names.ts";
 import { type HexNamer, rewriteOfficeId } from "./officeid.ts";
@@ -96,8 +96,12 @@ export interface XlsxPlan {
   wb: XlsxWorkbook;
   /** Per worksheet member, per cell reference. */
   cells: Map<string, Map<string, CellPlan>>;
-  /** One treatment per shared string; "orphan" for one no cell uses. */
+  /** One treatment per shared string; "orphan" for one no cell uses. Filled by settleXlsx. */
   strings: (Action | { kind: "orphan" })[];
+  /** Per shared string, the plans of the cells that use it. */
+  uses: CellPlan[][];
+  /** Text cells the fail-closed fallback pseudonymised whole, settled by settleXlsx. */
+  fallback: { plan: CellPlan; text: string; column: ColumnReport; form: ExtraForm }[];
   columns: ColumnReport[];
   sheets: SheetReport[];
   /** Pseudonymised cell values, for the corpus-wide name matcher. */
@@ -131,7 +135,7 @@ const whole = (spans: readonly Span[], text: string): boolean => spans.length ==
 const lower = (s: string): string => s.toLowerCase();
 
 /** Step 1. Throws XlsxSpecError when the spec does not fit; ZipError or XlsxError when the file cannot be read. */
-export function planXlsx(path: string, bytes: Uint8Array, rules: readonly ColumnRule[], context?: ContextOptions): XlsxPlan {
+export function planXlsx(path: string, bytes: Uint8Array, rules: readonly ColumnRule[], context?: ContextOptions, unruled: ColumnDefault = "fallback"): XlsxPlan {
   const wb = readWorkbook(bytes);
   const broken = wb.members.find((m) => m.kind === "error");
   if (broken?.kind === "error") throw new XlsxError(`member ${broken.name} cannot be read (${broken.error})`);
@@ -154,8 +158,9 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
   const removed: ExtraForm[] = [];
   const pending: Pending[] = [];
   let refusal: string | undefined;
-  /** Per shared string, the actions of the cells that use it. */
-  const uses: Action[][] = wb.sharedStrings.map(() => []);
+  /** Per shared string, the plans of the cells that use it. */
+  const uses: CellPlan[][] = wb.sharedStrings.map(() => []);
+  const fallback: XlsxPlan["fallback"] = [];
 
   for (const sheet of wb.sheets) {
     if (sheet.member === null) continue;
@@ -188,14 +193,14 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
       const rule = sheetRules.find((r) => (r.header as string).trim() === header.trim());
       const data = byCol.get(col) ?? [];
       const texts = data.map((c) => cellText(c, wb.sharedStrings));
-      const { action, stats } = decide(rule, texts, { dates: data.map((c) => isDateCell(wb, c)) });
+      const { action, stats, outcome } = decide(rule, texts, { dates: data.map((c) => isDateCell(wb, c)) }, unruled);
       const column: ColumnReport = {
         index: col,
         header,
         sheet: sheet.name,
         class: rule?.class ?? "unknown",
         treatment: rule?.treatment ?? null,
-        outcome: outcomeOf(action, stats),
+        outcome,
         changed: 0,
         flagged: 0,
       };
@@ -222,7 +227,7 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
         if (cellAction !== action) column.numbersLeft = (column.numbersLeft ?? 0) + 1;
         const plan: CellPlan = { action: cellAction, renumber: cellAction.kind === "pseudo" && c.type === "n", date: isDateCell(wb, c) };
         plans.set(c.ref, plan);
-        if (c.type === "s") (uses[Number(c.v)] as Action[]).push(action);
+        if (c.type === "s") (uses[Number(c.v)] as CellPlan[]).push(plan);
         if (plan.renumber && !NUMBER.test(text)) {
           throw new XlsxError(`worksheet ${JSON.stringify(sheet.name)} cell ${c.ref}: a number in a form that cannot be renumbered in place`);
         }
@@ -234,6 +239,7 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
           if (form !== null) {
             columnValues.push(form);
             if (recur) mapped.push(form);
+            if (recur && isFallback(outcome) && c.type !== "n") fallback.push({ plan, text, column, form });
           }
         } else pending.push({ cell: plan, text, number: c.type === "n", column });
       });
@@ -242,8 +248,9 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
     // Rows above the header and the header row itself are free text.
     for (const c of sheet.cells) {
       if (c.row > headerRow) continue;
-      plans.set(c.ref, { action: { kind: "header" }, renumber: false });
-      if (c.type === "s") (uses[Number(c.v)] as Action[]).push({ kind: "header" });
+      const plan: CellPlan = { action: { kind: "header" }, renumber: false };
+      plans.set(c.ref, plan);
+      if (c.type === "s") (uses[Number(c.v)] as CellPlan[]).push(plan);
     }
     // A text cell that holds the value of a label in another cell ("DOB" | "01/02/1960"), in a column
     // a rule does not keep, is redacted whole (AGT-1841). A number cell cannot be rewritten as text, so it
@@ -262,17 +269,69 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
         forced.action = { kind: "redact" };
         forced.renumber = false;
         plans.set(c.ref, forced);
-        if (c.type === "s") (uses[Number(c.v)] as Action[]).push(forced.action);
+        // A cell plan already listed for its shared string changed in place; a new one is listed now.
+        if (c.type === "s" && had === undefined) (uses[Number(c.v)] as CellPlan[]).push(forced);
       }
     }
     cells.set(sheet.member, plans);
   }
 
-  // One treatment per shared string: emptied if any cell using it is dropped, else redacted if any
-  // is, else a pseudonym if any cell gets one, else free text if any cell treats it so, else kept.
-  // Strings no cell uses are orphans: free text all the same.
+  // A custom XML data part holds values blind rewrites nowhere: refuse unless it is empty or structural.
+  for (const m of readOoxml(bytes)) {
+    if (refusal !== undefined) break;
+    if (m.kind === "xml" && customDataPart(m.name)) refusal = customPartRefusal(m.name, m.text) ?? undefined;
+  }
+  const removing = columns.some((c) => c.outcome === "dropped" || c.outcome === "redacted");
+  const cache = removing ? wb.members.find((m) => /^xl\/(?:pivotCache|charts)\//i.test(m.name)) : undefined;
+  // Pivot and chart caches repeat cell values that are not in the map, so nothing would clear them there.
+  if (refusal === undefined && cache !== undefined) refusal = `the workbook drops or redacts a column, but member ${cache.name} caches cell values blind cannot clear`;
+  return {
+    wb,
+    cells,
+    strings: [],
+    uses,
+    fallback,
+    columns,
+    sheets,
+    columnValues,
+    mapped,
+    removed,
+    pending,
+    requests: [],
+    hexIds: [],
+    metadata: [],
+    wholes: xlsxWholes(bytes),
+    ...(refusal === undefined ? {} : { refusal }),
+  };
+}
+
+/**
+ * Step 1b, once every file is planned. A text cell the fail-closed fallback pseudonymised whole
+ * whose trimmed value is in `held` (held whole in a `keep` or `scan` cell somewhere in the corpus)
+ * is left as text instead, scanned like free text, and counted in its column's `heldWhole`. Then
+ * every shared string gets one treatment: emptied if any cell using it is dropped, else redacted if
+ * any is, else a pseudonym if any cell gets one, else free text if any cell treats it so, else
+ * kept. Strings no cell uses are orphans: free text all the same.
+ */
+export function settleXlsx(p: XlsxPlan, held: ReadonlySet<string>): void {
+  const freed = new Set<ExtraForm>();
+  for (const f of p.fallback) {
+    if (!held.has(f.text.trim())) continue;
+    f.plan.action = { kind: "free" };
+    // planXlsx counted the cell as changed (a workbook counts at plan time, unlike CSV/JSON, which
+    // count at render); prepareXlsx counts it again if the scanner changes it.
+    f.column.changed--;
+    f.column.heldWhole = (f.column.heldWhole ?? 0) + 1;
+    p.pending.push({ cell: f.plan, text: f.text, number: false, column: f.column });
+    freed.add(f.form);
+  }
+  if (freed.size > 0) {
+    p.columnValues = p.columnValues.filter((v) => !freed.has(v));
+    p.mapped = p.mapped.filter((v) => !freed.has(v));
+  }
   const rank = (a: Action): number => (a.kind === "pseudo" ? 0 : a.kind === "keep" ? 2 : 1);
-  const strings = uses.map((list): Action | { kind: "orphan" } => {
+  p.strings = p.uses.map((plans): Action | { kind: "orphan" } => {
+    const list = plans.map((c) => c.action);
     if (list.length === 0) return { kind: "orphan" };
     if (list.some((a) => a.kind === "drop")) return { kind: "drop" };
     if (list.some((a) => a.kind === "redact")) return { kind: "redact" };
@@ -283,16 +342,6 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
     }
     return [...list].sort((a, b) => rank(a) - rank(b))[0] as Action;
   });
-  // A custom XML data part holds values blind rewrites nowhere: refuse unless it is empty or structural.
-  for (const m of readOoxml(bytes)) {
-    if (refusal !== undefined) break;
-    if (m.kind === "xml" && customDataPart(m.name)) refusal = customPartRefusal(m.name, m.text) ?? undefined;
-  }
-  const removing = columns.some((c) => c.outcome === "dropped" || c.outcome === "redacted");
-  const cache = removing ? wb.members.find((m) => /^xl\/(?:pivotCache|charts)\//i.test(m.name)) : undefined;
-  // Pivot and chart caches repeat cell values that are not in the map, so nothing would clear them there.
-  if (refusal === undefined && cache !== undefined) refusal = `the workbook drops or redacts a column, but member ${cache.name} caches cell values blind cannot clear`;
-  return { wb, cells, strings, columns, sheets, columnValues, mapped, removed, pending, requests: [], hexIds: [], metadata: [], wholes: xlsxWholes(bytes), ...(refusal === undefined ? {} : { refusal }) };
 }
 
 /**

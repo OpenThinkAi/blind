@@ -13,6 +13,8 @@ export type ColumnOutcome =
   | "kept"
   | "dropped"
   | "redacted"
+  | "scanned"
+  | "unknown-scanned"
   | "unknown-pseudonymised"
   | "unknown-person"
   | "unknown-kept-low-cardinality"
@@ -21,30 +23,57 @@ export type ColumnOutcome =
 
 const SENSITIVE: ReadonlySet<EntityClassName> = new Set(["person", "org", "host", "email", "id", "location"]);
 
-/** `drop` removes the column (or key); `redact` writes REDACTED_VALUE in each non-empty cell. */
+/**
+ * What a column with no rule gets (blind.toml `[defaults] columns`): `fallback`, the fail-closed
+ * identifier-like test; or `scan`, every cell kept as written apart from what the free-text scanner
+ * finds in it, so no column is pseudonymised whole unless a rule says so.
+ */
+export type ColumnDefault = "fallback" | "scan";
+export const COLUMN_DEFAULTS: readonly ColumnDefault[] = ["fallback", "scan"];
+
+/**
+ * `drop` removes the column (or key); `redact` writes REDACTED_VALUE in each non-empty cell; `free`
+ * is a cell scanned as free text (a `scan` rule, or a column the fallback or the default leaves as text).
+ */
 export type ColumnAction = { kind: "keep" } | { kind: "pseudo"; cls: PseudoClass } | { kind: "free" } | { kind: "drop" } | { kind: "redact" };
 
 function ruleAction(rule: ColumnRule): ColumnAction | "heuristic" {
   if (rule.treatment === "keep") return { kind: "keep" };
   if (rule.treatment === "drop") return { kind: "drop" };
   if (rule.treatment === "redact") return { kind: "redact" };
+  if (rule.treatment === "scan") return { kind: "free" };
   if (rule.treatment === "blind" && SENSITIVE.has(rule.class)) return { kind: "pseudo", cls: rule.class as PseudoClass };
   if (rule.treatment === "value" && rule.class === "unknown") return "heuristic";
   return { kind: "pseudo", cls: "value" };
 }
 
-/**
- * What a column gets: its rule's action, or for no rule (or unknown/value) the fail-closed
- * identifier-like test. An identifier-like column of people's names (prose.ts isPersonColumn) is
- * pseudonymised as `person`, not `value`, so their name parts recur in free text (AGT-1830).
- */
-export function decide(rule: ColumnRule | undefined, values: readonly string[], ctx: ColumnContext = {}): { action: ColumnAction; stats: ColumnStats | undefined } {
-  const planned = rule === undefined ? "heuristic" : ruleAction(rule);
-  if (planned !== "heuristic") return { action: planned, stats: undefined };
-  const stats = columnStats(values, ctx);
-  if (!isIdentifierLike(stats)) return { action: { kind: "free" }, stats };
-  return { action: { kind: "pseudo", cls: isPersonColumn(values) ? "person" : "value" }, stats };
+export interface Decision {
+  action: ColumnAction;
+  /** Set only when the fail-closed identifier-like test decided the column. */
+  stats: ColumnStats | undefined;
+  outcome: ColumnOutcome;
 }
+
+/**
+ * What a column gets: its rule's action, or for no rule (or unknown/value) what `unruled` says:
+ * the fail-closed identifier-like test, or `scan`. An identifier-like column of people's names
+ * (prose.ts isPersonColumn) is pseudonymised as `person`, not `value`, so their name parts recur in
+ * free text (AGT-1830).
+ */
+export function decide(rule: ColumnRule | undefined, values: readonly string[], ctx: ColumnContext = {}, unruled: ColumnDefault = "fallback"): Decision {
+  const planned = rule === undefined ? "heuristic" : ruleAction(rule);
+  if (planned !== "heuristic") return { action: planned, stats: undefined, outcome: outcomeOf(planned, undefined) };
+  if (unruled === "scan") return { action: { kind: "free" }, stats: undefined, outcome: "unknown-scanned" };
+  const stats = columnStats(values, ctx);
+  const action: ColumnAction = isIdentifierLike(stats) ? { kind: "pseudo", cls: isPersonColumn(values) ? "person" : "value" } : { kind: "free" };
+  return { action, stats, outcome: outcomeOf(action, stats) };
+}
+
+/** A column whose cell values are held whole on purpose (`keep`, `scan`, or the `scan` default): the fallback never pseudonymises them elsewhere. */
+export const holdsWhole = (outcome: ColumnOutcome): boolean => outcome === "kept" || outcome === "scanned" || outcome === "unknown-scanned";
+
+/** A column the fail-closed identifier-like test pseudonymised whole. */
+export const isFallback = (outcome: ColumnOutcome): boolean => outcome === "unknown-pseudonymised" || outcome === "unknown-person";
 
 const EMAIL_SHAPE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
@@ -78,5 +107,6 @@ export function outcomeOf(action: ColumnAction, stats: ColumnStats | undefined):
   if (action.kind === "keep") return "kept";
   if (action.kind === "drop") return "dropped";
   if (action.kind === "redact") return "redacted";
+  if (action.kind === "free") return "scanned";
   return action.kind === "pseudo" && action.cls !== "value" ? "blinded" : "value";
 }

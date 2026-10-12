@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CONTEXT_KINDS, type ContextTriggerSpec } from "./engine/context.ts";
+import { COLUMN_DEFAULTS, type ColumnDefault } from "./engine/columns.ts";
 import type { EntityClassName, PatternName, Spec, Treatment } from "./schema.ts";
 
 /** The policy file `blind init` writes and every later command reads. */
@@ -45,7 +46,7 @@ export type PolicyPatterns = Partial<Record<PatternName, boolean>>;
 
 /** Every spec class, for a `[[columns]]` rule's `class`. */
 export const COLUMN_CLASSES: readonly EntityClassName[] = ["person", "org", "host", "email", "id", "location", "vocabulary", "unknown"];
-export const COLUMN_TREATMENTS: readonly Treatment[] = ["keep", "drop", "blind", "value", "redact"];
+export const COLUMN_TREATMENTS: readonly Treatment[] = ["keep", "scan", "drop", "blind", "value", "redact"];
 
 /**
  * A `[[columns]]` rule: the columns (and JSON keys) whose header matches one of `header` (globs,
@@ -57,7 +58,7 @@ export interface ColumnPolicyRule {
   header: string[];
   file?: string;
   treatment: Treatment;
-  /** Defaults to `vocabulary` for `keep` and to `unknown` for the rest. */
+  /** Defaults to `vocabulary` for `keep` and to `unknown` for the rest (a `scan` column needs no class). */
   class: EntityClassName;
 }
 
@@ -82,6 +83,12 @@ export interface Policy {
   columns: ColumnPolicyRule[];
   /** `[context]`: redaction of the value after a keyword such as "gate code" or "password" (engine/context.ts). */
   context: { enabled: boolean; triggers: ContextTriggerSpec[] };
+  /**
+   * `[defaults] columns`: what a column with no rule (or an unknown/value rule) gets at apply time.
+   * `fallback` (the default) is the fail-closed identifier-like test; `scan` keeps every cell and
+   * replaces only what the free-text scanner finds in it.
+   */
+  defaults: { columns: ColumnDefault };
 }
 
 /** The spec with blind.toml's `[patterns]` switches laid over its own: the patterns apply and audit use. */
@@ -120,6 +127,7 @@ export function defaultPolicy(): Policy {
     patterns: { ip: true, host: true },
     columns: [],
     context: { enabled: true, triggers: [] },
+    defaults: { columns: "fallback" },
   };
 }
 
@@ -200,8 +208,18 @@ export function renderPolicy(p: Policy): string {
     "# header: header globs (* and ?, any case); a JSON key matches by its name. file: optional path glob",
     `# (* within a folder, ** across folders). treatment: ${COLUMN_TREATMENTS.join(" | ")}. class: optional.`,
     "# A column whose header is a [keep] term is kept too, unless a rule here says otherwise.",
+    "# keep: byte-identical, nothing in it is replaced. scan: kept as written apart from what the free-text",
+    "# scanner finds (phones, emails, names, plates and codes after a keyword): the one for notes, remarks, diagnoses.",
     ...(p.columns.length === 0
-      ? ["# [[columns]]", '# header = ["species", "weight*", "visit date"]', '# treatment = "keep"']
+      ? [
+          "# [[columns]]",
+          '# header = ["species", "weight*", "visit date"]',
+          '# treatment = "keep"',
+          "#",
+          "# [[columns]]",
+          '# header = ["notes", "remarks", "diagnosis"]',
+          '# treatment = "scan"',
+        ]
       : p.columns.flatMap((c, i) => [
           ...(i === 0 ? [] : [""]),
           "[[columns]]",
@@ -210,6 +228,13 @@ export function renderPolicy(p: Policy): string {
           `treatment = ${str(c.treatment)}`,
           `class = ${str(c.class)}`,
         ])),
+    "",
+    "[defaults]",
+    "# What a column no rule decides gets. fallback: an identifier-like column (mostly distinct codes, names or",
+    "# numbers) is pseudonymised whole, the rest scanned as text. scan: every such column is kept and scanned as",
+    "# text; only a rule pseudonymises a column whole. Either way a value kept whole in a keep or scan column is",
+    "# never pseudonymised whole by the fallback elsewhere.",
+    p.defaults.columns === "fallback" ? '# columns = "fallback"' : `columns = ${str(p.defaults.columns)}`,
     "",
   ].join("\n");
 }
@@ -346,7 +371,7 @@ export function parsePolicy(text: string, source = POLICY_FILE): Policy {
   }
   if (!isTable(doc)) throw new PolicyError(`${source}: not a TOML table`);
   const r = new Reader(source);
-  r.noExtra(doc, "", ["sensitive", "keep", "models", "profile", "privacy", "patterns", "columns", "context"]);
+  r.noExtra(doc, "", ["sensitive", "keep", "models", "profile", "privacy", "patterns", "columns", "context", "defaults"]);
 
   const sensitive = r.table(doc, "sensitive", "sensitive", ["classes", "description", "examples"]);
   const classes = r.strings(sensitive, "classes", "sensitive.classes");
@@ -386,7 +411,15 @@ export function parsePolicy(text: string, source = POLICY_FILE): Policy {
     patterns,
     columns: readColumns(r, doc, source),
     context: readContext(r, doc),
+    defaults: readDefaults(r, doc),
   };
+}
+
+/** `[defaults]` is optional, and so is its one key. */
+function readDefaults(r: Reader, doc: Table): Policy["defaults"] {
+  if (doc.defaults === undefined) return { columns: "fallback" };
+  const t = r.table(doc, "defaults", "defaults", ["columns"]);
+  return { columns: t.columns === undefined ? "fallback" : r.oneOf(t, "columns", "defaults.columns", COLUMN_DEFAULTS) };
 }
 
 /** `[context]` is optional, and so is each key in it. A trigger is a word or phrase, so it may not be blank. */

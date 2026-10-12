@@ -177,7 +177,7 @@ describe("checkProposal", () => {
     expect(checkProposal(proposal, profile)).toEqual([{ path: "$.questions[1].about", message: "same column as $.questions[0].about; ask once per column" }]);
   });
 
-  test("rejects an analyst rule that drops or redacts a column; blind, keep and value pass", () => {
+  test("rejects an analyst rule that drops, redacts or scans a column; blind, keep and value pass", () => {
     const profile: Profile = {
       version: 1, sampleCount: 0, files: [{ path: "a.csv", format: "csv", size: 10 }],
       tables: [{ file: "a.csv", headerRow: 1, columns: [{ header: "col", stats: stats() }] }],
@@ -190,9 +190,9 @@ describe("checkProposal", () => {
       patterns: { ip: true, email: true, host: true, guid: true, mac: false },
       questions: [],
     });
-    for (const treatment of ["drop", "redact"] as const) {
+    for (const treatment of ["drop", "redact", "scan"] as const) {
       expect(checkProposal(with_(treatment, "id"), profile)).toEqual([
-        { path: "$.columns[0].treatment", message: 'must be "blind", "keep" or "value"; only blind.toml or a human may drop or redact a column' },
+        { path: "$.columns[0].treatment", message: 'must be "blind", "keep" or "value"; only blind.toml or a human may drop, redact or scan a column' },
       ]);
     }
     expect(checkProposal(with_("blind", "id"), profile)).toEqual([]);

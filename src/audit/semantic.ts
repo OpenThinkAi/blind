@@ -666,15 +666,17 @@ const extOf = (path: string): string => {
 
 /**
  * Terms this file's own spec rules explain: the headers the spec names, and every value of a
- * column (CSV/TSV header, or JSON key path) the spec classifies as vocabulary. A table or JSON
+ * column (CSV/TSV header, or JSON key path) the spec classifies as vocabulary, unless it is `scan`. A table or JSON
  * file that cannot be read contributes none, so nothing is excluded that was not read.
  */
 function fileTerms(path: string, bytes: Uint8Array, spec: Spec): string[] {
   const rules = spec.columns.filter((r) => r.file === path);
   if (rules.length === 0) return [];
   const terms: string[] = rules.flatMap((r) => (r.header !== undefined ? [r.header] : []));
-  const vocabHeaders = new Set(rules.filter((r) => r.class === "vocabulary" && r.header !== undefined).map((r) => (r.header as string).trim()));
-  const vocabPaths = new Set(rules.filter((r) => r.class === "vocabulary" && r.jsonPath !== undefined).map((r) => r.jsonPath as string));
+  // A `scan` column is free text whatever its class: its values are audited, never explained away.
+  const vocab = rules.filter((r) => r.class === "vocabulary" && r.treatment !== "scan");
+  const vocabHeaders = new Set(vocab.filter((r) => r.header !== undefined).map((r) => (r.header as string).trim()));
+  const vocabPaths = new Set(vocab.filter((r) => r.jsonPath !== undefined).map((r) => r.jsonPath as string));
   if (vocabHeaders.size === 0 && vocabPaths.size === 0) return terms;
   let text: string;
   try {

@@ -8,9 +8,11 @@ export type EntityClassName =
 
 /**
  * `drop` removes the column (or JSON key) from the output; `redact` writes REDACTED_VALUE in every
- * non-empty cell. Neither is recorded in the map, so neither can be revealed.
+ * non-empty cell. Neither is recorded in the map, so neither can be revealed. `scan` keeps the cell
+ * as written except for what the free-text scanner finds in it (patterns, spec entities, recurring
+ * values, people named only in prose, context-keyword secrets), as a free-text cell.
  */
-export type Treatment = "blind" | "keep" | "value" | "drop" | "redact";
+export type Treatment = "blind" | "keep" | "value" | "drop" | "redact" | "scan";
 export type Source = "analyst" | "human" | "heuristic";
 /** A column rule's author: `policy` for a rule `blind plan` wrote from blind.toml (`[[columns]]` or `[keep].terms`). */
 export type ColumnSource = Source | "policy";

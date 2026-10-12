@@ -11,13 +11,14 @@ import { MAP_FILE, SPEC_FILE } from "../apply.ts";
 import { MapError, readMap } from "../engine/map.ts";
 import { BLIND_DIR } from "../init.ts";
 import { type AskOptions, ModelError, modelsEnabled } from "../model.ts";
-import { loadPolicy, PolicyError, type PolicyPatterns } from "../policy.ts";
+import { loadPolicy, POLICY_FILE, PolicyError, type PolicyPatterns } from "../policy.ts";
 import { writeProfile } from "../profile/command.ts";
 import { buildProfile, forPrivacyMode, InputError } from "../profile/profile.ts";
-import type { ColumnRule, EntityClassName, Location, Spec } from "../schema.ts";
+import { type ColumnRule, type EntityClassName, type Location, REDACTED_VALUE, type Spec } from "../schema.ts";
 import { parseSpec, SchemaError, validateProfile, validateSpec } from "../validate.ts";
 import { AnalystError, answerQuestion, proposeSpec, runAnalyst } from "./analyst.ts";
 import { heuristicSpec } from "./heuristic.ts";
+import { applyColumnPolicy } from "./policycolumns.ts";
 import {
   ACCEPT_CLASSES,
   type AcceptClass,
@@ -57,6 +58,11 @@ const PLAN_HELP = [
   "then entities and patterns. The model sees only the profile (`blind profile` shows it). Nothing",
   "is changed until you run `blind apply`. Edit the spec file, or answer questions with --answer.",
   "A column with an unanswered question stays unknown.",
+  "",
+  "Column rules in blind.toml ([[columns]]: header glob, optional file glob, treatment keep, drop,",
+  "blind, value or redact, optional class) and headers that are [keep] terms decide their columns",
+  "ahead of the model and the heuristic, on every plan (a human rule in the spec is kept); they are",
+  "saved with source \"policy\".",
   "",
   "When .blind/spec.json exists it is reused: the analyst is sent only the columns, keys and",
   "document excerpts the spec does not cover yet (nothing at all when there are none), and its reply",
@@ -121,10 +127,17 @@ export function renderSpec(spec: Spec, policyPatterns: PolicyPatterns = {}): str
   out.push("");
 
   out.push(`columns (${spec.columns.length}):`);
-  for (const cls of CLASS_ORDER) {
-    const rules = spec.columns.filter((c) => c.class === cls);
+  const removes = (c: ColumnRule) => c.treatment === "drop" || c.treatment === "redact";
+  const sections: [string, ColumnRule[]][] = [
+    [`removed (drop: taken out of the output; redact: every value written as ${REDACTED_VALUE})`, spec.columns.filter(removes)],
+    ...CLASS_ORDER.map((cls): [string, ColumnRule[]] => [
+      `${cls}${cls === "unknown" ? " (value: decided at apply time, identifier-like columns get Value_ pseudonyms; blind: always Value_)" : ""}`,
+      spec.columns.filter((c) => c.class === cls && !removes(c)),
+    ]),
+  ];
+  for (const [label, rules] of sections) {
     if (rules.length === 0) continue;
-    out.push(`  ${cls}${cls === "unknown" ? " (value: decided at apply time, identifier-like columns get Value_ pseudonyms; blind: always Value_)" : ""}`);
+    out.push(`  ${label}`);
     const rows = rules.map((c: ColumnRule) => [where(c), c.treatment, c.confidence.toFixed(2), c.source]);
     const widths = [0, 1, 2].map((i) => Math.max(...rows.map((r) => (r[i] ?? "").length)));
     for (const r of rows) out.push(`    ${r.map((cell, i) => (i < 3 ? cell.padEnd(widths[i] ?? 0) : cell)).join("  ")}`);
@@ -356,6 +369,13 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
       filled = merged.filled;
     }
     for (const l of filled) remarks.push(`the analyst left out ${where(l)}; the heuristic rule was used`);
+    // blind.toml's column rules ([[columns]], and headers that are [keep] terms) decide ahead of everything else.
+    const overlay = applyColumnPolicy(spec, profile, policy);
+    spec = overlay.spec;
+    if (overlay.decided.length > 0) remarks.push(`${overlay.decided.length} column(s) and key(s) decided by ${POLICY_FILE} (source policy)`);
+    for (const id of overlay.removedQuestions) remarks.push(`question ${id} removed: ${POLICY_FILE} decides its column`);
+    for (const l of overlay.human) remarks.push(`${where(l)}: the spec's human rule is kept over the ${POLICY_FILE} rule for it`);
+    for (const l of overlay.reverted) remarks.push(`${where(l)}: no ${POLICY_FILE} rule matches it any more; the heuristic rule was used`);
 
     const written = writeSpec(io.cwd, checked(spec));
     if (values.json) {

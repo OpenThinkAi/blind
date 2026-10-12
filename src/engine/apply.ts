@@ -45,13 +45,13 @@
 // is blinded through src/engine/names.ts (patterns, entities and the column
 // values replaced above), planned with the cells and rendered after them.
 
-import type { ColumnRule, EntityClassName, Spec, Treatment } from "../schema.ts";
+import { type ColumnRule, type EntityClassName, REDACTED_VALUE, type Spec, type Treatment } from "../schema.ts";
 import type { PseudoClass } from "./canonical.ts";
 // The profiler's header rule: spec rules name columns by the headers the profile reported.
 import { detectHeaderRow } from "../profile/table.ts";
 import { assertRowWidths, type Cell, CsvError, parseCsv, renderCell, type Row, serializeCsv, sniffDelimiter } from "./csv.ts";
 import { decode, type Encoding, EncodingError, encode } from "./encoding.ts";
-import { isJsonNumber, type JsonFormat, JsonError, type JsonToken, quote, scanJson, scanJsonl, stringOffsets } from "./json.ts";
+import { isJsonNumber, type JsonFormat, JsonError, type JsonToken, jsonCuts, quote, scanJson, scanJsonl, stringOffsets } from "./json.ts";
 import type { BlindMap } from "./map.ts";
 import { type EntityEntry, Pseudonymizer } from "./pseudonym.ts";
 import { type ColumnOutcome, decide, outcomeOf } from "./columns.ts";
@@ -212,7 +212,8 @@ export class ApplyError extends Error {
 /** Code-unit order, never locale order. */
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
-type CellEdit = { kind: "pseudo"; cls: PseudoClass } | { kind: "spans"; spans: Span[] };
+/** `fixed`: the whole value replaced by a set text (a `redact` column's REDACTED_VALUE). */
+type CellEdit = { kind: "pseudo"; cls: PseudoClass } | { kind: "spans"; spans: Span[] } | { kind: "fixed"; value: string };
 
 /** Text scanned once every column is decided: a cell kept as text or under `keep`, a header, a JSON key. */
 interface Pending<K> {
@@ -239,6 +240,8 @@ interface TablePlan {
   /** Values the column pass pseudonymised (columns classed `vocabulary` aside): they recur elsewhere. */
   mapped: ExtraForm[];
   columns: ColumnReport[];
+  /** 0-based indices of `drop` columns, removed from every row (preamble and header too) on render. */
+  dropped: Set<number>;
 }
 
 interface TextPlan {
@@ -264,6 +267,8 @@ interface JsonPlan {
   pending: Pending<number>[];
   mapped: ExtraForm[];
   columns: ColumnReport[];
+  /** Text ranges removed for `drop` key paths (jsonCuts), and the tokens inside them. */
+  cuts: { ranges: [number, number][]; tokens: Set<number> };
 }
 
 interface DocxFilePlan {
@@ -325,6 +330,7 @@ function planTable(
   const pending: Pending<string>[] = [];
   const mapped: ExtraForm[] = [];
   const columns: ColumnReport[] = [];
+  const dropped = new Set<number>();
   const data = rows.slice(headerRow + 1);
   for (let col = 0; col < width; col++) {
     const header = headers[col] as string;
@@ -340,19 +346,28 @@ function planTable(
       flagged: 0,
     };
     columns.push(column);
+    if (action.kind === "drop") {
+      dropped.add(col);
+      column.changed = data.filter((row) => isFilled(row.cells[col])).length;
+      continue;
+    }
     data.forEach((row, i) => {
       const cell = row.cells[col];
       if (!isFilled(cell)) return;
       const key = `${headerRow + 1 + i}:${col}`;
-      if (action.kind === "pseudo") {
+      if (action.kind === "redact") edits.set(key, { kind: "fixed", value: REDACTED_VALUE });
+      else if (action.kind === "pseudo") {
         edits.set(key, { kind: "pseudo", cls: action.cls });
         if (rule?.class !== "vocabulary") mapped.push({ cls: action.cls, value: cell.value });
       } else pending.push({ key, value: cell.value, keep: action.kind === "keep", column });
     });
   }
-  // Preamble rows and the header row are free text.
+  // Preamble rows and the header row are free text. A dropped column leaves with its header; a
+  // preamble row (a title, a note) is not part of any column and is never cut.
   for (let r = 0; r <= headerRow; r++) {
-    (rows[r] as Row).cells.forEach((cell, col) => pending.push({ key: `${r}:${col}`, value: cell.value, keep: false, column: null }));
+    (rows[r] as Row).cells.forEach((cell, col) => {
+      if (r < headerRow || !dropped.has(col)) pending.push({ key: `${r}:${col}`, value: cell.value, keep: false, column: null });
+    });
   }
   return {
     kind: "table",
@@ -368,6 +383,7 @@ function planTable(
     pending,
     mapped,
     columns,
+    dropped,
   };
 }
 
@@ -400,8 +416,14 @@ function planJson(
   const pending: Pending<number>[] = [];
   const mapped: ExtraForm[] = [];
   const columns: ColumnReport[] = [];
+  const dropped: number[] = [];
   for (const [path, indices] of byPath) {
     const rule = rules.find((r) => r.jsonPath === path);
+    if ((rule?.treatment === "drop" || rule?.treatment === "redact") && (path === "$" || path.endsWith("~"))) {
+      throw new ApplyError(
+        `${input.path}: the spec ${rule.treatment === "drop" ? "drops" : "redacts"} key path ${JSON.stringify(path)}, which is ${path === "$" ? "the document root" : "a set of record-ID keys"}; drop and redact apply to values under a key`,
+      );
+    }
     const valued = indices.filter((i) => (tokens[i] as JsonToken).kind !== "literal");
     const { action, stats } = decide(rule, valued.map((i) => (tokens[i] as JsonToken).value));
     const column: ColumnReport = {
@@ -415,20 +437,31 @@ function planJson(
       flagged: 0,
     };
     columns.push(column);
+    if (action.kind === "drop") {
+      // The member goes whatever its value, null included.
+      dropped.push(...indices);
+      column.changed = indices.length;
+      continue;
+    }
     for (const i of valued) {
       const value = (tokens[i] as JsonToken).value;
       if (value.trim() === "") continue;
+      if (action.kind === "redact") {
+        edits.set(i, { kind: "fixed", value: REDACTED_VALUE });
+        continue;
+      }
       if (action.kind === "pseudo") {
         edits.set(i, { kind: "pseudo", cls: action.cls });
         if (rule?.class !== "vocabulary") mapped.push({ cls: action.cls, value });
       } else pending.push({ key: i, value, keep: action.kind === "keep", column });
     }
   }
-  // Structural keys (field names) are free text, like a table's header row.
+  const cuts = jsonCuts(text, tokens, dropped);
+  // Structural keys (field names) are free text, like a table's header row; a dropped member's key goes with it.
   tokens.forEach((t, i) => {
-    if (t.kind === "key" && t.column === null) pending.push({ key: i, value: t.value, keep: false, column: null });
+    if (t.kind === "key" && t.column === null && !cuts.tokens.has(i)) pending.push({ key: i, value: t.value, keep: false, column: null });
   });
-  return { kind: "json", format, input, encoding, text, tokens, edits, pending, mapped, columns };
+  return { kind: "json", format, input, encoding, text, tokens, edits, pending, mapped, columns, cuts };
 }
 
 /** A string literal with the spans replaced; every untouched character keeps its original escaping. */
@@ -456,13 +489,15 @@ function renderJson(
   let patternReplacements = 0;
   let mappedReplacements = 0;
   let keptHosts = 0;
-  let out = "";
-  let at = 0;
+  // Replacements and cuts, spliced into the text at the end; they never overlap.
+  const patches: { start: number; end: number; text: string }[] = p.cuts.ranges.map(([start, end]) => ({ start, end, text: "" }));
   p.tokens.forEach((t, i) => {
+    if (p.cuts.tokens.has(i)) return;
     const edit = p.edits.get(i);
     let value = t.value;
     if (edit !== undefined) {
       if (edit.kind === "pseudo") value = pz.pseudonym(edit.cls, t.value);
+      else if (edit.kind === "fixed") value = edit.value;
       else {
         value = rewriteSpans(t.value, edit.spans, pz);
         entityReplacements += count(edit.spans, "entity");
@@ -474,9 +509,8 @@ function renderJson(
         const raw = p.text.slice(t.start, t.end);
         // A number stays a bare number when its replacement is one; otherwise it becomes a string.
         const written =
-          t.kind === "number" ? (isJsonNumber(value) ? value : quote(value)) : edit.kind === "pseudo" ? quote(value) : spliceString(raw, edit.spans, pz);
-        out += p.text.slice(at, t.start) + written;
-        at = t.end;
+          t.kind === "number" ? (isJsonNumber(value) ? value : quote(value)) : edit.kind !== "spans" ? quote(value) : spliceString(raw, edit.spans, pz);
+        patches.push({ start: t.start, end: t.end, text: written });
         if (t.column !== null) (byPath.get(t.column) as ColumnReport).changed++;
       }
     }
@@ -492,6 +526,12 @@ function renderJson(
       keys.set(t.object as number, seen);
     }
   });
+  let out = "";
+  let at = 0;
+  for (const x of patches.sort((a, b) => a.start - b.start)) {
+    out += p.text.slice(at, x.start) + x.text;
+    at = x.end;
+  }
   return { text: out + p.text.slice(at), entityReplacements, patternReplacements, mappedReplacements, keptHosts };
 }
 
@@ -574,7 +614,9 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     }
     if (format === "xlsx") {
       try {
-        plans.push({ kind: "xlsx", input, plan: planXlsx(input.path, input.bytes, rules) });
+        const plan = planXlsx(input.path, input.bytes, rules);
+        if (plan.refusal !== undefined) skipped.push({ path: input.path, reason: `${plan.refusal}; not written` });
+        else plans.push({ kind: "xlsx", input, plan });
       } catch (e) {
         if (e instanceof XlsxSpecError) throw new ApplyError(e.message);
         if (!(e instanceof XlsxError || e instanceof ZipError)) throw e;
@@ -762,7 +804,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       for (const [i, edit] of p.edits) {
         if (edit.kind === "spans") {
           for (const s of edit.spans) if (s.cls !== null) want(s.cls, s.value);
-        } else want(edit.cls, (p.tokens[i] as JsonToken).value);
+        } else if (edit.kind === "pseudo") want(edit.cls, (p.tokens[i] as JsonToken).value);
       }
       continue;
     }
@@ -773,7 +815,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     for (const [key, edit] of p.edits) {
       if (edit.kind === "spans") {
         for (const s of edit.spans) if (s.cls !== null) want(s.cls, s.value);
-      } else {
+      } else if (edit.kind === "pseudo") {
         const [r, c] = key.split(":").map(Number) as [number, number];
         want(edit.cls, ((p.rows[r] as Row).cells[c] as Cell).value);
       }
@@ -904,6 +946,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         const cell = (p.rows[r] as Row).cells[c] as Cell;
         let value: string;
         if (edit.kind === "pseudo") value = pz.pseudonym(edit.cls, cell.value);
+        else if (edit.kind === "fixed") value = edit.value;
         else {
           value = rewriteSpans(cell.value, edit.spans, pz);
           entityReplacements += count(edit.spans, "entity");
@@ -915,6 +958,12 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         cell.raw = renderCell(value, cell.quoted, p.delim);
         cell.value = value;
         if (r > p.headerRow) (p.columns[c] as ColumnReport).changed++;
+      }
+      if (p.dropped.size > 0) {
+        for (let r = Math.max(0, p.headerRow); r < p.rows.length; r++) {
+          const row = p.rows[r] as Row;
+          row.cells = row.cells.filter((_, c) => !p.dropped.has(c));
+        }
       }
       text = serializeCsv(p.rows, p.delim);
       report = {

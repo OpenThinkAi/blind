@@ -27,6 +27,10 @@ attention. `blind run --accept-leaks` turns each leak the audit finds into a spe
 apply and audit again, so the loop closes without you or a model; candidates are still yours to
 decide. `blind <command> --help` lists every option and exit status.
 
+Columns you already know about can be decided in `blind.toml`, with no model at all: a
+`[[columns]]` rule matches headers by glob and keeps, drops, blinds or redacts them (see
+[docs/policy.md](docs/policy.md#columns)).
+
 ## What a model sees
 
 Your documents are never sent to a model. These are the only things that are:

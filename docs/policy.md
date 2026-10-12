@@ -51,7 +51,7 @@ host = true
 ```
 
 `[sensitive]`, `[keep]`, `[models.analyst]`, `[profile]` and `[privacy]` must be present.
-`[models.auditor]`, `profile.samples` and `[patterns]` are optional.
+`[models.auditor]`, `profile.samples`, `[patterns]` and [`[[columns]]`](#columns) rules are optional.
 
 ## `[sensitive]`
 
@@ -95,10 +95,61 @@ What a keep term does:
 - **Audit.** The audit does not report a keep term, a Title-Case phrase made of keep terms, or a
   host under a kept domain, and the model auditor is told to leave them.
 - **Models.** The analyst and auditor are sent the list so they do not propose or report them.
+- **Columns.** A table column, or a JSON key, whose header (key name) equals a keep term, ignoring
+  case and runs of spaces, is kept: `blind plan` writes it into the spec as `vocabulary`/`keep`
+  with `source: "policy"`, as a [`[[columns]]`](#columns) rule would. A `[[columns]]` rule that
+  matches the column wins over the term.
 
-A keep term does **not** override your spec: a value or entity the spec blinds is blinded even when
+A keep term does **not** override your spec's values: a value or entity the spec blinds is blinded even when
 it also appears in the keep list. To keep it, take it out of the spec (or classify it as
 `vocabulary`).
+
+## `[[columns]]`
+
+Column rules: a policy such as "keep species, weight, visit date and microchip; drop the notes"
+written in `blind.toml`, with no model and no spec edit. Each `[[columns]]` table is one rule.
+
+```toml
+[[columns]]
+header = ["species", "weight*", "visit date", "microchip"]
+treatment = "keep"
+
+[[columns]]
+header = "gate code"
+treatment = "redact"
+
+[[columns]]
+header = "notes"
+file = "clinic/**/*.csv"
+treatment = "drop"
+
+[[columns]]
+header = "owner"
+treatment = "blind"
+class = "person"
+```
+
+| Key | Type | Required | Meaning |
+|---|---|---|---|
+| `header` | string or array of strings | yes | Header globs: `*` any run of characters, `?` one. Case and runs of spaces do not matter. A JSON key path matches by its last key name (`$.visits[*].weight` by `weight`); the root and record-ID keys (`.*~`) never match. |
+| `file` | string | no | A glob on the input-relative path (`/`-separated): `*` and `?` within one folder, `**` across folders. Absent: every file. |
+| `treatment` | `"keep"`, `"drop"`, `"blind"`, `"value"` or `"redact"` | yes | What the matching columns get (the spec's treatments, [spec.md](spec.md#columns)). `drop` removes the column or key from the output; `redact` writes `REDACTED` in each non-empty value. Neither is in the map, so neither can be revealed. |
+| `class` | a spec class (`person`, `org`, `host`, `email`, `id`, `location`, `vocabulary`, `unknown`) | no | Default: `vocabulary` for `keep`, `unknown` otherwise. `keep` with `unknown` is an error. `blind` with a sensitive class gives that class's pseudonyms; with `unknown`, `Value_` ones. `value` with `unknown` leaves the column to the engine's identifier-like test. |
+
+How they apply:
+
+- **When.** `blind plan` (and so `blind run`) writes them into the spec after the analyst or the
+  heuristic has proposed its rules, on every plan, with `source: "policy"`. The first rule that
+  matches a column wins; a [keep term](#keep) naming the header comes after every rule. `blind
+  apply` reads only the spec, so re-plan after editing this table.
+- **What they override.** Analyst, heuristic and earlier policy rules. A spec rule with
+  `source: "human"` (an answered question, or a rule you wrote) is kept, and the plan says so. An
+  unanswered question about a column a rule now decides is removed.
+- **Removing a rule.** On the next plan, a column whose saved rule came from a `[[columns]]` rule
+  that is gone goes back to the heuristic rule.
+- **XLSX.** A dropped column keeps its place in the worksheet with its data cells emptied, so
+  references stay valid. A number, date or boolean cell in a dropped or redacted column, or a
+  pivot or chart cache, stops the workbook from being written; see [spec.md](spec.md#how-blind-apply-uses-the-spec).
 
 ## `[models.analyst]` and `[models.auditor]`
 

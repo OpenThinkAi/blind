@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { PatternName, Spec } from "./schema.ts";
+import type { EntityClassName, PatternName, Spec, Treatment } from "./schema.ts";
 
 /** The policy file `blind init` writes and every later command reads. */
 export const POLICY_FILE = "blind.toml";
@@ -41,6 +41,24 @@ export const POLICY_PATTERNS = Object.keys(PATTERN_HELP) as PatternName[];
 /** Only the patterns blind.toml sets; an unset one follows the spec. */
 export type PolicyPatterns = Partial<Record<PatternName, boolean>>;
 
+/** Every spec class, for a `[[columns]]` rule's `class`. */
+export const COLUMN_CLASSES: readonly EntityClassName[] = ["person", "org", "host", "email", "id", "location", "vocabulary", "unknown"];
+export const COLUMN_TREATMENTS: readonly Treatment[] = ["keep", "drop", "blind", "value", "redact"];
+
+/**
+ * A `[[columns]]` rule: the columns (and JSON keys) whose header matches one of `header` (globs,
+ * case-insensitive), in the files `file` matches (a glob on the input-relative path; absent = every
+ * file), get `treatment` and `class`. `blind plan` writes them into the spec ahead of the analyst
+ * and the heuristic; the first matching rule wins.
+ */
+export interface ColumnPolicyRule {
+  header: string[];
+  file?: string;
+  treatment: Treatment;
+  /** Defaults to `vocabulary` for `keep` and to `unknown` for the rest. */
+  class: EntityClassName;
+}
+
 export interface Policy {
   sensitive: { classes: SensitiveClass[]; description: string; examples: string[] };
   keep: { terms: string[] };
@@ -58,6 +76,8 @@ export interface Policy {
   privacy: { mode: PrivacyMode };
   /** `[patterns]`: switches that win over the spec's `patterns` at apply and audit time. */
   patterns: PolicyPatterns;
+  /** `[[columns]]`, in file order. */
+  columns: ColumnPolicyRule[];
 }
 
 /** The spec with blind.toml's `[patterns]` switches laid over its own: the patterns apply and audit use. */
@@ -93,6 +113,7 @@ export function defaultPolicy(): Policy {
     privacy: { mode: "local-only" },
     // IPs and host names are found in free text even when "host" is not a listed class.
     patterns: { ip: true, host: true },
+    columns: [],
   };
 }
 
@@ -158,6 +179,21 @@ export function renderPolicy(p: Policy): string {
       const v = p.patterns[name];
       return v === undefined ? `# ${name} = true   # ${PATTERN_HELP[name]}` : `${name} = ${v}   # ${PATTERN_HELP[name]}`;
     }),
+    "",
+    "# Column rules, applied by `blind plan` before the analyst and the heuristic; the first match wins.",
+    "# header: header globs (* and ?, any case); a JSON key matches by its name. file: optional path glob",
+    `# (* within a folder, ** across folders). treatment: ${COLUMN_TREATMENTS.join(" | ")}. class: optional.`,
+    "# A column whose header is a [keep] term is kept too, unless a rule here says otherwise.",
+    ...(p.columns.length === 0
+      ? ["# [[columns]]", '# header = ["species", "weight*", "visit date"]', '# treatment = "keep"']
+      : p.columns.flatMap((c, i) => [
+          ...(i === 0 ? [] : [""]),
+          "[[columns]]",
+          `header = ${list(c.header)}`,
+          ...(c.file === undefined ? [] : [`file = ${str(c.file)}`]),
+          `treatment = ${str(c.treatment)}`,
+          `class = ${str(c.class)}`,
+        ])),
     "",
   ].join("\n");
 }
@@ -256,6 +292,34 @@ function readModels(r: Reader, models: Table): Policy["models"] {
   return { analyst, auditor: readModel(r, models, "auditor"), auditorExplicit: true };
 }
 
+const COLUMN_RULE_KEYS = ["header", "file", "treatment", "class"] as const;
+
+function readColumns(r: Reader, doc: Table, source: string): ColumnPolicyRule[] {
+  const v = doc.columns;
+  if (v === undefined) return [];
+  if (!Array.isArray(v) || !v.every(isTable)) r.fail("columns", "an array of tables ([[columns]])", v);
+  return (v as Table[]).map((t, i): ColumnPolicyRule => {
+    const path = `columns[${i}]`;
+    r.noExtra(t, path, COLUMN_RULE_KEYS);
+    const raw = t.header;
+    const header = typeof raw === "string" ? [raw] : r.strings(t, "header", `${path}.header`);
+    if (header.length === 0 || header.some((h) => h.trim() === "")) r.fail(`${path}.header`, "a non-empty glob or array of non-empty globs", raw);
+    const treatment = r.oneOf(t, "treatment", `${path}.treatment`, COLUMN_TREATMENTS);
+    const cls = t.class === undefined ? (treatment === "keep" ? "vocabulary" : "unknown") : r.oneOf(t, "class", `${path}.class`, COLUMN_CLASSES);
+    // The spec's fail-closed rule: nobody decided an `unknown` column, so it may not pass through.
+    if (cls === "unknown" && treatment === "keep") {
+      throw new PolicyError(`${source}: ${path}: class "unknown" cannot use treatment "keep"; leave class out or name one (e.g. "vocabulary")`);
+    }
+    const rule: ColumnPolicyRule = { header, treatment, class: cls };
+    if (t.file !== undefined) {
+      const file = r.string(t, "file", `${path}.file`);
+      if (file.trim() === "") r.fail(`${path}.file`, "a non-empty glob", file);
+      rule.file = file;
+    }
+    return rule;
+  });
+}
+
 /** Parse and validate policy TOML. Throws PolicyError naming the offending key and expected type. */
 export function parsePolicy(text: string, source = POLICY_FILE): Policy {
   let doc: unknown;
@@ -266,7 +330,7 @@ export function parsePolicy(text: string, source = POLICY_FILE): Policy {
   }
   if (!isTable(doc)) throw new PolicyError(`${source}: not a TOML table`);
   const r = new Reader(source);
-  r.noExtra(doc, "", ["sensitive", "keep", "models", "profile", "privacy", "patterns"]);
+  r.noExtra(doc, "", ["sensitive", "keep", "models", "profile", "privacy", "patterns", "columns"]);
 
   const sensitive = r.table(doc, "sensitive", "sensitive", ["classes", "description", "examples"]);
   const classes = r.strings(sensitive, "classes", "sensitive.classes");
@@ -297,6 +361,7 @@ export function parsePolicy(text: string, source = POLICY_FILE): Policy {
     profile: { samples, samplesExplicit },
     privacy: { mode },
     patterns,
+    columns: readColumns(r, doc, source),
   };
 }
 

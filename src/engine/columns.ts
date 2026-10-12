@@ -9,6 +9,8 @@ export type ColumnOutcome =
   | "blinded"
   | "value"
   | "kept"
+  | "dropped"
+  | "redacted"
   | "unknown-pseudonymised"
   | "unknown-kept-low-cardinality"
   | "unknown-kept-not-identifier-like"
@@ -16,10 +18,13 @@ export type ColumnOutcome =
 
 const SENSITIVE: ReadonlySet<EntityClassName> = new Set(["person", "org", "host", "email", "id", "location"]);
 
-export type ColumnAction = { kind: "keep" } | { kind: "pseudo"; cls: PseudoClass } | { kind: "free" };
+/** `drop` removes the column (or key); `redact` writes REDACTED_VALUE in each non-empty cell. */
+export type ColumnAction = { kind: "keep" } | { kind: "pseudo"; cls: PseudoClass } | { kind: "free" } | { kind: "drop" } | { kind: "redact" };
 
 function ruleAction(rule: ColumnRule): ColumnAction | "heuristic" {
   if (rule.treatment === "keep") return { kind: "keep" };
+  if (rule.treatment === "drop") return { kind: "drop" };
+  if (rule.treatment === "redact") return { kind: "redact" };
   if (rule.treatment === "blind" && SENSITIVE.has(rule.class)) return { kind: "pseudo", cls: rule.class as PseudoClass };
   if (rule.treatment === "value" && rule.class === "unknown") return "heuristic";
   return { kind: "pseudo", cls: "value" };
@@ -40,5 +45,7 @@ export function outcomeOf(action: ColumnAction, stats: ColumnStats | undefined):
     return stats.distinctRatio < THRESHOLDS.distinct ? "unknown-kept-low-cardinality" : "unknown-kept-not-identifier-like";
   }
   if (action.kind === "keep") return "kept";
+  if (action.kind === "drop") return "dropped";
+  if (action.kind === "redact") return "redacted";
   return action.kind === "pseudo" && action.cls !== "value" ? "blinded" : "value";
 }

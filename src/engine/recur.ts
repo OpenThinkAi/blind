@@ -109,13 +109,13 @@ export class TextScanner {
   }
 
   /**
-   * A cell under `keep`: only recurring values are replaced. Spec entities still shield their text
+   * A cell under `keep`: only recurring values (and transcript speakers' names) are replaced. Spec entities still shield their text
    * (and stay as written, reported by `flagged`), as do hosts under a keep-list domain; other pattern
    * matches do not, so a blinded email kept in a notes column is still replaced.
    */
   kept(text: string): Span[] {
     const shields = findPatternSpans(text, this.patterns, this.keep).filter((s) => s.cls === null);
-    return this.all.find(text, shields).filter((s) => s.source === "map");
+    return this.all.find(text, shields).filter((s) => s.source === "map" || s.source === "speaker");
   }
 
   /** Whether a kept cell holds a spec entity or a pattern match, which `keep` leaves as written. */

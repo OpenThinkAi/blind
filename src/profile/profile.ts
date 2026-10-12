@@ -4,9 +4,11 @@ import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { basename, extname, join, relative, resolve, sep } from "node:path";
 import { BLIND_DIR } from "../init.ts";
 import { POLICY_FILE, type PrivacyMode } from "../policy.ts";
-import { type Cooccurrence, type FileFormat, type Location, MAX_EXCERPT, type Profile, type ProfileDocument, type ProfileFile, type ProfileJsonKey, type ProfileTable } from "../schema.ts";
+import { DocxError, docxParagraphs, planDocx } from "../engine/docx.ts";
+import { type Entry, planTranscript, shapeParagraphs, speakersOf } from "../engine/transcript.ts";
+import { type Cooccurrence, type Location, MAX_EXCERPT, type Profile, type ProfileDocument, type ProfileFile, type ProfileJsonKey, type ProfileTable, type ProfileTranscript } from "../schema.ts";
 import { profileJson, scanJsonFile } from "./json.ts";
-import { excerpt } from "./stats.ts";
+import { distinct, excerpt, pick } from "./stats.ts";
 import { ParseError, parseTable, profileTable } from "./table.ts";
 import { profileText } from "./text.ts";
 import { tokeniseProfile } from "./tokens.ts";
@@ -14,7 +16,7 @@ import { ZipError } from "../formats/ooxml.ts";
 import { readWorkbook, sheetRows, XlsxError } from "../formats/xlsx.ts";
 
 /** Formats this profiler reads, by lower-cased extension. */
-const PROFILED: Record<string, "csv" | "tsv" | "json" | "jsonl" | "text" | "markdown" | "log"> = {
+const PROFILED: Record<string, "csv" | "tsv" | "json" | "jsonl" | "text" | "markdown" | "log" | "vtt" | "srt" | "docx"> = {
   ".json": "json",
   ".jsonl": "jsonl",
   ".ndjson": "jsonl",
@@ -26,14 +28,24 @@ const PROFILED: Record<string, "csv" | "tsv" | "json" | "jsonl" | "text" | "mark
   ".md": "markdown",
   ".markdown": "markdown",
   ".log": "log",
-};
-
-/** Formats blind knows but this profiler cannot read yet. */
-const NOT_YET: Record<string, FileFormat> = {
-  ".docx": "docx",
   ".vtt": "vtt",
   ".srt": "srt",
+  // Only a transcript-shaped DOCX is profiled (as a transcript); any other is reported.
+  ".docx": "docx",
 };
+
+/** The most speakers one transcript entry lists. */
+export const MAX_SPEAKERS = 100;
+
+/** A transcript's profile entry: its speakers (first appearance, at most MAX_SPEAKERS) and up to `k` sample lines. */
+export function profileTranscript(file: string, entries: readonly Entry[], k: number): { transcript: ProfileTranscript; capped: boolean } {
+  const speakers = distinct(speakersOf(entries).map(excerpt));
+  const lines = distinct(entries.map((e) => (e.speaker === null ? e.text : `${e.speaker}: ${e.text}`)).filter((l) => l.trim() !== ""));
+  return {
+    transcript: { file, speakers: speakers.slice(0, MAX_SPEAKERS), sampleLines: pick(lines, k).map(excerpt) },
+    capped: speakers.length > MAX_SPEAKERS,
+  };
+}
 
 /** Co-occurrence threshold: shared distinct values over the smaller column's distinct values. */
 export const COOCCURRENCE_OVERLAP = 0.5;
@@ -151,8 +163,9 @@ function cooccurrence(cols: readonly ValueColumn[]): Cooccurrence[] {
 }
 
 /**
- * Profiles CSV, TSV, JSON, JSONL, plain text, Markdown and log files under `inputs` (resolved against `cwd`),
- * carrying at most `k` samples per column or document. Files in formats this profiler cannot read,
+ * Profiles CSV, TSV, JSON, JSONL, plain text, Markdown and log files, VTT and SRT transcripts and
+ * transcript-shaped DOCX files under `inputs` (resolved against `cwd`), carrying at most `k` samples
+ * per column, document or transcript. Files in formats this profiler cannot read,
  * and files that fail to decode or parse, are left out of the profile and listed in `skipped`.
  */
 export function buildProfile(inputs: readonly string[], k: number, cwd: string): ProfileResult {
@@ -163,6 +176,12 @@ export function buildProfile(inputs: readonly string[], k: number, cwd: string):
   const documents: ProfileDocument[] = [];
   const jsonKeys: ProfileJsonKey[] = [];
   const jsonColumns: ValueColumn[] = [];
+  const transcripts: ProfileTranscript[] = [];
+  const addTranscript = (path: string, entries: readonly Entry[]) => {
+    const { transcript, capped } = profileTranscript(path, entries, k);
+    if (capped) notes.push(`${path}: more than ${MAX_SPEAKERS} speakers; the first ${MAX_SPEAKERS} are listed`);
+    transcripts.push(transcript);
+  };
 
   for (const f of collect(inputs, cwd, skipped)) {
     // Paths are the one profile string not cut to an excerpt: the spec and engine need them exact.
@@ -207,11 +226,7 @@ export function buildProfile(inputs: readonly string[], k: number, cwd: string):
     }
     const format = PROFILED[ext];
     if (format === undefined) {
-      const known = NOT_YET[ext];
-      skipped.push({
-        path: f.path,
-        reason: known !== undefined ? `${known} is not profiled yet` : `unsupported file type${ext === "" ? "" : ` ${ext}`}`,
-      });
+      skipped.push({ path: f.path, reason: `unsupported file type${ext === "" ? "" : ` ${ext}`}` });
       continue;
     }
     let bytes: Buffer;
@@ -219,6 +234,26 @@ export function buildProfile(inputs: readonly string[], k: number, cwd: string):
       bytes = readFileSync(f.abs);
     } catch (e) {
       skipped.push({ path: f.path, reason: `cannot read: ${(e as NodeJS.ErrnoException).code ?? "error"}` });
+      continue;
+    }
+    if (format === "docx") {
+      let paragraphs: string[];
+      let all: string[];
+      try {
+        const plan = planDocx(bytes);
+        paragraphs = docxParagraphs(plan, plan.main === undefined ? "all" : "main");
+        all = docxParagraphs(plan, "all");
+      } catch (e) {
+        if (!(e instanceof DocxError)) throw e;
+        skipped.push({ path: f.path, reason: `cannot read: ${e.message}` });
+        continue;
+      }
+      if (!shapeParagraphs(paragraphs).shaped) {
+        skipped.push({ path: f.path, reason: "docx is not profiled yet (only a transcript-shaped DOCX is)" });
+        continue;
+      }
+      addTranscript(f.path, shapeParagraphs(all).entries);
+      files.push({ path: f.path, format, size: bytes.length });
       continue;
     }
     let text: string;
@@ -258,9 +293,21 @@ export function buildProfile(inputs: readonly string[], k: number, cwd: string):
       jsonKeys.push(...result.keys);
       result.keys.forEach((j, i) => jsonColumns.push({ loc: { file: j.file, jsonPath: j.path }, values: result.valueSets[i] ?? new Set<string>() }));
     } else {
-      documents.push(profileText(f.path, text, format, k));
+      // Transcripts are found by content: a WebVTT or SRT file is one whatever its name, and a
+      // text file of timestamped speaker turns is also profiled as a document.
+      const t = planTranscript(text);
+      if ((format === "vtt" || format === "srt") && t === null) {
+        skipped.push({ path: f.path, reason: `not ${format === "vtt" ? "a WebVTT" : "an SRT"} transcript (no cue timing found)` });
+        continue;
+      }
+      if (t !== null) addTranscript(f.path, t.entries);
+      if (t !== null && t.kind !== "text") {
+        files.push({ path: f.path, format: t.kind, size: bytes.length });
+        continue;
+      }
+      documents.push(profileText(f.path, text, format === "vtt" || format === "srt" ? "text" : format, k));
     }
-    files.push({ path: f.path, format, size: bytes.length });
+    files.push({ path: f.path, format: format === "vtt" || format === "srt" ? "text" : format, size: bytes.length });
   }
 
   return {
@@ -271,7 +318,7 @@ export function buildProfile(inputs: readonly string[], k: number, cwd: string):
       tables: tables.map((t) => t.table),
       jsonKeys,
       documents,
-      transcripts: [],
+      transcripts,
       cooccurrence: cooccurrence([...tableColumns(tables), ...jsonColumns]),
     },
     skipped: skipped.sort((a, b) => byCodeUnit(a.path, b.path)),
@@ -307,6 +354,8 @@ export function forPrivacyMode(result: ProfileResult, mode: PrivacyMode): Profil
     profile: {
       ...profile,
       documents: profile.documents.map((d) => ({ ...d, outline: [] })),
+      // Every transcript's speakers (VTT, SRT, and transcript-shaped text and DOCX, AGT-1749) are
+      // names with no sampleCount bound: always emptied here, and refused by assertProfilePayload.
       transcripts: profile.transcripts.map((t) => ({ ...t, speakers: [] })),
     },
     notes,

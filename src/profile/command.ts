@@ -19,9 +19,10 @@ export interface ProfileIO {
 const PROFILE_HELP = [
   "Usage: blind profile <inputs...> [--samples N] [--json]",
   "",
-  "Profiles CSV, TSV, JSON, JSONL, XLSX, plain text, Markdown and log files (directories are walked)",
-  "and writes .blind/profile.json (mode 0600). Every JSON key path is profiled like a table column,",
-  "and every worksheet as a table.",
+  "Profiles CSV, TSV, JSON, JSONL, XLSX, plain text, Markdown and log files, VTT and SRT transcripts",
+  "and transcript-shaped DOCX files (directories are walked) and writes .blind/profile.json (mode",
+  "0600). Every JSON key path is profiled like a table column, every worksheet as a table, and",
+  "transcripts list their speakers.",
   "The profile is the only thing a model ever sees; this command prints it so you can check exactly",
   "what would leave the machine. Samples are cut to 120 characters.",
   "Run it in the directory that holds blind.toml.",
@@ -119,6 +120,13 @@ export function renderProfile(p: Profile, skipped: readonly Skipped[], notes: re
     out.push(`  outline: ${d.outline.length === 0 ? "-" : d.outline.map(q).join(", ")}`);
     out.push(`  samples: ${d.sampleSentences.length === 0 ? "-" : ""}`.trimEnd());
     for (const s of d.sampleSentences) out.push(`    ${q(s)}`);
+    out.push("");
+  }
+  for (const t of p.transcripts) {
+    out.push(`${head(t.file)}  transcript`);
+    out.push(`  speakers: ${t.speakers.length === 0 ? "-" : t.speakers.map(q).join(", ")}`);
+    out.push(`  samples: ${t.sampleLines.length === 0 ? "-" : ""}`.trimEnd());
+    for (const s of t.sampleLines) out.push(`    ${q(s)}`);
     out.push("");
   }
   if (p.cooccurrence.length > 0) {

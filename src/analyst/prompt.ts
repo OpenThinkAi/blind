@@ -47,7 +47,8 @@ export function systemPrompt(policy: Pick<Policy, "sensitive">): string {
     "4. entities: list the people, organisations, hosts, emails, IDs and places you can see in samples, sample sentences, outlines " +
       "and speaker lists, so they can be found in free text. For each, give the fullest form as canonical, every other spelling you " +
       "see or can expect as aliases (initials, \"Last, First\", nicknames, acronyms, legal suffixes), and the pieces that identify it " +
-      "on their own as parts (a given name, a surname). Do not list keep terms.",
+      "on their own as parts (a given name, a surname). Every speaker in data.profile.transcripts[].speakers is a person: " +
+      "list each one as a person entity. Do not list keep terms.",
     "5. patterns: turn on the shape finders (ip, email, host, guid, mac) for every shape that is sensitive under the policy.",
     "6. Ask rather than guess. When you cannot decide a column, give it class \"unknown\" with treatment \"value\" and add a question " +
       "whose about names that column (file, sheet if present, and header or jsonPath) and whose options are drawn from " +

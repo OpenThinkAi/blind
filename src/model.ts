@@ -261,6 +261,7 @@ export function assertProfilePayload(data: unknown): asserts data is ProfilePayl
   // bound, so under profile-only they must be empty (forPrivacyMode in src/profile/profile.ts).
   const unbounded = [
     ...(profile as Profile).documents.flatMap((d, i) => (d.outline.length > 0 ? [`$.profile.documents[${i}].outline`] : [])),
+    // Transcript speaker names (VTT, SRT, transcript-shaped text and DOCX): forPrivacyMode empties them.
     ...(profile as Profile).transcripts.flatMap((t, i) => (t.speakers.length > 0 ? [`$.profile.transcripts[${i}].speakers`] : [])),
   ];
   if (unbounded.length > 0) {

@@ -36,8 +36,11 @@ export interface Span {
    * entity, the value already given to the pseudonymizer for an extra form.
    */
   value: string;
-  /** `map`: an extra form, a value pseudonymised elsewhere (a column rule, an earlier map) found again here. */
-  source: "pattern" | "entity" | "map";
+  /**
+   * `map`: an extra form, a value pseudonymised elsewhere (a column rule, an earlier map) found again here.
+   * `speaker`: a transcript speaker's tag, or their name, a part of it or a misspelling (transcript.ts).
+   */
+  source: "pattern" | "entity" | "map" | "speaker";
 }
 
 /** Code-unit order, never locale order. */
@@ -153,7 +156,7 @@ interface Form {
   rank: number;
   /** A vocabulary form: wins every length tie, so it shields its span from other forms. */
   shield: boolean;
-  source: "entity" | "map";
+  source: "entity" | "map" | "speaker";
 }
 
 const WORDCHAR_RE = /[\p{L}\p{N}]/u;
@@ -176,6 +179,8 @@ export interface ExtraForm {
   value: string;
   /** The text to match, under the case rule of its own shape; `value` when omitted. */
   form?: string;
+  /** The span source for matches; `map` when omitted. */
+  source?: "map" | "speaker";
 }
 
 /** An index of every entity form in the spec, ready to scan text with. */
@@ -218,7 +223,7 @@ export class EntityMatcher {
         for (const raw of [e.canonical, ...e.aliases, ...e.parts]) add(key, cls, raw, raw, rank, "entity");
       }
     }
-    for (const x of extra) add(`extra:${x.cls}`, x.cls, x.form ?? x.value, x.value, ENTITY_CLASSES.length + PSEUDO_CLASSES.indexOf(x.cls), "map");
+    for (const x of extra) add(`extra:${x.cls}`, x.cls, x.form ?? x.value, x.value, ENTITY_CLASSES.length + PSEUDO_CLASSES.indexOf(x.cls), x.source ?? "map");
     // Longest first; at equal length a vocabulary form wins (so "SAM" listed as vocabulary is not
     // taken for the person part "Sam"); then class order, then text, so the scan is order-independent.
     for (const list of this.byFirst.values()) {

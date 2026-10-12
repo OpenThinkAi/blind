@@ -250,6 +250,8 @@ export interface Rendered {
   entityReplacements: number;
   patternReplacements: number;
   mappedReplacements: number;
+  /** Transcript speakers' names (or parts, or misspellings) replaced. */
+  speakerReplacements: number;
   keptHosts: number;
 }
 
@@ -282,7 +284,7 @@ export function prepareXlsx(path: string, bytes: Uint8Array, p: XlsxPlan, env: E
   rewriteOoxml(
     bytes,
     (value, ctx) => {
-      if (hits.length < 5 && scan(value).some((s) => s.cls !== null && (s.source === "entity" || s.source === "map"))) {
+      if (hits.length < 5 && scan(value).some((s) => s.cls !== null && (s.source === "entity" || s.source === "map" || s.source === "speaker"))) {
         const where = `${ctx.member} <${ctx.element.name}>${ctx.attribute === undefined ? " text" : ` attribute ${ctx.attribute}`}`;
         if (!hits.includes(where)) hits.push(where);
       }
@@ -331,6 +333,7 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
   let entityReplacements = 0;
   let patternReplacements = 0;
   let mappedReplacements = 0;
+  let speakerReplacements = 0;
   let keptHosts = 0;
   const rewrite = (text: string, spans: readonly Span[]): string => {
     let out = "";
@@ -340,6 +343,7 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
       at = s.end;
       if (s.cls !== null && s.source === "entity") entityReplacements++;
       else if (s.cls !== null && s.source === "map") mappedReplacements++;
+      else if (s.cls !== null && s.source === "speaker") speakerReplacements++;
       else if (s.cls !== null) patternReplacements++;
       else if (s.source === "pattern") keptHosts++;
     }
@@ -561,6 +565,7 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
     entityReplacements,
     patternReplacements,
     mappedReplacements,
+    speakerReplacements,
     keptHosts,
   };
 }

@@ -124,16 +124,23 @@ export interface ProfileJsonKey {
   stats: ValueStats;
 }
 
+/** Patterns counted in free text: the detectors a document or transcript can hit (AGT-1856). */
+export type HitPattern = "ip" | "email" | "host" | "guid" | "mac" | "phone" | "address";
+/** Values found in one document or transcript, per pattern. Only patterns with a hit appear; absent means none. */
+export type PatternHits = Partial<Record<HitPattern, number>>;
+
 export interface ProfileDocument {
   file: string;
   outline: string[];
   sampleSentences: string[];
+  patternHits?: PatternHits;
 }
 
 export interface ProfileTranscript {
   file: string;
   speakers: string[];
   sampleLines: string[];
+  patternHits?: PatternHits;
 }
 
 export interface Cooccurrence {

@@ -357,6 +357,8 @@ wins over the spec's `patterns` in both directions, every run, without editing
 | `card` | `true` or `false` | payment card numbers (13-19 digits, a card prefix and a valid Luhn checksum), written as `REDACTED` (follows `secret` when unset: on whenever `secret` is on) |
 | `secret` | `true` or `false` | passwords, keys and tokens, written as `REDACTED` (off when the spec says nothing: a spec written before `secret` existed has it off) |
 
+`blind plan` warns, once per switched-off pattern, when the profile finds that shape: `warning: [patterns] ip is off, but 20 ip-shaped value(s) were found in 1 file(s); they will be written as is`. It counts table and JSON columns no rule decides, and free text (documents and transcripts). Counts and file counts only; with `--json` the warnings are in `warnings`. `blind run` prints them too.
+
 `blind init` writes `ip = true`, `host = true` and `secret = true`, so addresses, host names and
 credential-shaped tokens in free text are replaced even when their class is not one of
 `[sensitive] classes`, and leaves the others commented out (the spec decides). A `blind.toml` without the table behaves as before: the spec

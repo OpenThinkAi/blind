@@ -72,7 +72,8 @@
         "properties": {
           "file": { "$ref": "#/$defs/nonEmpty" },
           "outline": { "$ref": "#/$defs/excerpts" },
-          "sampleSentences": { "$ref": "#/$defs/excerpts" }
+          "sampleSentences": { "$ref": "#/$defs/excerpts" },
+          "patternHits": { "$ref": "#/$defs/patternHits" }
         }
       }
     },
@@ -85,7 +86,8 @@
         "properties": {
           "file": { "$ref": "#/$defs/nonEmpty" },
           "speakers": { "$ref": "#/$defs/excerpts" },
-          "sampleLines": { "$ref": "#/$defs/excerpts" }
+          "sampleLines": { "$ref": "#/$defs/excerpts" },
+          "patternHits": { "$ref": "#/$defs/patternHits" }
         }
       }
     },
@@ -107,6 +109,19 @@
     "nonEmpty": { "type": "string", "minLength": 1 },
     "excerpt": { "type": "string", "maxLength": 120 },
     "excerpts": { "type": "array", "items": { "$ref": "#/$defs/excerpt" } },
+    "patternHits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ip": { "type": "integer", "minimum": 1 },
+        "email": { "type": "integer", "minimum": 1 },
+        "host": { "type": "integer", "minimum": 1 },
+        "guid": { "type": "integer", "minimum": 1 },
+        "mac": { "type": "integer", "minimum": 1 },
+        "phone": { "type": "integer", "minimum": 1 },
+        "address": { "type": "integer", "minimum": 1 }
+      }
+    },
     "ratio": { "type": "number", "minimum": 0, "maximum": 1 },
     "stats": {
       "type": "object",

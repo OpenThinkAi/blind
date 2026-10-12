@@ -3,10 +3,12 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
-import { type PlanIO, renderSpec, runPlan } from "../../src/analyst/plan.ts";
+import { type PlanIO, patternWarnings, renderSpec, runPlan } from "../../src/analyst/plan.ts";
 import type { AskOptions } from "../../src/model.ts";
 import { defaultPolicy, defaultSamples, type Policy, renderPolicy } from "../../src/policy.ts";
 import type { Profile, Spec } from "../../src/schema.ts";
+import { valueStats } from "../../src/profile/stats.ts";
+import { patternHits } from "../../src/profile/text.ts";
 import { parseSpec } from "../../src/validate.ts";
 
 // Synthetic corpus only (invented names, example.com, RFC 5737 IPs). No model is called:
@@ -731,4 +733,63 @@ test("the review shows blind.toml [patterns] switches over the spec's, naming bo
   expect(line(renderSpec(spec, { ip: true, host: false, email: false }))).toBe(
     "patterns: ip on (blind.toml; spec: off), email off (blind.toml; spec: on), host off, guid on, mac off, phone on, card off, address off, secret off",
   );
+});
+
+describe("patternWarnings (AGT-1856)", () => {
+  const LOG = Array(20).fill("login from 203.0.113.7 at 09:12");
+  const profileOf = (raw: string[]): Profile => ({
+    version: 1,
+    sampleCount: 5,
+    files: [],
+    tables: [{ file: "log.csv", headerRow: 1, columns: [{ header: "msg", stats: valueStats(raw, 5) }] }],
+    jsonKeys: [],
+    documents: [],
+    transcripts: [],
+    cooccurrence: [],
+  });
+  const OFF_IP = { ip: false, email: true, host: true, guid: true, mac: false };
+  const ON_IP = { ...OFF_IP, ip: true };
+  const specOf = (treatment: Spec["columns"][number]["treatment"], patterns: Spec["patterns"]): Spec => ({
+    version: 1,
+    columns: [{ file: "log.csv", header: "msg", class: "unknown", treatment, confidence: 0, source: "heuristic" }],
+    entities: {},
+    patterns,
+    questions: [],
+  });
+
+  test("warns with counts and file count when a pattern is off and its shape is in an unruled column", () => {
+    const w = patternWarnings(profileOf(LOG), specOf("value", OFF_IP), { patterns: {} });
+    expect(w).toEqual(["warning: [patterns] ip is off, but 20 ip-shaped value(s) were found in 1 file(s); they will be written as is"]);
+  });
+
+  test("silent when the pattern is on, or when the policy turns it on over a spec that has it off", () => {
+    expect(patternWarnings(profileOf(LOG), specOf("value", ON_IP), { patterns: {} })).toEqual([]);
+    expect(patternWarnings(profileOf(LOG), specOf("value", OFF_IP), { patterns: { ip: true } })).toEqual([]);
+  });
+
+  test("silent when every hit sits in a column a rule decides", () => {
+    for (const t of ["keep", "drop", "redact", "blind"] as const) {
+      expect(patternWarnings(profileOf(LOG), specOf(t, OFF_IP), { patterns: {} })).toEqual([]);
+    }
+  });
+
+  test("the policy's off switch counts against a spec that has the pattern on", () => {
+    const w = patternWarnings(profileOf(LOG), specOf("value", ON_IP), { patterns: { ip: false } });
+    expect(w).toHaveLength(1);
+    expect(w[0]).toContain("ip is off");
+  });
+
+  test("counts free-text hits from a log document (the AGT-1856 repro shape)", () => {
+    const text = Array(20).fill("login from 203.0.113.7 at 09:12").join("\n");
+    expect(patternHits(text)).toEqual({ ip: 20 });
+    const doc = { ...profileOf([]), tables: [], documents: [{ file: "log.txt", outline: [], sampleSentences: [], patternHits: { ip: 20 } }] };
+    expect(patternWarnings(doc, specOf("value", OFF_IP), { patterns: {} })).toEqual([
+      "warning: [patterns] ip is off, but 20 ip-shaped value(s) were found in 1 file(s); they will be written as is",
+    ]);
+  });
+
+  test("a file that is both a transcript and a document counts its hits once", () => {
+    const doc = { ...profileOf([]), tables: [], documents: [{ file: "t.txt", outline: [], sampleSentences: [], patternHits: { ip: 3 } }], transcripts: [{ file: "t.txt", speakers: [], sampleLines: [], patternHits: { ip: 3 } }] };
+    expect(patternWarnings(doc, specOf("value", OFF_IP), { patterns: {} })[0]).toContain("3 ip-shaped value(s) were found in 1 file(s)");
+  });
 });

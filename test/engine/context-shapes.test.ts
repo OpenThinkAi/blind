@@ -37,6 +37,11 @@ describe("usernames, handles and badges", () => {
     ["user name: d.quill", ["d.quill"]],
     ["login is dana_42.", ["dana_42"]],
     ["her handle @dana42 is public", ["@dana42"]],
+    ["login: admin", ["admin"]],
+    ["username: root", ["root"]],
+    ["handle = alice", ["alice"]],
+    ["the username is root.", ["root"]],
+    ["previous login was admin", ["admin"]],
     ["screen name: quill99", ["quill99"]],
     ["Officer badge 7316 attended", ["7316"]],
     ["employee id E-77123", ["E-77123"]],
@@ -49,6 +54,8 @@ describe("usernames, handles and badges", () => {
   test.each([
     ["please handle it with care"],
     ["login page is slow"],
+    ["login: 7"],
+    ["username: it"],
     ["the username is required"],
     ["login 7"],
     ["badge of honour"],
@@ -128,12 +135,13 @@ describe("tables", () => {
     expect(pairCells(grid, { triggers: [] }).map((m) => m.row)).toEqual([0, 1, 2, 3, 4]);
   });
 
-  test("a value must fit: a username with no digit or dot is no handle", () => {
-    expect(pairCells([["Username", "dana"]], { triggers: [] })).toEqual([]);
+  test("a value must fit: a short word is no handle", () => {
+    expect(pairCells([["Username", "x"]], { triggers: [] })).toEqual([]);
+    expect(pairCells([["Username", "dana"]], { triggers: [] }).length).toBe(1);
   });
 });
 
-const NONE: Record<PatternName, boolean> = { ip: false, email: false, host: false, guid: false, mac: false, phone: false, secret: false };
+const NONE: Record<PatternName, boolean> = { ip: false, email: false, host: false, guid: false, mac: false, phone: false, address: false, secret: false };
 const spec = (): Spec => ({ version: 1, columns: [], entities: {}, patterns: NONE, questions: [] });
 const SALT = new Uint8Array(32).fill(5);
 const enc = (s: string) => new TextEncoder().encode(s);

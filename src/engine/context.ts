@@ -234,10 +234,12 @@ function plateAt(text: string, at: number): number | null {
   return len >= 3 ? len : null;
 }
 
-/** A username, login or screen name: 3+ characters, letters with digits or dotted/underscored. */
-function isHandle(word: string): boolean {
+/** A username, login or screen name: 3+ characters, letters with digits or dotted/underscored; `loose` also takes a plain word. */
+function isHandle(word: string, loose = false): boolean {
   const w = word.startsWith("@") ? word.slice(1) : word;
   if (w.length < 3) return false;
+  // After a separator or filler ("login: admin", "username is root") a plain word of 3+ letters counts.
+  if (loose && /^\p{L}+$/u.test(w) && !PROSE.has(w.toLowerCase())) return true;
   return (/\p{L}/u.test(w) && /\d/.test(w) && /^[\p{L}\p{N}._-]+$/u.test(w)) || /^[\p{L}\p{N}]+(?:[._][\p{L}\p{N}]+)+$/u.test(w);
 }
 
@@ -303,7 +305,7 @@ function valueAfter(text: string, pos: number, t: Trigger): [number, number] | n
     // ("password: dragon", "password is dragon" still count), is the sentence going on.
     if (skipped === 0 && !first.filled && /^(?:\p{Lu}?\p{Ll}+)$/u.test(plain)) return null;
   } else if (t.shape === "handle") {
-    if (!isHandle(word)) return null;
+    if (!isHandle(word, first.filled || ["was", "were", "are", "be", "been"].includes(last))) return null;
   } else if (!hasDigit || word.length < 3) return null;
   let end = i + word.length;
   if (t.groups !== undefined && /^[\d*xX•-]+$/.test(word)) {
@@ -405,7 +407,7 @@ export function cellValueSpan(cell: string, rule: CellRule): [number, number] | 
     const len = dateAt(core);
     return len === null ? null : [start, start + len];
   }
-  if (rule.shape === "handle") return isHandle(core) ? [start, start + core.length] : null;
+  if (rule.shape === "handle") return isHandle(core, true) ? [start, start + core.length] : null;
   if (rule.kind === "number") return /\d/.test(core) && core.length >= 3 ? [start, start + core.length] : null;
   if (!/[\p{L}\p{N}]/u.test(core) || core.length < 2) return null;
   if (!/\d/.test(core) && PROSE.has(core.toLowerCase())) return null;

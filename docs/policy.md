@@ -429,7 +429,9 @@ What counts as the value, after the keyword and any separators or filler (`:`, `
   `7AB`. `plate 2` and `plate of food` stay.
 - `username`, `user name`, `login`, `handle` and `screen name` take one token of three or more
   characters that mixes letters and digits or is dotted or underscored (`dana42`, `d.quill`,
-  `dana_42`, `@dana42`), so `login page` and `please handle it` stay.
+  `dana_42`, `@dana42`). After a separator or filler (`login: admin`, `username is root`) a plain
+  word of three or more letters counts too. Straight after the keyword, `login page` and
+  `please handle it` stay.
 - A key's hiding place: after `spare key`, `house key`, `door key` or a bare `key` (optionally
   `is`/`are` and `kept`/`left`/`hidden`) a place that starts with `under`, `in`, `inside`,
   `behind`, `above`, `on top of` or `beneath` is redacted from that word to the end of the clause
@@ -437,7 +439,7 @@ What counts as the value, after the keyword and any separators or filler (`:`, `
   `Spare key under the green mat by the back door.` becomes `Spare key REDACTED.` Abstract
   places (`key under review`, `key in the report`) and compounds such as `primary key in` stay,
   and so do `keyboard` and `key findings`.
-  `policy` also needs a number marker (`policy #AB-77123`, `policy number: 99120344`), so
+- `policy` also needs a number marker (`policy #AB-77123`, `policy number: 99120344`), so
   `the policy 2024 update` stays.
 - Card, account and routing numbers and combinations take following digit groups too:
   `card number 4111 1111 1111 1111`, `safe combo 12 34 56`.

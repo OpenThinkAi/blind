@@ -13,7 +13,9 @@
 //   (speaker-and-time paragraphs, names split across runs) and as WebVTT (cue
 //   GUIDs, voice tags).
 //   The meeting also has a phone number spelled out digit by digit, an email
-//   address spoken word by word, and number words in ordinary prose (a decoy).
+//   address spoken word by word, and number words in ordinary prose (a decoy). It also has secrets
+//   said after a keyword (a gate code, a password, an account ending) and the same keywords in
+//   prose with nothing after them (a decoy).
 // - exports/scopes.json: a scope list with snake_case keys, hex IDs and
 //   four-digit IDs written as strings.
 // - logs/agent-container.log: a container log whose registry host carries the
@@ -69,6 +71,18 @@ export const SPOKEN_PHONE = "eight oh one, five five five, zero one four two";
 export const SPOKEN_PHONE_DIGITS = "8015550142";
 /** Number words in ordinary prose in the meeting. A decoy: it must survive blinding. */
 export const SPOKEN_DECOY = "two dogs, one cat";
+
+/**
+ * Secrets said after a context keyword (AGT-1831): no name or shape finder targets them, so the
+ * keyword is the only clue. Invented values. `said` is the sentence, `secret` the part that must go.
+ */
+export const CONTEXT_SECRETS = [
+  { said: "The gate code is 58214 if I am not in.", secret: "58214" },
+  { said: "For the portal, pw: Quill-Harbor-9, and please change it.", secret: "Quill-Harbor-9" },
+  { said: "Bill it to acct ending 70419 as before.", secret: "70419" },
+] as const;
+/** Ordinary prose with the same keywords. A decoy: it must survive blinding. */
+export const CONTEXT_DECOY = "the account manager said the password was reset";
 
 /** Speakers of the meeting. Sam and Jan stay out: their given names are kit v1's decoys. */
 const SPEAKERS: readonly CastPerson[] = PEOPLE.filter((p) => p.given !== "Sam" && p.given !== "Jan");
@@ -200,7 +214,10 @@ export function generateV2(seed: number, rows: number, oracle: OracleBuilder): K
   turns.push({ speaker: caller, text: `If the line drops, my cell is ${SPOKEN_PHONE}.` });
   turns.push({ speaker: mailer, text: `Send the signed copy to ${spokenEmail} and I will file it.` });
   turns.push({ speaker: caller, text: `Sure. No rush, I have ${SPOKEN_DECOY} at home and a train to catch.` });
+  for (const [i, c] of CONTEXT_SECRETS.entries()) turns.push({ speaker: i % 2 === 0 ? mailer : caller, text: c.said });
+  turns.push({ speaker: mailer, text: `Noted, and ${CONTEXT_DECOY} so nothing is stale.` });
   for (const f of [CALL_DOCX, CALL_VTT]) {
+    for (const c of CONTEXT_SECRETS) oracle.add(c.secret, "id", c.secret, "value", f, "context secret");
     oracle.add(SPOKEN_PHONE, "id", SPOKEN_PHONE_DIGITS, "alias", f, "spelled digits");
     oracle.add(spokenEmail, "email", emailOf(caller, mailOrg), "alias", f, "spoken email");
   }
@@ -283,7 +300,10 @@ export function generateV2(seed: number, rows: number, oracle: OracleBuilder): K
     { file: ACCESS_XLSX, sheet: sheetOrg.short, header: "Amount", class: "vocabulary", note: "money" },
     ...SCOPE_KEYS.map((k) => ({ file: SCOPES_JSON, jsonPath: k.path, class: k.class, note: k.note })),
   ];
-  const decoys: Decoy[] = [{ text: SPOKEN_DECOY, resembles: "spelled digits", why: "number words in ordinary prose, not a value read aloud", files: [CALL_DOCX, CALL_VTT] }];
+  const decoys: Decoy[] = [
+    { text: SPOKEN_DECOY, resembles: "spelled digits", why: "number words in ordinary prose, not a value read aloud", files: [CALL_DOCX, CALL_VTT] },
+    { text: CONTEXT_DECOY, resembles: "context keyword", why: "the keywords account and password in prose, with no secret after them", files: [CALL_DOCX, CALL_VTT] },
+  ];
   return { files, columns, sheetOrg, cloudAccounts: [account], decoys };
 }
 

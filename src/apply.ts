@@ -39,7 +39,8 @@ const APPLY_HELP = [
   "that reads as a transcript (timestamp, speaker, text) is one: its speaker tags are always",
   "replaced and its timing lines kept. File and folder names are blinded too; the report lists",
   "each renamed file. Host names under a domain in the blind.toml keep list are kept, and its",
-  "[patterns] switches win over the spec's patterns.",
+  "[patterns] switches win over the spec's patterns. The value after a keyword such as gate code,",
+  "password or acct in free text is written as REDACTED ([context] in blind.toml).",
   "",
   "Options:",
   "  -o, --out <dir>       Output directory (must not overlap an input)",
@@ -275,7 +276,7 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
       if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw new Refusal(`${mapPath}: cannot read the map`);
     }
 
-    const result = applySpec(files, spec, { salt, map, keep });
+    const result = applySpec(files, spec, { salt, map, keep, ...(policy === null || policy === undefined ? {} : { context: policy.context }) });
 
     // Never write through a symbolic link already inside the output tree: it could lead outside it.
     // (The output directory itself is the user's to name, link or not.) Checked before anything is written.

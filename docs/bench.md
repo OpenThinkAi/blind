@@ -121,7 +121,10 @@ OOXML host), which blind writes through rather than refuses. The last three turn
 read aloud: a phone number spelled digit by digit (`eight oh one, five five five, zero one four
 two`, oracle class `id`, scope `spelled digits`) and an email address spoken word by word
 (`bart dot quince at quillfeather dot example`, class `email`, scope `spoken email`), and number
-words in ordinary prose, `two dogs, one cat`, a decoy that must survive.
+words in ordinary prose, `two dogs, one cat`, a decoy that must survive. Three more turns say a
+secret after a keyword (`The gate code is 58214`, `pw: Quill-Harbor-9`, `acct ending 70419`; oracle
+class `id`, scope `context secret`), and one turn has the same keywords in prose with nothing after
+them (`the account manager said the password was reset`), a decoy that must survive.
 
 **`exports/scopes.json`**: a scope list with snake_case keys, `scope_id` hex IDs (8 characters),
 `account_no` 4-digit IDs written as strings, organisation names, emails, tenant hosts, an access

@@ -48,10 +48,14 @@ mode = "local-only"
 [patterns]
 ip = true
 host = true
+
+[context]
+# enabled = true
+# triggers = ["locker code"]
 ```
 
 `[sensitive]`, `[keep]`, `[models.analyst]`, `[profile]` and `[privacy]` must be present.
-`[models.auditor]`, `profile.samples`, `[patterns]` and [`[[columns]]`](#columns) rules are optional.
+`[models.auditor]`, `profile.samples`, `[patterns]`, [`[context]`](#context) and [`[[columns]]`](#columns) rules are optional.
 
 ## `[sensitive]`
 
@@ -250,6 +254,45 @@ map and is replaced again wherever it recurs.
 
 Turning a pattern off here also turns it off for `blind plan --from-audit`: a candidate accepted
 as a pattern sets it in the spec, but a `false` here still wins.
+
+## `[context]`
+
+Secrets that no name or shape finder targets, such as a gate code, a password or an account
+number, are found by the word in front of them. In free text (text files, DOCX, transcripts, cells
+and JSON strings kept as text) the value after a keyword is replaced with `REDACTED`, the same
+placeholder a `redact` column writes, and the keyword stays: `gate code 4471` becomes
+`gate code REDACTED`. A redacted value is not recorded in the map, so `blind reveal` cannot
+restore it. The table and both keys are optional; with no `[context]`, the built-in keywords are on.
+
+| Key | Type | Meaning |
+|---|---|---|
+| `enabled` | `true` or `false` (default `true`) | `false` turns the keywords off, built-in and extra |
+| `triggers` | array of strings | extra keywords or phrases, matched whole-word in any case; the token after each is redacted |
+
+Built-in keywords: `DOB` / `date of birth`; `DL` / `driver's license`; `plate`; `gate code` (also
+door, garage, alarm, entry, access, keypad and lockbox `code`/`pin`); `password` / `passcode` /
+`passphrase` / `pw`; `combo` / `combination`; `routing`; `account` / `acct`; `card` / `visa` /
+`mastercard` / `amex`; `CVV` / `CVC`; `policy`.
+
+What counts as the value, after the keyword and any separators or filler (`:`, `=`, `#`, `is`,
+`number`, `no.`, `ending in`):
+
+- `password`, `pw`, `combo`, `gate code` and every extra `triggers` word take the next token,
+  whatever it is, unless it is an ordinary word (`the password was reset` redacts nothing). A
+  quoted value is taken to its closing quote.
+- The others (`account`, `card`, `routing`, `plate`, `DL`, `CVV`) take the next token only if it
+  holds a digit and is at least three characters, so `account manager` and `plate 2` stay.
+  `policy` also needs a number marker (`policy #AB-77123`, `policy number: 99120344`), so
+  `the policy 2024 update` stays.
+- Card, account and routing numbers and combinations take following digit groups too:
+  `card number 4111 1111 1111 1111`, `safe combo 12 34 56`.
+- A date after `DOB` may be numeric, `April 12, 1980` or `12 April 1980`.
+- A value spelled out in digits right after the keyword (`gate code four four seven one`) is taken whole.
+
+A match is a heuristic on the words around it: `the password is swordfish` is redacted, and prose
+such as `password is stored in the vault` can lose a word it should keep (`stored` is on the
+ordinary-word list, but the list is short). It does not look inside column values: a `Gate Code`
+column needs a [`[[columns]]`](#columns) `redact` rule.
 
 ## Choosing a setup
 

@@ -210,6 +210,11 @@ export interface ApplyOptions {
   map?: BlindMap;
   /** The policy keep list. Its domain-shaped terms keep the host names under them as written. */
   keep?: readonly string[];
+  /**
+   * Context-keyword redaction (context.ts): the value after "gate code", "password" and the like is
+   * written as REDACTED. On unless `enabled` is false; `triggers` adds words to the built-in list.
+   */
+  context?: { enabled: boolean; triggers: readonly string[] };
 }
 
 /** The spec does not fit the inputs (a rule names a column that is not there, or a shape this engine cannot apply). */
@@ -754,7 +759,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   const scanForms = [...forms.filter((f) => !voiced.has(`${f.cls}\0${f.form ?? f.value}`)), ...voices, ...prose].sort(
     (a, b) => cmp(a.cls, b.cls) || cmp(a.form ?? a.value, b.form ?? b.value) || cmp(a.value, b.value),
   );
-  const scanner = new TextScanner(spec.entities, spec.patterns, keep, scanForms);
+  const scanner = new TextScanner(spec.entities, spec.patterns, keep, scanForms, opts.context?.enabled === false ? undefined : { triggers: opts.context?.triggers ?? [] });
   const free = (t: string) => scanner.free(t);
   for (const p of plans) {
     if (p.kind === "text") p.spans = p.transcript !== undefined ? transcriptSpans(p.text, p.transcript, free, kept) : scanner.free(p.text);

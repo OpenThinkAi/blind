@@ -21,7 +21,8 @@
 // kept.
 
 import { createHmac } from "node:crypto";
-import { canonicalize, guidCore, PSEUDO_CLASSES, type PseudoClass } from "./canonical.ts";
+import { canonicalize, guidCore, PSEUDO_CLASSES, type PseudoClass, type RealPseudoClass } from "./canonical.ts";
+import { REDACTED_VALUE } from "../schema.ts";
 import { type BlindMap, MAP_VERSION, type MapEntry, type MapKind, sortEntries } from "./map.ts";
 
 export { PSEUDO_CLASSES, type PseudoClass } from "./canonical.ts";
@@ -41,6 +42,7 @@ const PREFIX: Record<PseudoClass, string> = {
   location: "Loc",
   // An email-class value that is not email-shaped falls back to the neutral class.
   email: "Value",
+  redact: "Redacted",
 };
 
 export interface EntityEntry {
@@ -312,7 +314,7 @@ export class Pseudonymizer {
     return keepTld ? `${out.join(".")}.${last}` : out.join(".");
   }
 
-  private prefixed(cls: PseudoClass, canonical: string, surface: string): string {
+  private prefixed(cls: RealPseudoClass, canonical: string, surface: string): string {
     return this.derive(cls, canonical, surface, (b) => `${PREFIX[cls]}_${hex4(b).toUpperCase()}`);
   }
 
@@ -333,6 +335,8 @@ export class Pseudonymizer {
   }
 
   pseudonym(cls: PseudoClass, value: string): string {
+    // Redacted text is a fixed placeholder: no pseudonym, no map entry, so it cannot be revealed.
+    if (cls === "redact") return REDACTED_VALUE;
     const { key: c, display } = this.resolve(cls, value);
     const surface = display ?? value;
     const shared = this.shared(cls, c, value, surface);

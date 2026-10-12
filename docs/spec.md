@@ -329,6 +329,12 @@ how the form is written:
   so `may` is left alone.
 - Anything else matches case-insensitively, with any run of whitespace between words.
 
+**Context keywords.** Free text is also searched for secrets said after a keyword (`gate code
+4471`, `pw: hunter2`, `acct ending 0042`, `DOB: 04/12/1980`): the value becomes `REDACTED` and the
+keyword stays. It is not a pattern and not in the spec; `[context]` in `blind.toml` switches it and
+adds keywords ([policy.md](policy.md#context)). A redaction is written the same way a `redact`
+column is, and is not recorded in the map.
+
 **Spoken values.** Values read aloud match no written shape, so free text is also searched for
 them, alongside the patterns:
 

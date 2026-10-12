@@ -45,7 +45,7 @@ import {
 // The profiler's header rule, so spec headers name the same row the profile reported.
 import { detectHeaderRow } from "../profile/table.ts";
 import type { ColumnReport } from "./apply.ts";
-import { PSEUDO_CLASSES, type PseudoClass } from "./canonical.ts";
+import { PSEUDO_CLASSES, type PseudoClass, type RealPseudoClass } from "./canonical.ts";
 import { type ColumnAction, decide, outcomeOf } from "./columns.ts";
 import type { NameSlot } from "./names.ts";
 import { type HexNamer, rewriteOfficeId } from "./officeid.ts";
@@ -246,7 +246,7 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
     if (list.some((a) => a.kind === "redact")) return { kind: "redact" };
     const pseudo = list.filter((a): a is { kind: "pseudo"; cls: PseudoClass } => a.kind === "pseudo");
     if (pseudo.length > 0) {
-      const cls = PSEUDO_CLASSES[Math.min(...pseudo.map((a) => PSEUDO_CLASSES.indexOf(a.cls)))] as PseudoClass;
+      const cls = PSEUDO_CLASSES[Math.min(...pseudo.map((a) => PSEUDO_CLASSES.indexOf(a.cls as RealPseudoClass)))] as PseudoClass;
       return { kind: "pseudo", cls };
     }
     return [...list].sort((a, b) => rank(a) - rank(b))[0] as Action;

@@ -21,9 +21,10 @@
 // Whitespace between the words of a multi-word form matches any run of
 // whitespace, so a name wrapped across lines is still found.
 
-import { PSEUDO_CLASSES, phoneDigits, type PseudoClass } from "./canonical.ts";
+import { PSEUDO_CLASSES, phoneDigits, type PseudoClass, type RealPseudoClass } from "./canonical.ts";
 import { type Entities, type PatternName, type Patterns, patternOn } from "../schema.ts";
 import { inDateContext, isDateWord } from "./datecontext.ts";
+import { type ContextOptions, findContextSpans } from "./context.ts";
 import { findSpelledDigits, findSpokenEmails } from "./spelled.ts";
 
 export interface Span {
@@ -244,7 +245,7 @@ export class EntityMatcher {
         for (const raw of [e.canonical, ...e.aliases, ...e.parts]) add(key, cls, raw, raw, rank, "entity");
       }
     }
-    for (const x of extra) add(`extra:${x.cls}`, x.cls, x.form ?? x.value, x.value, ENTITY_CLASSES.length + PSEUDO_CLASSES.indexOf(x.cls), x.source ?? "map", x.datePart === true);
+    for (const x of extra) add(`extra:${x.cls}`, x.cls, x.form ?? x.value, x.value, ENTITY_CLASSES.length + PSEUDO_CLASSES.indexOf(x.cls as RealPseudoClass), x.source ?? "map", x.datePart === true);
     // Longest first; at equal length a vocabulary form wins (so "SAM" listed as vocabulary is not
     // taken for the person part "Sam"); then class order, then text, so the scan is order-independent.
     for (const list of this.byFirst.values()) {
@@ -335,14 +336,28 @@ export function findSpelledSpans(text: string, patterns: Patterns): Span[] {
 }
 
 /**
+ * The value after each context keyword (context.ts), as `redact` spans: written as a fixed placeholder,
+ * the keyword left alone. A value spoken in digits ("gate code four four seven one") is taken whole.
+ */
+function findRedactSpans(text: string, context: ContextOptions, spelled: readonly Span[]): Span[] {
+  return findContextSpans(text, context).map((c) => {
+    const spoken = spelled.find((s) => s.start === c.start && s.end > c.end);
+    const end = spoken === undefined ? c.end : spoken.end;
+    return { start: c.start, end, cls: "redact", value: text.slice(c.start, end), source: "pattern" };
+  });
+}
+
+/**
  * Pattern matches and spoken values together, leftmost first and longest at the same start, without
  * overlaps: "jane at example.com" is one spoken email, not a lone host.
  */
-function shapeSpans(text: string, patterns: Patterns, keep: readonly string[]): Span[] {
+function shapeSpans(text: string, patterns: Patterns, keep: readonly string[], context?: ContextOptions): Span[] {
   const spelled = findSpelledSpans(text, patterns);
   const p = findPatternSpans(text, patterns, keep);
-  if (spelled.length === 0) return p;
-  const all = [...p, ...spelled].sort((a, b) => a.start - b.start || b.end - a.end);
+  const secrets = context === undefined ? [] : findRedactSpans(text, context, spelled);
+  if (spelled.length === 0 && secrets.length === 0) return p;
+  // At the same start and length a redaction comes first: the placeholder says more than a pseudonym.
+  const all = [...secrets, ...p, ...spelled].sort((a, b) => a.start - b.start || b.end - a.end);
   const out: Span[] = [];
   let taken = 0;
   for (const s of all) {
@@ -353,14 +368,15 @@ function shapeSpans(text: string, patterns: Patterns, keep: readonly string[]): 
   return out;
 }
 
-/** Every span to act on: pattern matches and spoken values, then entity forms in the gaps, sorted by position. */
+/** Every span to act on: pattern matches, spoken values and, when `context` is given, redactions after context keywords, then entity forms in the gaps, sorted by position. */
 export function findSpans(
   text: string,
   matcher: EntityMatcher,
   patterns: Patterns,
   keep: readonly string[] = [],
+  context?: ContextOptions,
 ): Span[] {
-  const p = shapeSpans(text, patterns, keep);
+  const p = shapeSpans(text, patterns, keep, context);
   const e = matcher.find(text, p);
   return [...p, ...e].sort((a, b) => a.start - b.start);
 }

@@ -233,17 +233,11 @@ const WHOLE_PROPERTIES = new Map<PartKind, ReadonlyMap<string, PseudoClass>>([
 ]);
 
 /**
- * The text nodes and attributes offered in a part of `kind`; shared with reveal, so it restores
- * exactly what blinding rewrites as text. Office linking ID positions are left out: blinding
- * offers them separately (blindRules) and reveal leaves them as written.
+ * The text nodes and attributes offered in a part of `kind`, with every Office linking ID position
+ * offered as well; shared with reveal, so it reads exactly what blinding rewrites (it leaves the
+ * linking IDs, nodes with `link` set, as written).
  */
 export function rulesFor(kind: PartKind, visit?: RewriteRules["visit"]): RewriteRules {
-  const rules = kindRules(kind, visit);
-  return { ...rules, attribute: (el, attr, parents) => officeLinkAttribute(el.name, attr) === null && rules.attribute(el, attr, parents) };
-}
-
-/** What blinding offers in a part of `kind`: rulesFor, plus every Office linking ID position. */
-function blindRules(kind: PartKind, visit?: RewriteRules["visit"]): RewriteRules {
   const rules = kindRules(kind, visit);
   return { ...rules, attribute: (el, attr, parents) => officeLinkAttribute(el.name, attr) !== null || rules.attribute(el, attr, parents) };
 }
@@ -403,7 +397,7 @@ export function planDocx(bytes: Uint8Array): DocxPlan {
           else units.push({ items: [{ node }] });
           return value;
         },
-        blindRules(kind, kind === "word" ? visit : undefined),
+        rulesFor(kind, kind === "word" ? visit : undefined),
       );
     } catch (e) {
       if (e instanceof XmlError) throw new DocxError(`part ${m.name} cannot be read (${e.message})`);
@@ -544,7 +538,7 @@ export function renderDocx(plan: DocxPlan, pz: Pseudonymizer, ids: HexNamer): Do
       if (node === undefined || node.value !== value) throw new Error(`docx render: ${ctx.member} changed between plan and render`);
       return renderNode(node, pz, ids);
     },
-    (member) => blindRules(plan.kinds.get(member) ?? "inert"),
+    (member) => rulesFor(plan.kinds.get(member) ?? "inert"),
   );
   const failed = result.members.find((m) => m.kind === "error");
   if (failed !== undefined && failed.kind === "error") throw new DocxError(`part ${failed.name} cannot be written (${failed.error})`);

@@ -8,6 +8,8 @@ import { cellText, classify, readWorkbook, slotRules } from "../../src/formats/x
 import type { ColumnRule, Spec } from "../../src/schema.ts";
 import { buildWorkbook } from "../formats/xlsxfixture.ts";
 import { buildZip, type FixtureEntry, readZip } from "../formats/zipfixture.ts";
+import { docxMembers, xlsxMembers } from "../audit/ooxmlfixture.ts";
+import { makeZip } from "../audit/zipfixture.ts";
 
 // Synthetic salt and data only: invented names, example.com, RFC 5737 addresses, obviously fake IDs.
 const SALT = Uint8Array.from({ length: 32 }, (_, i) => i + 29);
@@ -234,7 +236,7 @@ function docxText(bytes: Uint8Array): { units: string[]; wholes: string[] } {
 }
 /** Members, paragraphs, runs and run properties per member. */
 const docxShape = (bytes: Uint8Array) =>
-  [...members(bytes)].map(([name, xml]) => ({ name, paragraphs: count(xml, /<w:p[\s>/]/g), runs: count(xml, /<w:r[\s>/]/g), rPr: xml.match(/<w:rPr>.*?<\/w:rPr>/g) ?? [], rsid: count(xml, /w:rsidR="00A1B2C3"/g) }));
+  [...members(bytes)].map(([name, xml]) => ({ name, paragraphs: count(xml, /<w:p[\s>/]/g), runs: count(xml, /<w:r[\s>/]/g), rPr: xml.match(/<w:rPr>.*?<\/w:rPr>/g) ?? [], rsid: count(xml, /w:rsidR="[0-9A-F]{8}"/g) }));
 
 describe("DOCX reveal", () => {
   const original = buildZip(DOCX_ENTRIES);
@@ -258,7 +260,7 @@ describe("DOCX reveal", () => {
   test("tracked changes: inserted and deleted text come back in their own revisions", () => {
     const doc = members(back.bytes).get("word/document.xml") as string;
     expect(doc).toContain('<w:delText>Jo Sample</w:delText>');
-    expect(doc).toMatch(/<w:ins [^>]*w:author="Robin Example"[^>]*><w:r w:rsidR="00A1B2C3"><w:t>Dana Pell<\/w:t>/);
+    expect(doc).toMatch(/<w:ins [^>]*w:author="Robin Example"[^>]*><w:r w:rsidR="[0-9A-F]{8}"><w:t>Dana Pell<\/w:t>/);
   });
 
   test("values replaced whole come back from the map: authors, initials, creator, manager, company", () => {
@@ -278,8 +280,11 @@ describe("DOCX reveal", () => {
     expect(c).toContain('<w:t xml:space="preserve">Ask Dana Pell</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t></w:t>');
   });
 
-  test("Office's structural IDs are copied as they are", () => {
-    expect(count(members(back.bytes).get("word/document.xml") as string, /w:rsidR="00A1B2C3"/g)).toBe(count(members(original).get("word/document.xml") as string, /w:rsidR="00A1B2C3"/g));
+  test("Office's linking IDs stay as blinding wrote them (AGT-1791): never the original, never reversed", () => {
+    const rsids = (b: Uint8Array) => (members(b).get("word/document.xml") as string).match(/w:rsidR="[^"]*"/g) ?? [];
+    expect(rsids(back.bytes)).toEqual(rsids(blinded));
+    expect(rsids(back.bytes)).toHaveLength(rsids(original).length);
+    expect(rsids(back.bytes).some((a) => a.includes("00A1B2C3"))).toBe(false);
   });
 
   test("fail closed: a part that cannot be read refuses the whole document", () => {
@@ -295,4 +300,37 @@ describe("DOCX reveal", () => {
     const doc = buildZip(DOCX_ENTRIES.map((e) => (e.name === "word/document.xml" ? { ...e, data: `${DECL}<w:document ${W}><w:body>${body}</w:body></w:document>` } : e)));
     expect(() => revealFile("contract.docx", doc, new Revealer(m))).toThrow(/tracked changes/);
   });
+});
+
+// ---------------------------------------------------------------- Office linking IDs (AGT-1791)
+
+describe("reveal leaves Office linking IDs as blinding wrote them", () => {
+  const ID_SPEC: Spec = {
+    version: 1,
+    columns: [],
+    entities: { person: [{ canonical: "Avery Quill", aliases: [], parts: ["Avery"] }] },
+    patterns: PATTERNS,
+    questions: [],
+  };
+  const attrs = (xml: string): string[] =>
+    [...xml.matchAll(/\b(w:rsid\w*|w14:paraId|w14:textId|wp14:anchorId|w:storeItemID|ds:itemID|w1[45]:val|xr:uid|documentId|xr10:uidLastSave|x14:cfRule[^>]* id)="([^"]*)"/g)].map((m) => `${m[1]}=${m[2]}`);
+  const ids = (bytes: Uint8Array): string[] => [...members(bytes).entries()].sort().flatMap(([n, t]) => attrs(t).map((a) => `${n} ${a}`));
+
+  for (const [path, input] of [
+    ["memo.docx", makeZip(docxMembers({ body: "Avery Quill met the team", officeIds: true }))],
+    ["book.xlsx", makeZip(xlsxMembers({ body: "Avery Quill", officeIds: true }))],
+  ] as const) {
+    test(`${path}: the body is restored, every linking ID stays as written`, () => {
+      const r = blind(path, input, ID_SPEC);
+      const blinded = output(r);
+      // The blinded GUIDs are pseudonyms in the map, so reveal could reverse them; it must not.
+      expect(r.map.entries.some((e) => e.kind === "id")).toBe(true);
+      const back = revealFile(path, blinded, new Revealer(r.map)).bytes;
+      expect(ids(blinded).length).toBeGreaterThan(3);
+      expect(ids(back)).toEqual(ids(blinded));
+      expect([...members(back).values()].join("\n")).toContain("Avery Quill");
+      const x14 = (b: Uint8Array) => /<x14:id>([^<]*)</.exec(members(b).get("xl/worksheets/sheet1.xml") ?? "")?.[1];
+      expect(x14(back)).toBe(x14(blinded));
+    });
+  }
 });

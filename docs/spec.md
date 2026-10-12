@@ -452,8 +452,9 @@ the same code as the commands themselves.
   workbook or document is revealed whole or not at all: a member that cannot be read, a restored
   worksheet name the spreadsheet would refuse, two worksheet or defined names that would reveal to
   one name, or a pseudonym that reads differently with tracked changes accepted and rejected
-  refuses the file. Office's own structural IDs (`w:rsid*`, paragraph IDs, `xr:uid`) are not
-  identities and are not touched. Other formats have no reversal path: a single file is refused
+  refuses the file. Office's own linking IDs (`w:rsid*`, paragraph IDs, `xr:uid` and the rest under
+  **Office structural IDs**) are not identities: reveal leaves them as `blind apply` wrote them,
+  even the GUIDs the map records, and does not restore the originals. Other formats have no reversal path: a single file is refused
   (exit 2); in a tree it is listed and not revealed (exit 1). A file that does not parse, or is
   refused as above, is treated the same way. Two keys of one JSON object, or two files, that would
   reveal to the same name are refused (exit 2, nothing written).

@@ -15,7 +15,7 @@ export const COMMANDS = [
   { name: "apply", usage: "apply <inputs> -o <out>", summary: "Apply the saved spec deterministically" },
   { name: "audit", usage: "audit <out>", summary: "Independently audit a blinded output tree" },
   { name: "run", usage: "run <inputs> -o <out>", summary: "plan, apply and audit in one pass" },
-  { name: "reveal", usage: "reveal <file> --map <map.json>", summary: "Reverse a blinded file with its map" },
+  { name: "reveal", usage: "reveal <path> [--map <map.json>]", summary: "Reverse a blinded file or tree with its map" },
   { name: "bench", usage: "bench <kit>", summary: "Score apply and audit against a kit's oracle" },
 ] as const;
 
@@ -44,6 +44,8 @@ export function helpText(): string {
     "Options:",
     "  -h, --help     Show this help",
     "  -v, --version  Print the version",
+    "",
+    "Run `blind <command> --help` for a command's options and exit status.",
     "",
   ].join("\n");
 }

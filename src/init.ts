@@ -40,6 +40,9 @@ const INIT_HELP = [
   "  --force     Overwrite an existing blind.toml and replace an existing .blind/salt",
   "  -h, --help  Show this help",
   "",
+  "Exit status: 0 written; 1 refused or failed (the salt already exists and --force is not given, the prompts",
+  "were cancelled, or a file could not be written); 2 usage.",
+  "",
 ].join("\n");
 
 const exists = (path: string): boolean => {

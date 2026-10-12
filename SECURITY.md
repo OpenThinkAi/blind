@@ -16,8 +16,10 @@ these with hostile document content and a fake model that obeys any instruction 
 - **Only the profile and the policy.** The analyst is sent the corpus profile (`blind profile`
   prints it) and the policy from `blind.toml`, and nothing else. The model auditor (`blind audit`)
   never sees the inputs: under `local-only`, where nothing leaves the machine, it is sent the
-  blinded output's text, in lines of at most 120 characters and chunks of at most 8 kB; under
-  `profile-only` it is sent only the output's profile and the policy, like the analyst. Raw document text, the salt
+  blinded output's text and the names of its files and archive members, in lines of at most 120
+  characters and chunks of at most 8 kB, with the policy; under `profile-only` it is sent only the
+  output's profile and the policy, like the analyst (a coarse check: parts a profile does not
+  describe are listed as not sent). Raw document text, the salt
   (`.blind/salt`), the map and the spec's `seen` fingerprints are never sent. API keys are read
   from the variable `key_env` names and go only into request headers.
 - **Short strings only.** Any string or key in the data longer than 120 characters is refused
@@ -36,8 +38,8 @@ these with hostile document content and a fake model that obeys any instruction 
   value-like header row or flagged key is refused. See "Privacy modes" in docs/spec.md.
 - **Endpoints.** `local-only` (the default) refuses any endpoint that is not a loopback literal
   (127.0.0.0/8, `::1`, `localhost`) before sending, which rules out `claude -p` and the hosted
-  Anthropic API. `profile-only` allows a remote model over https and refuses any data that is not
-  exactly the profile payload. `none` calls no model. There is no fallback to another mode or
+  Anthropic API. `profile-only` allows a remote model over https (a loopback server may use http), including
+  `claude -p`, and refuses any data that is not exactly the profile payload. `none` calls no model. There is no fallback to another mode or
   backend, and redirects are not followed.
 - **Announced.** Every call prints `role · backend · model · mode · [samples k ·] N bytes sent`
   to stderr before it is sent; under `profile-only` it is printed even with `--quiet`.
@@ -47,7 +49,7 @@ these with hostile document content and a fake model that obeys any instruction 
 The instructions are written by blind: the system prompt and a fixed task sentence. No profile or
 policy string is concatenated into them. The data is serialised as JSON inside one `<data>` block
 that the prompt says is untrusted input, never instructions. Every `<` in the data is escaped as
-`<`, so no string from a document can close the block and speak outside it. The system prompt
+`\u003c`, so no string from a document can close the block and speak outside it. The system prompt
 also tells the analyst that text in the profile that looks like an instruction is something the
 documents say, not something it is told.
 
@@ -102,6 +104,34 @@ was not checked by a model), never as `clean`. If the analyst failed and the
 spec came from the heuristic analyst (`--no-model`) or a human, the audit is the same check.
 `clean` means only that the check found nothing it knows to look for; it is not a guarantee that
 nothing identifying remains.
+
+## Secrets on disk
+
+The salt (`.blind/salt`), the map (`.blind/map.json`), the profile and the spec
+(`.blind/profile.json`, `.blind/spec.json`) and the files `blind reveal` writes
+(`.blind/revealed/`, folders 0700) are created with mode 0600 at the moment they are opened, never
+changed afterwards. The salt and the map unlock the real values; the profile and the spec hold
+names and sample values in the clear; revealed files are the originals. Keep `.blind/` out of
+version control and out of anything you share. `blind reveal` refuses to write beside blinded
+output. The map may not sit inside the output or an input. `blind.toml` is not a secret, but its
+description and examples are sent to your analyst model: use invented examples.
+
+Machines that share a salt produce the same pseudonym for the same value, so a pseudonym
+is linkable across everything blinded with that salt. A new salt (`blind init --force`) breaks
+that link, and the match with earlier maps.
+
+## What blind does not promise
+
+- `clean` is not "safe". It means the checks found nothing they look for (see "The mechanical
+  audit is independent"). The audit says what it could not read, and a file it could not read in
+  full is never `clean`.
+- The engine changes what the spec and the patterns name. Text a rule keeps, and the context
+  around kept values (dates, amounts, free text no entity names), stays as written and can still
+  identify someone to a reader who knows the setting.
+- The first plan on a new corpus is a model's proposal. blind does not apply it until you have
+  seen it, which is the control; review it.
+- Files in formats blind does not handle are listed and not written, never passed through.
+  Images inside a DOCX are copied unchanged and listed as a warning.
 
 ## Reporting an issue
 

@@ -16,7 +16,10 @@ domain is under `.example`, and every IP address is from the RFC 5737 documentat
 bun src/bench/synth.ts /tmp/kit                 # seed 1739, 60 rows
 bun src/bench/synth.ts /tmp/kit --seed 42 --rows 200
 bun src/bench/synth.ts /tmp/kit --kit 2           # kit v2: adds XLSX, DOCX, VTT, JSON and a container log
+bun src/bench/synth.ts /tmp/kit --recur-in-prose  # also cite column values in the review notes
 ```
+
+The full usage is `bun src/bench/synth.ts <dir> [--seed N] [--rows N] [--kit 1|2] [--recur-in-prose]`.
 
 This writes:
 
@@ -56,8 +59,8 @@ stream, so adding them never moves a v1 value. The XLSX and DOCX files are built
 
 ## What kit v1 contains
 
-Formats: CSV and text (Markdown, plain text, a log). Other formats join the kit as the engine
-handles them.
+Formats: CSV and text (Markdown, plain text, a log). [Kit v2](#what-kit-v2-adds) adds the Office,
+JSON and transcript formats.
 
 **`accounts.csv`**, one row per account. Its columns, and what each tests:
 
@@ -241,9 +244,8 @@ It checks:
   and no leak;
 - the whole run takes under 10 seconds.
 
-Two known engine gaps are recorded as `test.failing`, so they turn red when fixed and must then be
-switched to `test`:
-
-- values from a blinded column cited in prose (`recurInProse`) are left in the prose (AGT-1779);
-- the vocabulary entry `SAM` does not stop the given-name part `Sam` from replacing the acronym
-  (over-blinding, not a leak).
+The skeleton records no known gaps now. Both gaps it used to carry are fixed and their tests are plain
+`test`s: values from a blinded column cited in prose (`recurInProse`) are replaced there too
+(AGT-1779), and the vocabulary entry `SAM` keeps the acronym when the given-name part `Sam` has the
+same length (AGT-1783). A gap found later is recorded as `test.failing`, so it turns red when it is
+fixed and must then be switched to `test`.

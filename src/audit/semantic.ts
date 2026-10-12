@@ -687,7 +687,7 @@ function fileTerms(path: string, bytes: Uint8Array, spec: Spec): string[] {
   const format = TABLE_EXTENSIONS[ext];
   if (format !== undefined && vocabHeaders.size > 0) {
     try {
-      const rows = parseCsv(text, format === "tsv" ? "\t" : sniffDelimiter(text));
+      const rows = parseCsv(text, sniffDelimiter(text, format === "tsv" ? "\t" : undefined));
       const header = rows[0]?.cells.map((c) => c.value.trim()) ?? [];
       const cols = header.flatMap((h, i) => (vocabHeaders.has(h) ? [i] : []));
       for (const r of rows.slice(1)) for (const c of cols) terms.push(r.cells[c]?.value ?? "");

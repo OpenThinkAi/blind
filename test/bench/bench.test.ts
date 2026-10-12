@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AuditReport, TreeEntry } from "../../src/audit/mechanical.ts";
 import { type BenchReport, REPORT_FILE, runBench } from "../../src/bench/command.ts";
+import { parseCsv, serializeCsv } from "../../src/engine/csv.ts";
 import { OracleError, OracleMatcher, parseOracle, scanLeaks, scoreDamage, scoreHonesty } from "../../src/bench/score.ts";
 import { buildWorkbook } from "../../src/bench/office.ts";
 import { generateKit, type Kit, type KitOptions, writeKit } from "../../src/bench/synth.ts";
@@ -85,6 +86,27 @@ describe("blind bench on synthetic kit v1", () => {
     expect(r.out).toContain("layers run: mechanical, semantic; model: skipped (--no-model))");
     expect(r.out).toContain("result: pass");
     expect(r.out).toMatch(/^speed: apply \d+\.\d\d s, audit \d+\.\d\d s, total \d+\.\d\d s$/m);
+  });
+
+  test("a pipe-delimited .tab file is split on the pipe by the profiler, engine and both audit layers (AGT-1818)", async () => {
+    // accounts.csv is re-delimited with "|" and renamed accounts.tab. Before the fix, .tab forced a tab,
+    // so the engine saw one column and the spec's column rules matched nothing.
+    const r = await bench({
+      edit: (spec) => {
+        for (const c of spec.columns) if (c.file === "accounts.csv") c.file = "accounts.tab";
+      },
+      prepare: (dir) => {
+        const inDir = join(dir, "input");
+        const rows = parseCsv(readFileSync(join(inDir, "accounts.csv"), "utf8"), ",");
+        writeFileSync(join(inDir, "accounts.tab"), serializeCsv(rows, "|"));
+        rmSync(join(inDir, "accounts.csv"));
+        const oracle = join(dir, "oracle.json");
+        writeFileSync(oracle, readFileSync(oracle, "utf8").replaceAll("accounts.csv", "accounts.tab"));
+      },
+    });
+    expect(r.err).toBe("");
+    const rep = r.report as BenchReport;
+    expect({ result: rep.result, leaks: rep.leaks.count, damage: rep.damage.count, honesty: rep.honesty.count }).toEqual({ result: "pass", leaks: 0, damage: 0, honesty: 0 });
   });
 
   test("the kit with column values cited in prose passes too", async () => {

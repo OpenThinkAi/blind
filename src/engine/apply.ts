@@ -295,7 +295,7 @@ function planTable(
   format: "csv" | "tsv",
   rules: readonly ColumnRule[],
 ): TablePlan {
-  const delim = format === "tsv" ? "\t" : sniffDelimiter(text);
+  const delim = sniffDelimiter(text, format === "tsv" ? "\t" : undefined);
   const rows = parseCsv(text, delim);
   // 0-based; like the profiler, row 1 stands in when no row looks like a header.
   const detected = detectHeaderRow(rows.map((r) => r.cells.map((c) => c.value)));

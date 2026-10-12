@@ -769,7 +769,7 @@ Pairs of locations that share values, which suggests they hold the same kind of 
 ### How `blind profile` builds it
 
 `blind profile <inputs...>` (run it in the directory that holds `blind.toml`, which it needs for
-the sample count and the privacy mode) reads CSV (`.csv`), TSV (`.tsv`, `.tab`), JSON (`.json`), JSONL
+the sample count and the privacy mode) reads CSV (`.csv`), TSV (`.tsv`, `.tab`; the delimiter is sniffed from the first line like CSV, and tab wins a tie, so a pipe-delimited `x.tab` splits on `|`), JSON (`.json`), JSONL
 (`.jsonl`, `.ndjson`), XLSX workbooks (`.xlsx`), plain text (`.txt`, `.text`), Markdown (`.md`, `.markdown`), logs (`.log`),
 WebVTT (`.vtt`) and SRT (`.srt`) transcripts, and DOCX (`.docx`) files, writes `.blind/profile.json` (mode
 0600) and prints it as a table; `--json` prints the JSON instead. `k` is `[profile] samples` in

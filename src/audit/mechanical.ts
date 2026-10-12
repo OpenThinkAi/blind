@@ -731,7 +731,7 @@ function columnFindings(sink: PartSink, bytes: Uint8Array, rules: readonly Colum
   }
   let rows;
   try {
-    rows = parseCsv(text, format === "tsv" ? "\t" : sniffDelimiter(text));
+    rows = parseCsv(text, sniffDelimiter(text, format === "tsv" ? "\t" : undefined));
   } catch (e) {
     if (!(e instanceof CsvError)) throw e;
     spec(`cannot parse the table to check its columns against the spec (${e.message})`);

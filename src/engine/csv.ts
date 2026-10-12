@@ -22,8 +22,11 @@ export class CsvError extends Error {
 
 const CANDIDATES = [",", ";", "\t", "|"] as const;
 
-/** The delimiter used most in the first line, outside quotes; ties prefer the earlier candidate, "," by default. */
-export function sniffDelimiter(text: string): string {
+/**
+ * The delimiter used most in the first line, outside quotes. Ties prefer `preferred` when given
+ * (tab for `.tsv`/`.tab`), else the earlier candidate; "," is the default when none appears.
+ */
+export function sniffDelimiter(text: string, preferred?: string): string {
   const counts = new Map<string, number>();
   let quoted = false;
   for (let i = 0; i < text.length; i++) {
@@ -32,8 +35,8 @@ export function sniffDelimiter(text: string): string {
     else if (!quoted && (ch === "\n" || ch === "\r")) break;
     else if (!quoted) counts.set(ch, (counts.get(ch) ?? 0) + 1);
   }
-  let best: string = ",";
-  let bestCount = 0;
+  let best: string = preferred ?? ",";
+  let bestCount = preferred === undefined ? 0 : (counts.get(preferred) ?? 0);
   for (const c of CANDIDATES) {
     const n = counts.get(c) ?? 0;
     if (n > bestCount) {

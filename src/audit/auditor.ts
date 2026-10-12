@@ -30,12 +30,12 @@ import type { Policy } from "../policy.ts";
 import { buildProfile, forPrivacyMode } from "../profile/profile.ts";
 import { tokeniseProfile } from "../profile/tokens.ts";
 import type { Spec } from "../schema.ts";
+import { maskValue } from "../mask.ts";
 import type { Schema } from "../validate.ts";
 import {
   addLayer,
   type AuditReport,
   type Finding,
-  maskValue,
   MAX_ZIP_DEPTH,
   type ModelLayerStatus,
   modelLayerName,

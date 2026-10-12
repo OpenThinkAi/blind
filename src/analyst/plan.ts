@@ -436,8 +436,8 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
     ruledOut.forEach((d, i) => {
       remarks.push(
         d.why === "identifying"
-          ? `analyst rule ${i + 1} of ${ruledOut.length} dropped: ${d.treatment} for ${where(d.at, true)}, an identifying column; only ${POLICY_FILE} or a human may keep one, so it is ruled as if the analyst had left it out`
-          : `analyst rule ${i + 1} of ${ruledOut.length} dropped: ${d.treatment} for ${where(d.at, true)}; only ${POLICY_FILE} or a human may drop, redact or scan a column, so it is ruled as if the analyst had left it out`,
+          ? `analyst rule ${i + 1} of ${ruledOut.length} dropped: ${d.treatment} for ${where(d.at, show)}, an identifying column; only ${POLICY_FILE} or a human may keep one, so it is ruled as if the analyst had left it out`
+          : `analyst rule ${i + 1} of ${ruledOut.length} dropped: ${d.treatment} for ${where(d.at, show)}; only ${POLICY_FILE} or a human may drop, redact or scan a column, so it is ruled as if the analyst had left it out`,
       );
     });
     for (const name of patternsRestored) remarks.push(`analyst turned pattern ${name} off; it is on, because only ${POLICY_FILE} or a human may switch a pattern off`);

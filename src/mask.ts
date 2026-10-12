@@ -34,7 +34,7 @@ export function maskQuoted(text: string, show: boolean): string {
     try {
       return maskValue(JSON.parse(m) as string);
     } catch {
-      return m;
+      return "***";
     }
   });
 }

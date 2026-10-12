@@ -62,8 +62,6 @@ import { isHandle, isPlate, shapeHolds } from "../engine/shapes.ts";
 import { DICTIONARY } from "../engine/words.ts";
 import { fold, foldWithMap, stringView, type View, viewsOf, xmlBaseView } from "./views.ts";
 import { maskValue } from "../mask.ts";
-
-export { maskValue };
 import { accountSegments } from "../formats/paths.ts";
 import { CONTENT_TYPES_PART, localName, looksLikeXml, officeIdAttribute, ooxmlUriAttribute, walkXml } from "./xml.ts";
 import { looksLikeZip, readZip, type ZipBudget, ZipError, zipBudget } from "./zip.ts";

@@ -54,7 +54,7 @@
 // is blinded through src/engine/names.ts (patterns, entities and the column
 // values replaced above), planned with the cells and rendered after them.
 
-import { type ColumnRule, type EntityClassName, REDACTED_VALUE, type Spec, type Treatment } from "../schema.ts";
+import { type ColumnRule, type EntityClassName, patternOn, REDACTED_VALUE, type Spec, type Treatment } from "../schema.ts";
 import { newSecretCarry } from "./secret.ts";
 import { Shield, type ShieldReport } from "./shield.ts";
 import type { PseudoClass } from "./canonical.ts";
@@ -1100,7 +1100,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   for (const [cls, list] of Object.entries(spec.entities)) {
     if (cls !== "vocabulary" && list !== undefined) entities[cls as PseudoClass] = list;
   }
-  const pz = new Pseudonymizer({ salt: opts.salt, map: priorMap, entities, avoid, personAliases: aliases });
+  const pz = new Pseudonymizer({ salt: opts.salt, map: priorMap, entities, avoid, personAliases: aliases, redactCards: patternOn(spec.patterns, "card") });
   const officeIds = new OfficeIds(opts.salt);
 
   // Pass 1 ends here: derive every pseudonym in sorted order.

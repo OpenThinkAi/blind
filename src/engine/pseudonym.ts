@@ -34,7 +34,7 @@
 // ("dr. jo sample") still pins "Jo Sample".
 
 import { createHmac } from "node:crypto";
-import { canonicalize, guidCore, PSEUDO_CLASSES, type PseudoClass, type RealPseudoClass } from "./canonical.ts";
+import { canonicalize, cardDigits, guidCore, PSEUDO_CLASSES, type PseudoClass, type RealPseudoClass } from "./canonical.ts";
 import { REDACTED_VALUE } from "../schema.ts";
 import { type BlindMap, MAP_VERSION, type MapEntry, type MapKind, sortEntries } from "./map.ts";
 import type { PersonAliases } from "./identity.ts";
@@ -76,6 +76,12 @@ export interface PseudonymizerOptions {
   avoid?: Iterable<string>;
   /** Person forms that stand for another person (identity.ts personAliases). */
   personAliases?: PersonAliases;
+  /**
+   * The card pattern is on: a value that is a payment card number (card IIN prefix, Luhn) is never
+   * pseudonymised, in whatever column or class it reaches the pseudonymizer; it is written as the fixed
+   * placeholder and has no map entry (AGT-1848).
+   */
+  redactCards?: boolean;
 }
 
 export class PseudonymError extends Error {
@@ -208,8 +214,10 @@ export class Pseudonymizer {
   /** Map person entries under today's canonical form of their value, when that differs from the recorded one. */
   private readonly rekeyed = new Map<string, MapEntry>();
   private readonly personAliases: PersonAliases | undefined;
+  private readonly redactCards: boolean;
 
   constructor(opts: PseudonymizerOptions) {
+    this.redactCards = opts.redactCards === true;
     if (opts.salt !== undefined && opts.salt.length < MIN_SALT_BYTES) {
       throw new PseudonymError(`salt must be at least ${MIN_SALT_BYTES} bytes`);
     }
@@ -381,7 +389,7 @@ export class Pseudonymizer {
 
   pseudonym(cls: PseudoClass, value: string): string {
     // Redacted text is a fixed placeholder: no pseudonym, no map entry, so it cannot be revealed.
-    if (cls === "redact") return REDACTED_VALUE;
+    if (cls === "redact" || (this.redactCards && cardDigits(value) !== undefined)) return REDACTED_VALUE;
     const { key: c, display } = this.resolve(cls, value);
     const surface = display ?? value;
     const shared = this.shared(cls, c, value, surface);

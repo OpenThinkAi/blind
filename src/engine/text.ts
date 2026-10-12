@@ -30,7 +30,8 @@
 // that is the initial of another word of that person's name is taken in too
 // ("Marwick D."). A match may start right after a URL escape ("%20Marwick").
 
-import { PSEUDO_CLASSES, phoneDigits, type PseudoClass, type RealPseudoClass } from "./canonical.ts";
+import { PSEUDO_CLASSES, phoneDigits, type PseudoClass, type RealPseudoClass, cardDigits } from "./canonical.ts";
+export { cardDigits };
 import { type Entities, type PatternName, type Patterns, patternOn } from "../schema.ts";
 import { inDateContext, isDateWord } from "./datecontext.ts";
 import { type CellRule, cellValueSpan, type ContextOptions, findContextSpans } from "./context.ts";
@@ -67,11 +68,14 @@ export interface Span {
   joined?: true;
   /** Internal to find(): the span is a lone surname part of a known person. Never present in its result. */
   surname?: true;
+  /** For a shape-pattern match (findPatternSpans): which pattern found it, so the audit names it even when only the context made it one. */
+  pattern?: PatternName;
 }
 
 /** Code-unit order, never locale order. */
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
+const DASHES = "\\u2010-\\u2015";
 const IPV4_OCTET = "(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)";
 const PATTERN_RES: Record<Exclude<PatternName, "secret" | "address">, RegExp> = {
   email: /(?<![\p{L}\p{N}._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+(?![\p{L}\p{N}-]|\.[A-Za-z0-9])/gu,
@@ -82,15 +86,20 @@ const PATTERN_RES: Record<Exclude<PatternName, "secret" | "address">, RegExp> = 
   mac: /(?<![0-9A-Fa-f:-])[0-9A-Fa-f]{2}([:-])[0-9A-Fa-f]{2}(?:\1[0-9A-Fa-f]{2}){4}(?![0-9A-Fa-f:-])/g,
   guid: /(?<![0-9A-Fa-f-])[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}(?![0-9A-Fa-f-])/g,
   // A phone: North American (optional +1, a three-digit area code, 3 + 4 digits, with separators or
-  // parentheses) or international (a leading + and country code). Bare digit runs are never phones, so
-  // ids, amounts and dates that merely contain digits are left alone (accept() checks phoneDigits).
+  // parentheses) or international (a leading + and country code). A separator is a space, ".", "-", a
+  // Unicode dash, "/" or "?" (a dash mangled by a lossy 8-bit conversion). Bare digit runs are phones
+  // only with context (barePhoneSpans), so ids, amounts and dates that merely contain digits are left
+  // alone (accept() checks phoneDigits).
   phone: new RegExp(
-    "(?<![\\p{L}\\p{N}_+]|\\p{N}[.-])(?:" +
-      "(?:\\+?1[ .-]?)?(?:\\(\\d{3}\\)[ .-]?|\\d{3}[ .-])\\d{3}[ .-]\\d{4}" +
+    `(?<![\\p{L}\\p{N}_+/]|\\p{N}[.\\-/?${DASHES}])(?:` +
+      `(?:\\+?1[ .\\-/?${DASHES}]?)?(?:\\(\\d{3}\\)[ .\\-/?${DASHES}]?|\\d{3}[ .\\-/?${DASHES}])\\d{3}[ .\\-/?${DASHES}]\\d{4}` +
       "|\\+\\d{1,3}(?:[ \\t.-]?\\(?\\d{1,4}\\)?){2,6}" +
-      ")(?![\\p{L}\\p{N}_]|[.-]\\d)",
+      `)(?![\\p{L}\\p{N}_]|[.\\-/${DASHES}]\\d)`,
     "gu",
   ),
+  // A card number: 13 to 19 digits, unseparated or grouped 4-4-4-4(-3), 4-6-5 or 4-6-4 by spaces or dashes.
+  // accept() keeps only those with a card IIN prefix and a valid Luhn checksum (cardDigits).
+  card: /(?<![\p{L}\p{N}_]|\d-)(?:\d{13,19}|\d{4}([ -])\d{4}\1\d{4}\1\d{4}(?:\1\d{3})?|\d{4}([ -])\d{6}\2\d{5}|\d{4}([ -])\d{6}\3\d{4})(?![\p{L}\p{N}_]|-\d)/gu,
   host: /(?<![\p{L}\p{N}._-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}(?![\p{L}\p{N}_-]|\.[A-Za-z0-9])/gu,
 };
 
@@ -103,16 +112,18 @@ export const PATTERN_CLASS: Record<PatternName, PseudoClass> = {
   host: "host",
   phone: "id",
   address: "location",
+  // Not a pseudonym: a card number is written as the fixed placeholder, like a secret (card.ts).
+  card: "redact",
   // Not a pseudonym: a secret is written as the fixed placeholder (secret.ts).
   secret: "redact",
 };
 
 // Fixed order: when two patterns match the same span, the earlier one wins.
 // `secret` is last: a token another pattern matches is never a secret.
-const PATTERN_ORDER: readonly PatternName[] = ["email", "ip", "mac", "guid", "phone", "address", "host", "secret"];
+const PATTERN_ORDER: readonly PatternName[] = ["email", "ip", "mac", "guid", "card", "phone", "address", "host", "secret"];
 
 /** Every shape but `secret`: what secret.ts asks about a token ("is this whole token an email, a phone ...?"). */
-const OTHER_SHAPES: Patterns = { email: true, ip: true, mac: true, guid: true, phone: true, host: true, address: false, secret: false };
+const OTHER_SHAPES: Patterns = { email: true, ip: true, mac: true, guid: true, phone: true, card: true, host: true, address: false, secret: false };
 
 // Two-label names count as hosts only under these suffixes, so "notes.txt" or
 // "report.md" is not a host; three or more labels ("db01.example.com") always count.
@@ -131,7 +142,50 @@ export function validIpv6(s: string): boolean {
   return halves.length === 2 ? groups.length < 8 : groups.length === 8;
 }
 
+// A bare run of NANP digits: 10, or 1 and 10; the area code and the exchange start 2-9.
+const BARE_PHONE_RE = /(?<![\p{L}\p{N}_+$.,/\\?-])1?[2-9]\d{2}[2-9]\d{6}(?![\p{L}\p{N}_]|[.,\-/?]\d)/gu;
+// Words that say a number nearby is a phone number: "phone", "tel=", "cell:", "call", "contact", "#".
+const PHONE_WORDS = new Set(["phone", "phones", "tel", "telephone", "cell", "cellphone", "mobile", "mob", "call", "calls", "text", "sms", "contact", "ph", "fax", "whatsapp", "#"]);
+// Words that make a "#" or a nearby number something else: "order #", "accession 2023..".
+const NOT_PHONE_WORDS = new Set(["order", "accession", "invoice", "account", "acct", "case", "ticket", "serial", "sku", "ref", "reference", "id", "chip", "microchip", "tracking", "confirmation", "po", "claim", "policy", "member", "receipt", "tag", "lot", "batch", "isbn", "barcode", "upc"]);
+// A parenthetical relation or role next to a number: "Sam Sample (sister) 5555550100".
+const RELATIONS = new Set([
+  "sister", "brother", "sibling", "mother", "father", "mom", "mum", "dad", "parent", "wife", "husband", "spouse", "partner", "son", "daughter",
+  "aunt", "uncle", "cousin", "grandmother", "grandfather", "grandma", "grandpa", "friend", "neighbor", "neighbour", "roommate", "boyfriend",
+  "girlfriend", "fiance", "fiancee", "guardian", "owner", "emergency", "colleague", "coworker", "landlord", "cell", "mobile", "home", "work", "office",
+]);
+
+/** Whether the words just before a bare number, or a relation in parentheses beside it, say it is a phone number. */
+function phoneContext(text: string, start: number, end: number): boolean {
+  const before = text.slice(Math.max(0, start - 80), start);
+  const after = text.slice(end, end + 40);
+  const rel = (w: string): boolean => RELATIONS.has(w.trim().toLowerCase());
+  const lead = /\(([\p{L} ]{2,20})\)[ \t]*[:\-\u2013\u2014]?[ \t]*$/u.exec(before);
+  if (lead?.[1] !== undefined && rel(lead[1])) return true;
+  const trail = /^[ \t]*\(([\p{L} ]{2,20})\)/u.exec(after);
+  if (trail?.[1] !== undefined && rel(trail[1])) return true;
+  const tokens = (before.toLowerCase().match(/#|\p{L}+/gu) ?? []).slice(-4);
+  const last = tokens[tokens.length - 1];
+  if (last !== undefined && NOT_PHONE_WORDS.has(last)) return false;
+  if (tokens.slice(-2).includes("#") && tokens.length >= 2 && NOT_PHONE_WORDS.has(tokens[tokens.length - 2] as string)) return false;
+  return tokens.some((t) => PHONE_WORDS.has(t));
+}
+
+/** Bare 10-digit (or 1 and 10) runs that are NANP-valid and read as a phone from the words around them (AGT-1848). */
+function barePhoneSpans(text: string): { start: number; end: number; value: string }[] {
+  const out: { start: number; end: number; value: string }[] = [];
+  for (const m of text.matchAll(BARE_PHONE_RE)) {
+    if (!phoneContext(text, m.index, m.index + m[0].length)) continue;
+    // Written with separators for the pseudonymizer, so a bare number gets the same Id_ pseudonym as
+    // "555-555-0100" (a bare digit run would get a number-shaped one) and drops a leading 1 as they do.
+    const d = m[0].slice(-10);
+    out.push({ start: m.index, end: m.index + m[0].length, value: `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}` });
+  }
+  return out;
+}
+
 function accept(name: PatternName, m: string): boolean {
+  if (name === "card") return cardDigits(m) !== undefined;
   if (name === "ip" && m.includes(":")) return validIpv6(m);
   if (name === "phone") return phoneDigits(m) !== undefined;
   if (name === "host") {
@@ -170,19 +224,22 @@ export function findPatternSpans(text: string, patterns: Patterns, keep: readonl
     if (!patternOn(patterns, name)) return;
     if (name === "secret") {
       for (const s of findSecretSpans(text, wholeOtherShape, carry === undefined ? {} : { carry })) {
-        found.push({ start: s.start, end: s.end, cls: "redact", value: text.slice(s.start, s.end), source: "pattern", rank });
+        found.push({ start: s.start, end: s.end, cls: "redact", value: text.slice(s.start, s.end), source: "pattern", pattern: name, rank });
       }
       return;
     }
     if (name === "address") {
-      for (const a of findAddresses(text)) found.push({ start: a.start, end: a.end, cls: "location", value: text.slice(a.start, a.end), source: "pattern", rank });
+      for (const a of findAddresses(text)) found.push({ start: a.start, end: a.end, cls: "location", value: text.slice(a.start, a.end), source: "pattern", pattern: name, rank });
       return;
     }
     for (const m of text.matchAll(PATTERN_RES[name])) {
       if (!accept(name, m[0])) continue;
       const start = m.index;
       const cls = name === "host" && underKeptDomain(m[0], keep) ? null : PATTERN_CLASS[name];
-      found.push({ start, end: start + m[0].length, cls, value: m[0], source: "pattern", rank });
+      found.push({ start, end: start + m[0].length, cls, value: m[0], source: "pattern", pattern: name, rank });
+    }
+    if (name === "phone") {
+      for (const b of barePhoneSpans(text)) found.push({ ...b, cls: PATTERN_CLASS.phone, source: "pattern", pattern: name, rank });
     }
   });
   // Leftmost first; at the same start the longest; then the fixed pattern order.

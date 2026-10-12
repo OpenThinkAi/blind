@@ -38,6 +38,7 @@ const PATTERN_HELP: Record<PatternName, string> = {
   guid: "GUIDs",
   mac: "MAC addresses",
   phone: "phone numbers",
+  card: "payment card numbers (13-19 digits, a card prefix and a valid checksum), written as REDACTED; follows secret when unset",
   address: "street addresses (a house number, street and suffix, then an optional unit and City ST ZIP)",
   secret: "passwords, keys and tokens (credential-shaped words), written as REDACTED",
 };

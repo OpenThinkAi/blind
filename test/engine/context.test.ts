@@ -8,7 +8,7 @@ import { EntityMatcher, findSpans } from "../../src/engine/text.ts";
 import { parsePolicy, defaultPolicy, renderPolicy, PolicyError } from "../../src/policy.ts";
 import { REDACTED_VALUE, type PatternName, type Spec } from "../../src/schema.ts";
 
-const NONE: Record<PatternName, boolean> = { ip: false, email: false, host: false, guid: false, mac: false, phone: false, address: false, secret: false };
+const NONE: Record<PatternName, boolean> = { ip: false, email: false, host: false, guid: false, mac: false, phone: false, card: false, address: false, secret: false };
 const found = (text: string, triggers: string[] = []) => findContextSpans(text, { triggers }).map((s) => text.slice(s.start, s.end));
 
 describe("context keywords", () => {
@@ -92,9 +92,9 @@ describe("findSpans with context", () => {
   });
   test("a redaction wins over a phone match of the same text, and a phone elsewhere is still a phone", () => {
     const text = "gate code 801-555-0142, call 801-555-0100";
-    const spans = findSpans(text, m, { ...NONE, phone: true, address: false, secret: false }, [], { triggers: [] });
+    const spans = findSpans(text, m, { ...NONE, phone: true, card: false, address: false, secret: false }, [], { triggers: [] });
     expect(spans.map((s) => [text.slice(s.start, s.end), s.cls])).toEqual([["801-555-0142", "redact"], ["801-555-0100", "id"]]);
-    expect(findSpans(text, m, { ...NONE, phone: true, address: false, secret: false }).map((s) => s.cls)).toEqual(["id", "id"]);
+    expect(findSpans(text, m, { ...NONE, phone: true, card: false, address: false, secret: false }).map((s) => s.cls)).toEqual(["id", "id"]);
   });
   test("a redaction wins over a pattern match of the same text", () => {
     const text = "pw: avery@example.com";

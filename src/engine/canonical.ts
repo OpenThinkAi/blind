@@ -36,7 +36,9 @@ const GUID_CORE = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 const GUID_RE = new RegExp(`^(?:\\{(${GUID_CORE})\\}|(${GUID_CORE}))$`, "i");
 
 // North American: optional +1, a three-digit area code (optionally in parentheses), 3 + 4 digits.
-const NANP_RE = /^(?:\+?1[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}$/;
+// A group separator is a space, ".", "-", a Unicode dash (U+2010-2015), or "/" or "?" (a "-" that a lossy
+// 8-bit conversion turned into "?", or a slash-written number, AGT-1848).
+const NANP_RE = /^(?:\+?1[\s.\-/?\u2010-\u2015]?)?(?:\(\d{3}\)|\d{3})[\s.\-/?\u2010-\u2015]?\d{3}[\s.\-/?\u2010-\u2015]?\d{4}$/;
 // International: a leading + and country code, then digit groups split by single separators.
 const INTL_RE = /^\+\d{1,3}(?:[\s.-]?\(?\d{1,4}\)?){2,6}$/;
 
@@ -60,6 +62,38 @@ export function phoneDigits(value: string): string | undefined {
     return d.startsWith("1") && d.length === 11 ? d.slice(1) : d;
   }
   return undefined;
+}
+
+/**
+ * The digits of a payment card number written in `m`, or undefined: 13 to 19 digits that start with a
+ * card IIN prefix (4; 51-55; 2221-2720; 34, 37; 6011, 65; 35) and pass the Luhn checksum. A 15-digit microchip, an order or accession number and a random digit run fail one of these.
+ */
+export function cardDigits(m: string): string | undefined {
+  const d = m.replace(/[ -]/g, "");
+  if (!/^\d{13,19}$/.test(d)) return undefined;
+  const n = d.length;
+  const two = Number(d.slice(0, 2));
+  const four = Number(d.slice(0, 4));
+  const prefixed =
+    d.startsWith("4") ||
+    (two >= 51 && two <= 55) ||
+    (four >= 2221 && four <= 2720) ||
+    two === 34 ||
+    two === 37 ||
+    d.startsWith("6011") ||
+    two === 65 ||
+    two === 35;
+  if (!prefixed) return undefined;
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    let digit = Number(d[n - 1 - i]);
+    if (i % 2 === 1) {
+      digit *= 2;
+      if (digit > 9) digit -= 9;
+    }
+    sum += digit;
+  }
+  return sum % 10 === 0 ? d : undefined;
 }
 
 function base(value: string): string {

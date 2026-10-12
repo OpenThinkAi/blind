@@ -2,9 +2,10 @@
 // spec by `blind plan`. They decide a column ahead of the analyst and the heuristic, so a policy
 // such as "keep species, weight and visit date" needs no model and no spec edit. A human rule in
 // the spec (an answered question, or a rule written with `source: "human"`) is the one thing they
-// do not override; the plan says so. Each rule the policy decides is written with `source: "policy"`; a saved policy rule that no longer matches
-// (the rule was removed from blind.toml) goes back to the heuristic rule. An open question about
-// a column the policy now decides is removed, since answering it could not change the column.
+// do not override; the plan says so. Each rule the policy decides is written with
+// `source: "policy"`; a saved policy rule that no longer matches (the rule was removed from
+// blind.toml) goes back to the heuristic rule. An open question about a column the policy now
+// decides is removed, since answering it could not change the column.
 
 import type { ColumnPolicyRule, Policy } from "../policy.ts";
 import type { ColumnRule, Location, Profile, Spec } from "../schema.ts";

@@ -140,4 +140,27 @@ describe("checkProposal", () => {
     proposal.questions.push(q("q2"));
     expect(checkProposal(proposal, profile)).toEqual([{ path: "$.questions[1].about", message: "same column as $.questions[0].about; ask once per column" }]);
   });
+
+  test("rejects an analyst rule that drops or redacts a column; blind, keep and value pass", () => {
+    const profile: Profile = {
+      version: 1, sampleCount: 0, files: [{ path: "a.csv", format: "csv", size: 10 }],
+      tables: [{ file: "a.csv", headerRow: 1, columns: [{ header: "col", stats: stats() }] }],
+      jsonKeys: [], documents: [], transcripts: [], cooccurrence: [],
+    };
+    const with_ = (treatment: Spec["columns"][number]["treatment"], cls: Spec["columns"][number]["class"]): Spec => ({
+      version: 1,
+      columns: [{ ...loc, class: cls, treatment, confidence: 0.9, source: "analyst" }],
+      entities: {},
+      patterns: { ip: true, email: true, host: true, guid: true, mac: false },
+      questions: [],
+    });
+    for (const treatment of ["drop", "redact"] as const) {
+      expect(checkProposal(with_(treatment, "id"), profile)).toEqual([
+        { path: "$.columns[0].treatment", message: 'must be "blind", "keep" or "value"; only blind.toml or a human may drop or redact a column' },
+      ]);
+    }
+    expect(checkProposal(with_("blind", "id"), profile)).toEqual([]);
+    expect(checkProposal(with_("keep", "vocabulary"), profile)).toEqual([]);
+    expect(checkProposal(with_("value", "unknown"), profile)).toEqual([]);
+  });
 });

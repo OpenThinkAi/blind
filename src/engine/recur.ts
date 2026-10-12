@@ -35,6 +35,7 @@
 import type { Entities, PatternName } from "../schema.ts";
 import { DICTIONARY } from "../profile/words.ts";
 import { canonicalize, PSEUDO_CLASSES, type PseudoClass } from "./canonical.ts";
+import { isHonorificOrRole } from "./honorifics.ts";
 import { isDateWord } from "./datecontext.ts";
 import type { BlindMap } from "./map.ts";
 import { EntityMatcher, type ExtraForm, findPatternSpans, findSpans, type Span } from "./text.ts";
@@ -62,6 +63,7 @@ export function partExclusion(part: string, vocabulary: ReadonlySet<string>, kee
   if ([...words(part).join("")].length < MIN_RECUR_LENGTH) return `fewer than ${MIN_RECUR_LENGTH} letters and digits`;
   // The whole word, as the audit checks it: "Rose-May" is a name even though "rose" and "may" are words.
   if (DICTIONARY.has(fold(part))) return "a dictionary word";
+  if (isHonorificOrRole(part)) return "an honorific or role word";
   if (vocabulary.has(fold(part))) return "a spec vocabulary form";
   if (keep.has(fold(part))) return "a keep term";
   return null;

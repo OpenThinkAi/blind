@@ -97,7 +97,7 @@ export interface PolicyOverlay {
 }
 
 /** The spec with every profile column blind.toml decides set to the policy's rule. Other rules are untouched (same objects). */
-export function applyColumnPolicy(spec: Spec, profile: Profile, policy: Pick<Policy, "columns" | "sensitive"> & Partial<Pick<Policy, "keep">>): PolicyOverlay {
+export function applyColumnPolicy(spec: Spec, profile: Profile, policy: Pick<Policy, "columns" | "sensitive"> & Partial<Pick<Policy, "keep" | "patterns">>): PolicyOverlay {
   const cp = new ColumnPolicy(policy);
   const at = new Map(spec.columns.map((c, i) => [locationKey(c), i]));
   const columns: ColumnRule[] = [...spec.columns];

@@ -153,6 +153,13 @@ plan (exit 2) before anything is profiled or sent.
   whose `blind.toml` rule is gone goes back to the heuristic rule. A rule with `source: "human"` is
   never overridden (the plan notes it), and an unanswered question about a column the policy now
   decides is removed. Each of these is listed in the notes.
+- **Shaped columns follow the patterns.** The heuristic gives `blind` to a column when at least 80% of
+  its values are an email, IP address, GUID, host name or MAC address and either that class is in
+  `[sensitive].classes` or the shape's free-text pattern is on (`[patterns]` in `blind.toml`, else the
+  default: on when its class is listed, IP and host on). Otherwise it is `keep`, so a column cannot
+  stay clear while the same values in prose are replaced. A MAC column is classified only when the
+  `mac` pattern is on. When the pattern alone made a column blind, the plan notes
+  `blind, because policy pattern ip on`. A `[[columns]]` rule still wins.
 - **Vocabulary that would shield.** A vocabulary entry the analyst proposes (first plan or re-plan) is
   dropped and listed (`kind: "vocabulary"`) when one of its forms equals a value blinded in a profile
   column (its samples), a map value or canonical form, or a person or org entity form or part. A

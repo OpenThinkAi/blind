@@ -279,6 +279,30 @@ describe("XLSX apply: fail closed", () => {
     expect(run(bytes).skipped[0]?.reason).toMatch(/attribute owner/);
   });
 
+  test("a DSN with a host and a user email in connections.xml is never written with the values intact (AGT-1810)", () => {
+    const conn = '<connections xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><connection id="1" name="Warehouse"><dbPr connection="Server=db01.example.com;Database=hr;Uid=pat.doe@example.com;Pwd=x" command="select 1"/></connection></connections>';
+    const r = run(buildWorkbook({ extra: [{ name: "xl/connections.xml", data: conn }] }));
+    expect(r.outputs).toEqual([]);
+    const reason = r.skipped[0]?.reason ?? "";
+    expect(reason).toMatch(/xl\/connections\.xml <dbPr> attribute connection/);
+    expect(reason).not.toMatch(/db01|pat\.doe|example\.com/);
+  });
+
+  test("an external link cache with an address, a GUID or a MAC stops the file, even when that pattern is off in the spec", () => {
+    for (const text of ["192.0.2.77", "00:00:5e:00:53:af", "3f2504e0-4f89-11d3-9a0c-0305e82c3301", "files.example.net"]) {
+      const link = `<externalLink xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><externalBook><sheetNames><sheetName val="${text}"/></sheetNames></externalBook></externalLink>`;
+      const r = run(buildWorkbook({ extra: [{ name: "xl/externalLinks/externalLink1.xml", data: link }] }), { ...SPEC, patterns: { ip: false, email: false, host: false, guid: false, mac: false } });
+      expect(r.outputs).toEqual([]);
+      expect(r.skipped[0]?.reason).toMatch(/externalLink1\.xml <sheetName> attribute val/);
+      expect(r.skipped[0]?.reason).not.toContain(text);
+    }
+  });
+
+  test("format structure (namespaces, content types, relationship types, template ids) is not a hit", () => {
+    const part = '<root xmlns:x="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><ext uri="{3f2504e0-4f89-11d3-9a0c-0305e82c3301}"/></root>';
+    expect(run(buildWorkbook({ extra: [{ name: "xl/other.xml", data: part }] })).skipped).toEqual([]);
+  });
+
   test("text there without spec values does not stop it", () => {
     const bytes = buildWorkbook({ extra: [{ name: "customXml/item1.xml", data: "<root><v>quarterly</v></root>" }] });
     expect(run(bytes).skipped).toEqual([]);

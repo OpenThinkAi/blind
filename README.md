@@ -86,7 +86,10 @@ documents ------------ engine (deterministic) ---------------+--> blinded docume
   pseudonym everywhere (`Person_A7F3`, `Org_2C9E`), IPs stay IPs and emails stay emails, formulas,
   joins and formatting survive. A column nobody classified that looks like identifiers is
   pseudonymised, not passed through; dates, amounts, quantities with units and small repeating
-  categories (species, status) are not identifiers, and pass.
+  categories (species, status) are not identifiers, and pass. People named only in prose are
+  found without a model (an honorific, or a common given name and a surname) and blinded too; pet
+  names, places, breeds, keep-list terms and names in kept columns are left alone
+  ([docs/spec.md](docs/spec.md#how-blind-apply-uses-the-spec)).
 - **Auditor** (independent of the engine): reads the output as it is on disk and reports leaks and
   candidates. Its rule-based layers never depend on a model.
 

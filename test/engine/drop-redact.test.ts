@@ -151,7 +151,8 @@ describe("drop and redact in XLSX", () => {
     // stricter treatment wins, as a pseudonym does over keep.
     expect(rows[1]?.slice(1)).toEqual([REDACTED_VALUE, "", ""]);
     expect(rows[2]?.slice(1)).toEqual([REDACTED_VALUE, "", "feline"]);
-    expect(r.files[0]?.columns.map((c) => c.outcome)).toEqual(["unknown-pseudonymised", "redacted", "dropped", "kept"]);
+    // Owner has no rule and holds people's names: pseudonymised as person (AGT-1830).
+    expect(r.files[0]?.columns.map((c) => c.outcome)).toEqual(["unknown-person", "redacted", "dropped", "kept"]);
   });
 
   test("a number cell in a dropped or redacted column refuses the workbook rather than leaving the value", () => {

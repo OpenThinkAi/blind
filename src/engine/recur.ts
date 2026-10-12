@@ -225,6 +225,21 @@ export function personPartForms(values: Iterable<ExtraForm>, map: BlindMap | und
     .map((p) => ({ cls: "person", value: p.value, form: p.form, ...(isDateWord(p.form) ? { datePart: true } : {}) }));
 }
 
+/**
+ * Person forms for people found only in prose (prose.ts, AGT-1830): each name whole, unless
+ * recurrenceExclusion leaves it out, and its parts as nameParts gives them (a part shared with one of
+ * `others`, the people known from columns, speakers or the map, gets a pseudonym of its own). Every
+ * form has source `prose`, so a cell under `keep` is never changed for one.
+ */
+export function proseForms(names: readonly string[], others: Iterable<string>, vocabulary: ReadonlySet<string>, keep: ReadonlySet<string>): ExtraForm[] {
+  const out: ExtraForm[] = [];
+  for (const v of names) if (recurrenceExclusion(v, vocabulary) === null) out.push({ cls: "person", value: v, form: v, source: "prose" });
+  for (const p of nameParts(names, others, vocabulary, keep)) {
+    if (p.exclusion === null) out.push({ cls: "person", value: p.value, form: p.form, source: "prose", ...(isDateWord(p.form) ? { datePart: true } : {}) });
+  }
+  return out;
+}
+
 /** One scanner for the corpus: the spec's patterns and entities plus the recurring values. */
 export class TextScanner {
   private readonly spec: EntityMatcher;

@@ -263,6 +263,7 @@ export function buildDocument(paragraphs: readonly (readonly (string | null)[])[
         '<Default Extension="xml" ContentType="application/xml"/>' +
         `<Override PartName="/word/document.xml" ContentType="${CT}.wordprocessingml.document.main+xml"/>` +
         '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>' +
+        '<Override PartName="/customXml/itemProps1.xml" ContentType="application/vnd.openxmlformats-officedocument.customXmlProperties+xml"/>' +
         "</Types>",
     },
     {
@@ -275,5 +276,18 @@ export function buildDocument(paragraphs: readonly (readonly (string | null)[])[
     },
     { name: "docProps/core.xml", data: coreXml(core.title, core.creator, core.modifiedBy) },
     { name: "word/document.xml", data: `${DECL}<w:document xmlns:w="${W}"><w:body>${body}<w:sectPr/></w:body></w:document>` },
+    // The bibliography part Word saves into every document: no text, and a schema reference whose uri is the
+    // bibliography namespace (a host-shaped value in a position that is format structure).
+    { name: "customXml/item1.xml", data: `${DECL}<b:Sources xmlns:b="http://schemas.openxmlformats.org/officeDocument/2006/bibliography" SelectedStyle="\\APA.XSL" StyleName="APA"/>` },
+    {
+      name: "customXml/itemProps1.xml",
+      data:
+        `${DECL}<ds:datastoreItem xmlns:ds="http://schemas.openxmlformats.org/officeDocument/2006/customXml" ds:itemID="{B7D3A4E1-2C58-4F09-9A61-5E3D8C7F1B02}">` +
+        '<ds:schemaRefs><ds:schemaRef ds:uri="http://schemas.openxmlformats.org/officeDocument/2006/bibliography"/></ds:schemaRefs></ds:datastoreItem>',
+    },
+    {
+      name: "customXml/_rels/item1.xml.rels",
+      data: `${DECL}<Relationships xmlns="${PKG_REL}"><Relationship Id="rId1" Type="${REL}/customXmlProps" Target="itemProps1.xml"/></Relationships>`,
+    },
   ]);
 }

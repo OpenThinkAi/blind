@@ -21,7 +21,7 @@ export function unrewrittenSpans(entities: (text: string) => Span[], keep: reado
   return (text) => [...entities(text), ...findPatternSpans(text, ALL_PATTERNS, keep)].filter((s) => s.cls !== null);
 }
 
-const URI_ELEMENTS = new Set(["ext", "compatSetting", "graphicData"]);
+const URI_ELEMENTS = new Set(["ext", "compatSetting", "graphicData", "schemaRef"]);
 
 /**
  * Attribute positions that hold OOXML format structure, never document text: namespace

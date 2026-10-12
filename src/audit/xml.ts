@@ -108,8 +108,8 @@ export const CONTENT_TYPES_PART = "[Content_Types].xml";
 /** The custom document properties part. */
 const CUSTOM_PROPERTIES_PART = "docProps/custom.xml";
 
-/** Elements whose `uri` attribute names a namespace or extension, never content: extension lists, compatibility settings, graphic data. */
-const URI_ELEMENTS = new Set(["ext", "compatSetting", "graphicData"]);
+/** Elements whose `uri` attribute names a namespace or extension, never content: extension lists, compatibility settings, graphic data, custom XML schema references. */
+const URI_ELEMENTS = new Set(["ext", "compatSetting", "graphicData", "schemaRef"]);
 
 /**
  * True when `attr` on `element`, in the package member `member` (its path in the zip), holds a
@@ -119,7 +119,7 @@ const URI_ELEMENTS = new Set(["ext", "compatSetting", "graphicData"]);
  * - `ContentType` on `Default` and `Override` in `[Content_Types].xml`;
  * - `Type` on `Relationship` in a `.rels` member (a relationship's `Target` is NOT exempt);
  * - a namespaced `*:Ignorable` (markup compatibility: a list of namespace prefixes);
- * - `uri` (or `*:uri`) on `ext`, `compatSetting` and `graphicData` elements;
+ * - `uri` (or `*:uri`) on `ext`, `compatSetting`, `graphicData` and `schemaRef` elements;
  * - `fmtid` on `property` in `docProps/custom.xml` (the property set's format id, a GUID naming
  *   the format; the property's `name` and value are NOT exempt).
  *

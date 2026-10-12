@@ -327,6 +327,30 @@ describe("XLSX apply: fail closed", () => {
     expect(run(bytes).skipped).toEqual([]);
   });
 
+  test("structural worksheet attributes (row r, cell r, spans) are not a hit when a renumbered id has the same digits", () => {
+    const cell = (c: string, n: number, v: string) => `<c r="${c}${n}" t="inlineStr"><is><t>${v}</t></is></c>`;
+    const header = '<row r="1" spans="1:2"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>';
+    const ids = [123, 124, 125, 126, 127, 128];
+    const body = ids.map((id, i) => `<row r="${id}" spans="1:2" ht="15" customHeight="1">${cell("A", id, `Person ${"ABCDEF"[i]}`)}<c r="B${id}"><v>${id}</v></c></row>`).join("");
+    const r = run(buildWorkbook({ staffRows: header + body }), { ...SPEC, columns: [rule("Name", "person", "blind"), rule("Employee ID", "id", "blind")] });
+    expect(r.skipped).toEqual([]);
+    const s1 = members(r)["xl/worksheets/sheet1.xml"]!;
+    for (const id of ids) expect(s1).toContain(`<row r="${id}" spans="1:2" ht="15" customHeight="1">`);
+    expect(s1).not.toMatch(/<c r="B123"><v>123<\/v>/);
+    // The audit reads those row numbers as structure too, not as a surviving id.
+    const sp: Spec = { ...SPEC, columns: [rule("Name", "person", "blind"), rule("Employee ID", "id", "blind")] };
+    const report = auditTree([{ path: FILE, kind: "file", bytes: r.outputs[0]!.bytes }], sp, r.map);
+    expect(report.files.flatMap((f) => f.findings).filter((x) => x.severity === "leak" && x.source === "map")).toEqual([]);
+  });
+
+  test("a text-bearing attribute that nothing rewrites is still scanned", () => {
+    const rows = `${STAFF_ROWS}`;
+    const bytes = buildWorkbook({ staffRows: rows.replace('<row r="2">', '<row r="2" x14ac:note="avery@example.com">') });
+    const r = run(bytes);
+    expect(r.outputs).toEqual([]);
+    expect(r.skipped[0]?.reason).toMatch(/where blind does not rewrite it/);
+  });
+
   test("a member that cannot be parsed means the workbook is not written", () => {
     const r = run(buildWorkbook({ staffRows: `${STAFF_ROWS}<row r="9"><c r="A9"><v>1</v></row>` }));
     expect(r.outputs).toEqual([]);

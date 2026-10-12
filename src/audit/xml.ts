@@ -108,6 +108,14 @@ export const CONTENT_TYPES_PART = "[Content_Types].xml";
 /** The custom document properties part. */
 const CUSTOM_PROPERTIES_PART = "docProps/custom.xml";
 
+/** Worksheet attributes that address or format a row, column or cell: references, spans, styles, sizes. Kept in step with src/engine/unrewritten.ts, which imports no audit code. */
+const WORKSHEET_STRUCTURE = new Set([
+  "r", "spans", "ref", "sqref", "s", "t", "ht", "hidden", "collapsed", "outlineLevel", "customHeight", "customFormat",
+  "thickBot", "thickTop", "min", "max", "width", "customWidth", "style", "bestFit", "count", "uniqueCount", "cm", "vm", "ph", "dyDescent",
+  "x", "y", "i", "si", "zoomScale", "zoomScaleNormal", "topLeftCell", "activeCell", "tabSelected", "workbookViewId",
+]);
+const WORKSHEET_PART = /^xl\/(worksheets|chartsheets|dialogsheets|macrosheets)\/[^/]+\.xml$/i;
+
 /** Elements whose `uri` attribute names a namespace or extension, never content: extension lists, compatibility settings, graphic data, custom XML schema references. */
 const URI_ELEMENTS = new Set(["ext", "compatSetting", "graphicData", "schemaRef"]);
 
@@ -121,7 +129,9 @@ const URI_ELEMENTS = new Set(["ext", "compatSetting", "graphicData", "schemaRef"
  * - a namespaced `*:Ignorable` (markup compatibility: a list of namespace prefixes);
  * - `uri` (or `*:uri`) on `ext`, `compatSetting`, `graphicData` and `schemaRef` elements;
  * - `fmtid` on `property` in `docProps/custom.xml` (the property set's format id, a GUID naming
- *   the format; the property's `name` and value are NOT exempt).
+ *   the format; the property's `name` and value are NOT exempt);
+ * - worksheet addressing attributes (`r`, `spans`, `ref`, `s`, `t`, `ht` ...) in `xl/worksheets/*.xml`:
+ *   row and cell references and sizes, never text.
  *
  * Exemption is by position only, never by value: the same URI anywhere else (text, another
  * attribute, an external relationship's Target) is read as usual. Both audit layers skip these
@@ -135,7 +145,7 @@ export function ooxmlUriAttribute(member: string, element: string, attr: string)
   if (attr.includes(":") && localName(attr) === "Ignorable") return true;
   if (localName(attr) === "uri") return URI_ELEMENTS.has(el);
   if (attr === "fmtid") return el === "property" && member === CUSTOM_PROPERTIES_PART;
-  return false;
+  return WORKSHEET_PART.test(member) && WORKSHEET_STRUCTURE.has(localName(attr)) && (!attr.includes(":") || attr === "x14ac:dyDescent");
 }
 
 /** What an Office structural ID position holds; see officeIdAttribute. */

@@ -22,12 +22,12 @@ export type ColumnSource = Source | "policy";
 
 /** What a `redact` treatment writes in place of each non-empty value. */
 export const REDACTED_VALUE = "REDACTED";
-export type PatternName = "ip" | "email" | "host" | "guid" | "mac" | "phone" | "secret";
-export type Patterns = Record<Exclude<PatternName, "phone" | "secret">, boolean> & { phone?: boolean; secret?: boolean };
+export type PatternName = "ip" | "email" | "host" | "guid" | "mac" | "phone" | "secret" | "address";
+export type Patterns = Record<Exclude<PatternName, "phone" | "secret" | "address">, boolean> & { phone?: boolean; secret?: boolean; address?: boolean };
 
 /**
- * Whether a pattern is on. `phone` and `secret` are absent from specs written before they existed:
- * absent `phone` means on (fail closed); absent `secret` means off, so an older spec keeps its output
+ * Whether a pattern is on. `phone`, `secret` and `address` are absent from specs written before they existed:
+ * absent `phone` means on (fail closed); absent `secret` and `address` mean off, so an older spec keeps its output
  * (blind init's `[patterns] secret = true` turns it on whatever the spec says).
  */
 export const patternOn = (patterns: Patterns, name: PatternName): boolean => patterns[name] ?? name === "phone";
@@ -69,7 +69,7 @@ export interface Spec {
   version: 1;
   columns: ColumnRule[];
   entities: Entities;
-  /** `phone` and `secret` may be absent in a spec written before they existed (patternOn says what absent means). */
+  /** `phone`, `secret` and `address` may be absent in a spec written before they existed (patternOn says what absent means). */
   patterns: Patterns;
   questions: Question[];
   /** Fingerprints of the document and transcript excerpts the analyst has read (see docs/spec.md). */
@@ -89,13 +89,16 @@ export interface ProfileFile {
 /** Profile detectors: the spec's shape patterns plus `numericId`, which has no free-text pattern. */
 export type DetectorName = Exclude<PatternName, "phone" | "secret"> | "numericId";
 
+/** `address` is absent from profiles written before it existed. */
+export type DetectorRates = Record<Exclude<DetectorName, "address">, number> & { address?: number };
+
 export interface ValueStats {
   count: number;
   distinctRatio: number;
   digitRatio: number;
   dictionaryRatio: number;
   meanLength: number;
-  detectorRates: Record<DetectorName, number>;
+  detectorRates: DetectorRates;
   /** At most `Profile.sampleCount` values, each at most 120 characters. */
   samples: string[];
 }

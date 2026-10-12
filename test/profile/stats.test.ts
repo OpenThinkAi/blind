@@ -45,6 +45,7 @@ describe("detectors", () => {
     ["host", ["db01.example.com", "see web02.example.org."], ["ada@example.com", "v1.2", "e.g. this", "plain"]],
     ["guid", ["3f2504e0-4f89-11d3-9a0c-0305e82c3301", "{3F2504E0-4F89-11D3-9A0C-0305E82C3301}"], ["3f2504e0-4f89-11d3-9a0c", "zf2504e0-4f89-11d3-9a0c-0305e82c3301x"]],
     ["mac", ["00:00:5e:00:53:01", "nic 00-00-5E-00-53-AF"], ["00:00:5e:00:53", "00:00-5e:00:53:01"]],
+    ["address", ["12 Sample Lane", "77 Example Rd, Springfield UT 84000", "lives at 2200 Sample Blvd Apt 4"], ["2 Tabs Daily", "3 doses daily", "Dr Sample", "Room 12 Oak Way", "Example Rd", "10 Days"]],
     ["numericId", ["004417", "EMP-004417", "ACCT#000123", "id_12345"], ["123", "12.50", "1,200", "EMP-12", "Avery 2024", "TOOLONGPREFIX-1234"]],
   ];
   for (const [name, hits, misses] of cases) {
@@ -75,14 +76,14 @@ describe("valueStats", () => {
 
   test("detector rates are shares of values", () => {
     const s = valueStats(["192.0.2.1", "ada@example.com", "plain", "EMP-004417"], 0);
-    expect(s.detectorRates).toEqual({ email: 0.25, guid: 0, host: 0, ip: 0.25, mac: 0, numericId: 0.25 });
+    expect(s.detectorRates).toEqual({ address: 0, email: 0.25, guid: 0, host: 0, ip: 0.25, mac: 0, numericId: 0.25 });
   });
 
   test("an empty column is all zeros", () => {
     const s = valueStats(["", " "], 3);
     expect(s).toEqual({
       count: 0, distinctRatio: 0, digitRatio: 0, dictionaryRatio: 0, meanLength: 0,
-      detectorRates: { email: 0, guid: 0, host: 0, ip: 0, mac: 0, numericId: 0 }, samples: [],
+      detectorRates: { address: 0, email: 0, guid: 0, host: 0, ip: 0, mac: 0, numericId: 0 }, samples: [],
     });
   });
 

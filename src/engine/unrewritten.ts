@@ -13,7 +13,7 @@ import { findPatternSpans, type Span } from "./text.ts";
  * `secret` is left out: it reads document text, and in markup, attributes and embedded data it
  * would refuse files over format structure (the audit reads it in document text only).
  */
-export const ALL_PATTERNS: Patterns = { email: true, ip: true, mac: true, guid: true, host: true, phone: true, secret: false };
+export const ALL_PATTERNS: Patterns = { email: true, ip: true, mac: true, guid: true, host: true, phone: true, address: false, secret: false };
 
 /**
  * Spans in text that nothing rewrites: spec entities, recurring values and speakers (`entities`),

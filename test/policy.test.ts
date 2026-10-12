@@ -145,7 +145,7 @@ describe("[patterns]", () => {
   test("a non-boolean or unknown key is rejected, naming it", () => {
     expect(errorOf(valid().replace(/^ip = true .*$/m, 'ip = "yes"'))).toBe("blind.toml: patterns.ip must be true or false (got string)");
     expect(errorOf(valid().replace(/^ip = true .*$/m, "ipv4 = true"))).toBe(
-      "blind.toml: unknown key patterns.ipv4 (expected one of: ip, email, host, guid, mac, phone, secret)",
+      "blind.toml: unknown key patterns.ipv4 (expected one of: ip, email, host, guid, mac, phone, address, secret)",
     );
     expect(errorOf(`patterns = 1\n${valid().replace(/\[patterns\][\s\S]*$/, "")}`)).toBe("blind.toml: patterns must be a table (got 1)");
   });

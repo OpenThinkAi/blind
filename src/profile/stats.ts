@@ -1,14 +1,16 @@
 // Value statistics, shape detectors, excerpts and deterministic sampling for the profile.
 // Everything here is a pure function of its input: no clock, no randomness, no locale.
 
-import { type DetectorName, MAX_EXCERPT, type ValueStats } from "../schema.ts";
+import { type DetectorName, type DetectorRates, MAX_EXCERPT, type ValueStats } from "../schema.ts";
+import { findAddresses } from "../engine/address.ts";
 import { isEpochColumn, isEpochTimestamp } from "../engine/epoch.ts";
 import { DICTIONARY } from "../engine/words.ts";
 
 const OCTET = "(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)";
 
 /** Shape detectors. All but `numericId` look for the shape anywhere in the value. */
-export const DETECTORS: Record<DetectorName, RegExp> = {
+/** A detector is anything with a RegExp-style `test`. */
+export const DETECTORS: Record<DetectorName, { test(value: string): boolean }> = {
   ip: new RegExp(`(?<![\\d.])${OCTET}(?:\\.${OCTET}){3}(?![\\d.]*\\d)`),
   // Starts only where a run of local-part characters starts: the same matches, in linear time on a long run with no "@".
   email: /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/,
@@ -16,6 +18,8 @@ export const DETECTORS: Record<DetectorName, RegExp> = {
   host: /(?<![@\w.-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}(?![\w-]|\.\w)/,
   guid: /(?<![0-9A-Fa-f])[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}(?![0-9A-Fa-f])/,
   mac: /(?<![0-9A-Fa-f:-])[0-9A-Fa-f]{2}([:-])[0-9A-Fa-f]{2}(?:\1[0-9A-Fa-f]{2}){4}(?![0-9A-Fa-f:-])/,
+  // A street address anywhere in the value, a bare street line ("12 Sample Lane") included (the `address` pattern's finder).
+  address: { test: (v: string) => findAddresses(v).length > 0 },
   // The whole value: an optional short letter prefix and separator, then 4 or more digits.
   numericId: /^[A-Za-z]{0,6}[-_#]?\d{4,}$/,
 };
@@ -70,7 +74,7 @@ export function valueStats(raw: readonly string[], k: number, dates: readonly bo
       if (DICTIONARY.has(w)) known++;
     }
   }
-  const detectorRates = {} as Record<DetectorName, number>;
+  const detectorRates = {} as DetectorRates;
   for (const name of DETECTOR_NAMES) {
     const re = DETECTORS[name];
     detectorRates[name] = ratio(values.filter((v) => !skips(name, v) && re.test(v)).length, values.length);

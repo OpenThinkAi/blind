@@ -35,7 +35,7 @@ Field names are camelCase. All examples below are synthetic.
     "person": [{ "canonical": "Avery Quill", "aliases": ["A. Quill", "Quill, Avery", "Aves"], "parts": ["Avery", "Quill"] }],
     "org": [{ "canonical": "Example Widgets", "aliases": ["Example Widgets Ltd", "EXW"], "parts": [] }]
   },
-  "patterns": { "ip": true, "email": true, "host": true, "guid": true, "mac": false, "phone": true, "secret": true },
+  "patterns": { "ip": true, "email": true, "host": true, "guid": true, "mac": false, "phone": true, "address": true, "secret": true },
   "questions": [
     { "id": "q1", "text": "Values under ref_code look like internal project IDs. Hide them?", "options": ["blind", "keep"], "answer": null,
       "about": { "file": "tickets.json", "jsonPath": "$.items[*].ref_code" } }
@@ -97,6 +97,7 @@ the `[patterns]` table of `blind.toml` wins over the spec's value at apply and a
 | `guid` | boolean | GUIDs, e.g. `123e4567-e89b-12d3-a456-426614174000`. |
 | `mac` | boolean | MAC addresses, e.g. `00:00:5e:00:53:01`. |
 | `phone` | boolean, optional | Phone numbers written with separators: North American (`(801) 555-0100`, `801-555-0100`, `801.555.0100`, `801 555 0100`, with an optional `+1` or `1`) and international with a leading `+` (`+44 20 7946 0958`). Replaced as an `Id_` pseudonym, and every way of writing one number (and the same number in a table column) shares one pseudonym. A run of bare digits, a date, an amount or an id that merely contains digits is not a phone. A spec without this field has it on. `blind plan` turns it on when the policy calls `id` sensitive, which the default policy does. |
+| `address` | boolean, optional | Street addresses in free text and in cells kept as text: a house number (1-6 digits, optionally a letter or `1/2`), an optional direction (`N`, `SW`, `North` ...), one to four capitalised street-name words (or an already-issued pseudonym token such as `Person_A1B2`, or an ordinal such as `5th`) and a street suffix (`St`, `Street`, `Rd`, `Road`, `Ave`, `Avenue`, `Blvd`, `Boulevard`, `Ln`, `Lane`, `Dr`, `Drive`, `Way`, `Ct`, `Court`, `Cir`, `Circle`, `Pl`, `Place`, `Pkwy`, `Parkway`, `Hwy`, `Highway`, `Ter`, `Terrace`, `Trl`, `Trail`, `Loop`), then optionally a unit (`Apt 4`, `Unit 12`, `#3`) and `, City ST 12345` (or ZIP+4). The whole match, house number through ZIP, is one span and one `Loc_` pseudonym, so no number or suffix is left beside a token. Never matched: a street with no house number (`a car on Example Rd`), a measure, dose or time (`2 Tabs`, `10 Days`, `5 Units`, `3 doses daily`), a room, suite, bed or page number before the house number (`Room 12 Oak Way`), `Dr` as an honorific (`Dr Sample`), a lowercase street. A spec without this field has it off; `blind plan` turns it on when the policy calls `location` sensitive, which the default policy does. |
 | `secret` | boolean, optional | Passwords, keys and tokens by their shape, and by a `password`, `key` or `token` in the same or the two sentences or turns before: `Tr0ub4dor&3`, an API key, `Example2031!` read out a turn after the password was mentioned. Written as `REDACTED`, never a pseudonym, and not recorded in the map. Product codes, versions, CamelCase words, doses, pseudonyms, hex hashes and ids are not matched; the rules are in [policy.md](policy.md#the-secret-pattern). A spec without this field has it off (`blind init` writes `secret = true` in `[patterns]`, which wins). `blind plan` turns it on when the policy calls `secret` sensitive, which the default policy does. |
 
 ### `questions`
@@ -196,7 +197,7 @@ same blinded output tree. No model is called.
 |---|---|
 | `--accept c1` | an entity of the suggested class, `{ "canonical": <value>, "aliases": [], "parts": [], "source": "human" }` |
 | `--accept c1=<class>` | the same, of `person`, `org`, `host`, `email`, `id` or `location` |
-| `--accept c1=pattern` | the shape pattern the whole value matches (`email`, `ip`, `mac`, `guid`, `phone`, `host`, `secret`) is turned on |
+| `--accept c1=pattern` | the shape pattern the whole value matches (`email`, `ip`, `mac`, `guid`, `phone`, `address`, `host`, `secret`) is turned on |
 | `--reject c1` | a `vocabulary` entity with `source: "human"`, so the mechanical and semantic layers do not raise it again |
 | neither | nothing; the next audit raises it again |
 
@@ -734,6 +735,9 @@ up to three layers, mechanical, semantic, then model; the report lists the layer
   no mechanical pattern; the semantic layer skips every linking position (its hex finder would
   otherwise report each rsid and paragraph id). The audit cannot tell a rewritten hex id from an
   original one without the salt.
+- **Addresses.** With the `address` pattern on, a street address that survives (a house number
+  and street suffix left beside a pseudonym token included) is a `pattern:address` leak, read by
+  the same finder the engine uses; `--accept-leaks` accepts one as a `location` entity.
 - **Secrets.** With the `secret` pattern on, a match that survives in document text is a
   `pattern:secret` leak: the whole text of a plain file (read with the keyword reach, except
   CSV/TSV and JSON, where each value stands alone as the engine reads it) and the text of an XML
@@ -849,7 +853,7 @@ identifying remains.
           "header": "Owner",
           "stats": {
             "count": 40, "distinctRatio": 0.6, "digitRatio": 0, "dictionaryRatio": 0.05, "meanLength": 11.2,
-            "detectorRates": { "ip": 0, "email": 0, "host": 0, "guid": 0, "mac": 0, "numericId": 0 },
+            "detectorRates": { "ip": 0, "email": 0, "host": 0, "guid": 0, "mac": 0, "address": 0, "numericId": 0 },
             "samples": ["Avery Quill", "Robin Example", "Sam Placeholder"]
           }
         }
@@ -945,7 +949,7 @@ Shared by table columns and JSON keys. All fields required.
 | `digitRatio` | number, 0 to 1 | Share of characters that are digits. Example: `0.8`. |
 | `dictionaryRatio` | number, 0 to 1 | Share of words found in the dictionary. Example: `0.05`. |
 | `meanLength` | number, 0 or more | Mean value length in characters. Example: `11.2`. |
-| `detectorRates` | object `{ ip, email, host, guid, mac, numericId }`, each 0 to 1 | Share of values each shape detector matched. All six keys required. `ip` (IPv4), `email`, `host`, `guid` and `mac` count values that contain the shape; `numericId` counts values that are wholly an optional short letter prefix and 4 or more digits (`004417`, `ACCT-000123`), except Unix times (10 or 13 digits in 2000-01-01..2100-01-01) in a column where ≥ 80% of values are such times, and XLSX cells with a date or time number format, which are measurements and never count. |
+| `detectorRates` | object `{ ip, email, host, guid, mac, address, numericId }`, each 0 to 1 | Share of values each shape detector matched. All keys required but `address` (absent from profiles written before it existed). `ip` (IPv4), `email`, `host`, `guid`, `mac` and `address` (a street line such as `12 Sample Lane`, with or without a unit and `City ST ZIP`) count values that contain the shape; a column where at least 80% of values hold an address is classed `location` without a model, and blinded when `location` is sensitive; `numericId` counts values that are wholly an optional short letter prefix and 4 or more digits (`004417`, `ACCT-000123`), except Unix times (10 or 13 digits in 2000-01-01..2100-01-01) in a column where ≥ 80% of values are such times, and XLSX cells with a date or time number format, which are measurements and never count. |
 | `samples` | array of strings, each at most 120 characters, at most `sampleCount` items | Example values, quoted as data. |
 
 ### `documents`

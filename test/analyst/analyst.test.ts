@@ -45,7 +45,7 @@ describe("heuristic analyst", () => {
     const p = defaultPolicy();
     p.sensitive.classes = ["person", "host"];
     expect(heuristicRule(loc, stats({ email: 1 }), p)).toMatchObject({ class: "email", treatment: "keep" });
-    expect(heuristicPatterns(p)).toEqual({ ip: true, email: false, host: true, guid: false, mac: true, phone: false, secret: false });
+    expect(heuristicPatterns(p)).toEqual({ ip: true, email: false, host: true, guid: false, mac: true, phone: false, address: false, secret: false });
   });
 });
 

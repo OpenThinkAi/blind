@@ -16,7 +16,7 @@ import { shieldedForms, shieldReason } from "./vocabguard.ts";
 
 type EntityClass = Exclude<EntityClassName, "unknown" | "secret">;
 const ENTITY_CLASSES: readonly EntityClass[] = ["person", "org", "host", "email", "id", "location", "vocabulary"];
-const PATTERN_NAMES: readonly PatternName[] = ["ip", "email", "host", "guid", "mac", "phone", "secret"];
+const PATTERN_NAMES: readonly PatternName[] = ["ip", "email", "host", "guid", "mac", "phone", "address", "secret"];
 
 export type Dropped =
   | { kind: "column"; location: Location; reason: string }

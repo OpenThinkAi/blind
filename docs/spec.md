@@ -207,7 +207,11 @@ same blinded output tree. No model is called.
   (semantic and model findings, variants in another case) stay undecided unless `--accept` or
   `--reject` decides them, and an `--accept` or `--reject` of a leak wins. A leak that cannot be
   accepted (a saved vocabulary form) is listed with why and left undecided; the rest are still
-  accepted. Until two classes share a pseudonym, a map value accepted as `id` gets an `Id_`
+  accepted. So is a leak that is not sensitive, with the reason printed: a value whose every word
+  is a dictionary word (an entity would replace it everywhere, headers and file names included), a
+  value that occurs whole in a `keep` column of the output or equals a `[keep].terms` entry, a
+  measure (a date, decimal, amount or quantity) and a number of under 5 digits with no letters.
+  A value that matches a shape pattern (an email, say) is never left out for its words. Until two classes share a pseudonym, a map value accepted as `id` gets an `Id_`
   pseudonym where it recurs, not its column's `Value_`.
 
 - **Saved entries are never changed.** New entities are appended; everything saved is written back
@@ -730,7 +734,10 @@ up to three layers, mechanical, semantic, then model; the report lists the layer
   output, a column the spec drops that is still there, or a column the spec redacts (treatment
   `redact`, or class `secret` under `blind`) with a cell that is neither empty nor `REDACTED`.
 - **`candidate`**: a case, accent or width variant; a value inside a longer word (4 characters or
-  more); a value under 3 characters; a host label or email local part of a blinded value; a column
+  more); a value under 3 characters; a whole value from the map that blind never recurs (the
+  engine's own rule: only dictionary words, under 3 letters and digits, or a spec vocabulary form);
+  a pattern match, spec entity or map value inside a cell of a CSV/TSV column the spec keeps (the
+  reason ends "kept by rule"; only for a table read as UTF-8 or Latin-1); a host label or email local part of a blinded value; a column
   the spec declares `unknown` (unless it is dropped, redacted or scanned, which is a decision; a `scan` column is audited as free text, never explained away as vocabulary); a CSV/TSV column with no spec rule; an unanswered spec question; and
   anything the audit could not read in full (undecodable or encrypted archive members, binary
   content, images, symbolic links, unreadable files).

@@ -18,6 +18,10 @@
 import { lstatSync, readFileSync, readlinkSync } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
 import { maskValue } from "../audit/mechanical.ts";
+import { keptCells } from "../audit/keptcells.ts";
+import { decode, EncodingError } from "../engine/encoding.ts";
+import { isMeasure } from "../engine/stats.ts";
+import { recurrenceExclusion, vocabularyForms } from "../engine/recur.ts";
 import { xmlViews } from "../audit/semantic.ts";
 import { fold, stringView, type View, viewsOf, xmlBaseView } from "../audit/views.ts";
 import { looksLikeXml } from "../audit/xml.ts";
@@ -25,7 +29,7 @@ import { looksLikeZip, readZip, type ZipBudget, zipBudget } from "../audit/zip.t
 import type { BlindMap } from "../engine/map.ts";
 import { isPseudonym } from "../engine/pseudonym.ts";
 import { findPatternSpans } from "../engine/text.ts";
-import { type Entities, type Entity, type EntityClassName, type PatternName, patternOn, type Spec } from "../schema.ts";
+import { type Entities, type Entity, type ColumnRule, type EntityClassName, type PatternName, patternOn, type Spec } from "../schema.ts";
 
 export class FromAuditError extends Error {
   override name = "FromAuditError";
@@ -410,24 +414,85 @@ export function parseDecisions(accept: readonly string[], reject: readonly strin
  */
 export const LEAK_FALLBACK_CLASS: AcceptClass = "id";
 
+/** What the owner keeps on purpose, folded: values whole in a `keep` column of the output, and the policy's `[keep].terms`. */
+export interface KeptValues {
+  values: ReadonlySet<string>;
+  terms: ReadonlySet<string>;
+}
+
+const NO_KEPT: KeptValues = { values: new Set(), terms: new Set() };
+
+/**
+ * The values held whole in the `keep` columns of the CSV/TSV files under `root` (the audited
+ * output), and the policy keep terms, both folded. A file that cannot be read is skipped.
+ */
+export function keptValues(root: string, spec: Spec, terms: readonly string[]): KeptValues {
+  const values = new Set<string>();
+  const byFile = new Map<string, ColumnRule[]>();
+  for (const r of spec.columns) if (r.treatment === "keep" && r.header !== undefined) byFile.set(r.file, [...(byFile.get(r.file) ?? []), r]);
+  for (const [file, rules] of byFile) {
+    const segs = file.split("/");
+    const ext = /\.(csv|tsv|tab)$/i.exec(file)?.[1]?.toLowerCase();
+    if (ext === undefined || isAbsolute(file) || file.includes("\\") || segs.some((x) => x === "" || x === "." || x === "..")) continue;
+    try {
+      const abs = join(root, ...segs);
+      if (!lstatSync(abs).isFile()) continue;
+      for (const c of keptCells(decode(readFileSync(abs)).text, ext !== "csv", rules)) {
+        const v = fold(c.value.trim());
+        if (v !== "") values.add(v);
+      }
+    } catch (e) {
+      if (!(e instanceof EncodingError) && (e as NodeJS.ErrnoException).code === undefined) throw e;
+    }
+  }
+  return { values, terms: new Set(terms.map(fold)) };
+}
+
+/** Why `--accept-leaks` leaves a value out, or null when it is for the spec: it is not sensitive, or the owner keeps it. */
+function notSensitive(c: Candidate, vocabulary: ReadonlySet<string>, kept: KeptValues): string | null {
+  // A secret (a password, gate code, safe combination) is sensitive whatever it looks like: never skipped.
+  if (c.kinds.includes("pattern:secret")) return null;
+  const v = c.value.trim();
+  const f = fold(v);
+  if (kept.terms.has(f)) return "a [keep].terms entry: kept by policy";
+  if (kept.values.has(f)) return "occurs whole in a column the spec keeps: kept by rule";
+  // A value the shape patterns match (an email, a host) is sensitive however ordinary its words.
+  if (c.pattern === null) {
+    const why = recurrenceExclusion(v, vocabulary);
+    if (why === "only dictionary words") return "every word is a dictionary word: blind never recurs it";
+  }
+  if (isMeasure(v)) return "a measure (a date, decimal, amount or quantity), not an identifier";
+  if (!/\p{L}/u.test(v) && (v.match(/\d/g) ?? []).length < 5) return "a short number (under 5 digits, no letters), not an identifier";
+  return null;
+}
+
 /**
  * `--accept-leaks`: an accept decision for every candidate the mechanical layer raised as a leak
  * and `decided` does not already decide, at its suggested class (LEAK_FALLBACK_CLASS when it has
  * none). Semantic and model findings are never leaks, so candidates stay the human's. Each one is
  * tried on top of `decided` and the ones before it; a leak that cannot be accepted (a vocabulary
- * form, say) is left out with why, and nothing else is affected.
+ * form, say) is left out with why, and nothing else is affected. A leak that is not sensitive
+ * (notSensitive: dictionary words, a value the owner keeps, a measure, a short number) is left out
+ * too, with why: as an entity it would be replaced everywhere, headers and file names included.
  */
 export function leakDecisions(
   saved: Spec,
   candidates: readonly Candidate[],
   decided: readonly Decision[],
   map: BlindMap,
+  kept: KeptValues = NO_KEPT,
 ): { decisions: Decision[]; skipped: { id: string; value: string; why: string }[] } {
   const ids = new Set(decided.map((d) => d.id));
   const decisions = [...decided];
   const skipped: { id: string; value: string; why: string }[] = [];
+  const vocabulary = vocabularyForms(saved.entities);
   for (const c of candidates) {
     if (c.severity !== "leak" || ids.has(c.id)) continue;
+    const why = notSensitive(c, vocabulary, kept);
+    if (why !== null) {
+      skipped.push({ id: c.id, value: c.value, why });
+      continue;
+    }
     const d: Decision = { id: c.id, action: "accept", as: c.suggested ?? LEAK_FALLBACK_CLASS };
     try {
       applyDecisions(saved, candidates, [...decisions, d], map);

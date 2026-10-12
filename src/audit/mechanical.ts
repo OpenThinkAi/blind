@@ -48,6 +48,8 @@ import type { BlindMap } from "../engine/map.ts";
 import { isPseudonym } from "../engine/pseudonym.ts";
 import { nameWordExcluded, onNameTokens } from "../engine/names.ts";
 import { findPatternSpans, keepDomains, secretSpans, type Span } from "../engine/text.ts";
+import { recurrenceExclusion, vocabularyForms } from "../engine/recur.ts";
+import { keptCells } from "./keptcells.ts";
 import { detectHeaderRow } from "../profile/table.ts";
 import { DICTIONARY } from "../engine/words.ts";
 import { fold, foldWithMap, stringView, type View, viewsOf, xmlBaseView } from "./views.ts";
@@ -201,6 +203,11 @@ interface Needle {
    * `word` when it is also an ordinary word or a keep term (a candidate at most). Whole words only.
    */
   part?: "name" | "word";
+  /**
+   * Why blind never recurs this value (recurrenceExclusion: only dictionary words, too short, a
+   * vocabulary form), for a whole value from the map: a survivor is a candidate, not a leak.
+   */
+  excluded?: string;
   wordStart: boolean;
   wordEnd: boolean;
 }
@@ -258,6 +265,11 @@ export function buildNeedles(spec: Spec, map: BlindMap, keep: readonly string[] 
     if (!out.has(key)) out.set(key, n);
   };
   const keepFolds = new Set(keep.map(fold));
+  const vocabulary = vocabularyForms(spec.entities);
+  const unrecurred = (n: Needle | null, value: string): Needle | null => {
+    const why = n === null ? null : recurrenceExclusion(value, vocabulary);
+    return n !== null && why !== null ? { ...n, excluded: why } : n;
+  };
   for (const key of ENTITY_KEYS) {
     for (const e of spec.entities[key] ?? []) {
       for (const form of [e.canonical, ...e.aliases, ...e.parts]) {
@@ -268,8 +280,8 @@ export function buildNeedles(spec: Spec, map: BlindMap, keep: readonly string[] 
   }
   for (const e of map.entries) {
     const component = e.kind === "host-label" || e.kind === "email-local";
-    add(needle(e.value, "fold", e.kind, "find", "map", component));
-    add(needle(e.canonical, "fold", e.kind, "find", "map", component));
+    add(unrecurred(needle(e.value, "fold", e.kind, "find", "map", component), e.value));
+    add(unrecurred(needle(e.canonical, "fold", e.kind, "find", "map", component), e.canonical));
     add(needle(e.pseudonym, "fold", e.kind, "mask", "map"));
     if (e.kind === "person") {
       for (const [w, rule] of personWords(e.value, e.canonical)) {
@@ -475,7 +487,9 @@ function scanView(view: View, ctx: Context, isName: boolean): Hit[] {
       n.rule === "exact"
         ? got === n.original
         : got.toLowerCase() === n.original.toLowerCase() && (n.rule === "fold" || /^\p{Lu}/u.test(got));
-    if (exactCase) push(start, end, { ...base, severity: "leak", reason: `${what} survives` });
+    if (exactCase && n.excluded !== undefined) {
+      push(start, end, { ...base, severity: "candidate", reason: `${what} survives, but blind does not recur it (${n.excluded})` });
+    } else if (exactCase) push(start, end, { ...base, severity: "leak", reason: `${what} survives` });
     else push(start, end, { ...base, severity: "candidate", reason: `${what}, in another case, accent or width` });
   }
   for (const s of ascii ? patternSpans(text, ctx, isName) : []) {
@@ -888,6 +902,38 @@ function columnFindings(sink: PartSink, bytes: Uint8Array, rules: readonly Colum
   }
 }
 
+/**
+ * A pattern match, entity or map value inside a cell of a column the spec keeps is kept on purpose:
+ * blind leaves that cell as it is, so the finding is a candidate saying so, not a leak. Only a
+ * table read as UTF-8 or Latin-1 is placed (byte offsets are exact there); in any other the
+ * findings stand.
+ */
+function keptByRule(sink: PartSink, bytes: Uint8Array, rules: readonly ColumnRule[]) {
+  const format = tableFormat(sink.file);
+  if (format === null || !rules.some((r) => r.treatment === "keep")) return;
+  let decoded;
+  try {
+    decoded = decode(bytes);
+  } catch (e) {
+    if (!(e instanceof EncodingError)) throw e;
+    return;
+  }
+  if (decoded.encoding !== "utf8" && decoded.encoding !== "utf8-bom" && decoded.encoding !== "latin1") return;
+  const cells = keptCells(decoded.text, format === "tsv", rules);
+  if (cells.length === 0) return;
+  const bom = decoded.encoding === "utf8-bom" ? 3 : 0;
+  const latin = decoded.encoding === "latin1";
+  const place = (at: number): number => (latin ? at : Buffer.byteLength(decoded.text.slice(0, at), "utf8")) + bom;
+  const ranges = cells.map((c) => [place(c.start), place(c.end)] as const);
+  sink.findings = sink.findings.map((f) => {
+    if (f.severity !== "leak" || f.part !== "" || f.in !== "content" || f.offset === null) return f;
+    if (f.source !== "pattern" && f.source !== "entity" && f.source !== "map") return f;
+    const at = f.offset;
+    if (!ranges.some(([a, b]) => at >= a && at < b)) return f;
+    return { ...f, severity: "candidate" as const, reason: `${f.reason}; in a column the spec keeps (kept by rule)` };
+  });
+}
+
 const lastSegment = (p: string): number => p.lastIndexOf("/") + 1;
 
 export function statusOf(findings: readonly Finding[]): Status {
@@ -962,6 +1008,7 @@ export function auditTree(entries: readonly TreeEntry[], spec: Spec, map: BlindM
       case "file":
         scanBytes(sink, "", entry.bytes, 0, ctx, zipBudget());
         columnFindings(sink, entry.bytes, rulesByFile.get(entry.path) ?? []);
+        keptByRule(sink, entry.bytes, rulesByFile.get(entry.path) ?? []);
         break;
       case "symlink":
         unscanned(sink, "", "symbolic link, not followed: whatever it points to was not audited", "link");

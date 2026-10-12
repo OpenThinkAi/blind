@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -10,6 +10,7 @@ import {
   collectCandidates,
   FromAuditError,
   LEAK_FALLBACK_CLASS,
+  keptValues,
   leakDecisions,
   parseAuditReport,
   parseDecisions,
@@ -70,9 +71,10 @@ const apply = (argv: string[]) => run((a, io) => runApply(a, io), argv);
 const audit = (argv: string[]) => run((a, io) => runAudit(a, io), argv);
 
 /** apply in → out, then audit out --json --no-model into report.json. */
-async function round(out: string): Promise<{ code: number; report: { status: string } }> {
+async function round(out: string, tamper?: () => void): Promise<{ code: number; report: { status: string } }> {
   rmSync(join(dir, out), { recursive: true, force: true });
   expect((await apply(["in", "-o", out])).code).toBe(0);
+  tamper?.();
   const r = await audit([out, "--json", "--no-model"]);
   writeFileSync(join(dir, "report.json"), r.out);
   return { code: r.code, report: JSON.parse(r.out) };
@@ -272,7 +274,7 @@ describe("decisions", () => {
     const cs = [
       cand({}),
       cand({ id: "c2", value: "ZX-4471-Q", kinds: ["pattern:guid"], suggested: "id", severity: "leak" }),
-      cand({ id: "c3", value: "Main Office", kinds: ["value"], suggested: null, severity: "leak" }),
+      cand({ id: "c3", value: "Quillhaven Annex", kinds: ["value"], suggested: null, severity: "leak" }),
       cand({ id: "c4", value: "Harbour Lane", kinds: ["org"], suggested: "org", severity: "leak" }),
     ];
     const { decisions, skipped } = leakDecisions(SPEC, cs, parseDecisions(["c4=location"], []), EMPTY_MAP);
@@ -283,21 +285,66 @@ describe("decisions", () => {
       { id: "c3", action: "accept", as: LEAK_FALLBACK_CLASS },
     ]);
     const { spec } = applyDecisions(SPEC, cs, decisions, EMPTY_MAP);
-    expect(spec.entities.id?.map((e) => [e.canonical, e.source])).toEqual([["ZX-4471-Q", "human"], ["Main Office", "human"]]);
+    expect(spec.entities.id?.map((e) => [e.canonical, e.source])).toEqual([["ZX-4471-Q", "human"], ["Quillhaven Annex", "human"]]);
     expect(spec.entities.location?.map((e) => e.canonical)).toEqual(["Harbour Lane"]);
     expect(spec.entities.vocabulary).toBeUndefined();
   });
 
   test("leakDecisions leaves out a leak that cannot be accepted, with why, and still accepts the rest", () => {
-    const vocab = { ...SPEC, entities: { ...SPEC.entities, vocabulary: [{ canonical: "Main Office", aliases: [], parts: [] }] } };
+    const vocab = { ...SPEC, entities: { ...SPEC.entities, vocabulary: [{ canonical: "Quillhaven Annex", aliases: [], parts: [] }] } };
     const cs = [
-      cand({ value: "Main Office", kinds: ["value"], severity: "leak" }),
+      cand({ value: "Quillhaven Annex", kinds: ["value"], severity: "leak" }),
       cand({ id: "c2", value: "ZX-4471-Q", kinds: ["pattern:guid"], suggested: "id", severity: "leak" }),
     ];
     const { decisions, skipped } = leakDecisions(vocab, cs, [], EMPTY_MAP);
     expect(decisions.map((d) => d.id)).toEqual(["c2"]);
     expect(skipped.map((x) => x.id)).toEqual(["c1"]);
     expect(skipped[0]?.why).toMatch(/vocabulary form/);
+  });
+
+  test("leakDecisions leaves out a leak that is not sensitive, with why, and still accepts the rest", () => {
+    const cs = [
+      cand({ value: "Main Office", kinds: ["value"], severity: "leak" }),
+      cand({ id: "c2", value: "41,7", kinds: ["value"], severity: "leak" }),
+      cand({ id: "c3", value: "2024", kinds: ["value"], severity: "leak" }),
+      cand({ id: "c4", value: "555-0199", kinds: ["pattern:phone"], suggested: "id", severity: "leak", pattern: "phone" }),
+      cand({ id: "c5", value: "Blue House", kinds: ["value"], severity: "leak" }),
+      cand({ id: "c6", value: "Quillhaven Annex", kinds: ["value"], severity: "leak" }),
+      cand({ id: "c7", value: "Ridgeway Clinic", kinds: ["value"], severity: "leak" }),
+      cand({ id: "c8", value: "help@example.com", kinds: ["pattern:email"], suggested: "email", severity: "leak", pattern: "email" }),
+    ];
+    const kept = { values: new Set(["blue house", "555-0199"]), terms: new Set(["ridgeway clinic"]) };
+    const { decisions, skipped } = leakDecisions(SPEC, cs, [], EMPTY_MAP, kept);
+    expect(decisions.map((d) => d.id)).toEqual(["c6", "c8"]);
+    const why = Object.fromEntries(skipped.map((x) => [x.id, x.why]));
+    expect(Object.keys(why)).toEqual(["c1", "c2", "c3", "c4", "c5", "c7"]);
+    expect(why.c1).toMatch(/dictionary word/);
+    expect(why.c2).toMatch(/measure/);
+    expect(why.c3).toMatch(/short number/);
+    expect(why.c4).toMatch(/column the spec keeps/);
+    expect(why.c5).toMatch(/column the spec keeps/);
+    expect(why.c7).toMatch(/\[keep\]\.terms/);
+  });
+
+  test("leakDecisions never skips a secret, even one that is a dictionary word, a measure, short or kept", () => {
+    const cs = [
+      cand({ value: "sunflower", kinds: ["pattern:secret"], suggested: "id", severity: "leak" }),
+      cand({ id: "c2", value: "1234", kinds: ["pattern:secret"], suggested: "id", severity: "leak" }),
+      cand({ id: "c3", value: "open sesame", kinds: ["pattern:secret"], suggested: "id", severity: "leak" }),
+    ];
+    const kept = { values: new Set(["open sesame"]), terms: new Set(["sunflower"]) };
+    const { decisions, skipped } = leakDecisions(SPEC, cs, [], EMPTY_MAP, kept);
+    expect(skipped).toEqual([]);
+    expect(decisions.map((d) => [d.id, d.action === "accept" ? d.as : null])).toEqual([["c1", "id"], ["c2", "id"], ["c3", "id"]]);
+  });
+
+  test("keptValues reads the cells of the keep columns of the output, and the policy terms, folded", () => {
+    mkdirSync(join(dir, "kept"));
+    writeFileSync(join(dir, "kept", "clinic.csv"), 'name,clinic_phone\n"Ann, B",555-0199\nCy,\n');
+    const spec: Spec = { ...SPEC, columns: [{ file: "clinic.csv", header: "clinic_phone", class: "vocabulary", treatment: "keep", confidence: 1, source: "policy" }] };
+    const k = keptValues(join(dir, "kept"), spec, ["ER Line"]);
+    expect([...k.values]).toEqual(["555-0199"]);
+    expect([...k.terms]).toEqual(["er line"]);
   });
 
   test("an unknown id is refused", () => {
@@ -381,22 +428,22 @@ describe("blind plan --from-audit", () => {
   test("--accept-leaks accepts the leaks without asking, leaves the other candidates undecided, and the next round has no leak", async () => {
     const spec: Spec = { ...SPEC, columns: [...SPEC.columns, { file: "sites.csv", header: "Site", class: "unknown", treatment: "blind", confidence: 1, source: "human" }] };
     writeFileSync(join(dir, ".blind", "spec.json"), JSON.stringify(spec), { mode: 0o600 });
-    // Values made only of dictionary words: blinded in their column, not recurred in prose, so the audit calls them leaks.
-    writeFileSync(join(dir, "in", "sites.csv"), "Site\nMain Office\nBlue House\nOld School\n");
-    writeFileSync(join(dir, "in", "visit.txt"), "Met at Main Office, then Blue House.\n");
-    const first = await round("out");
+    // Invented sites, blinded in their column and in prose; two are written back into the output, as a missed value would be.
+    writeFileSync(join(dir, "in", "sites.csv"), "Site\nQuillhaven Annex\nMarrowdale Depot\nOrchard Point\n");
+    writeFileSync(join(dir, "in", "visit.txt"), "Met at Quillhaven Annex, then Marrowdale Depot.\n");
+    const first = await round("out", () => appendFileSync(join(dir, "out", "visit.txt"), "Again: Quillhaven Annex and Marrowdale Depot.\n"));
     expect(first.code).toBe(2);
     const asked: string[] = [];
     const r = await plan(["--from-audit", "report.json", "-o", "out", "--accept-leaks"], { prompt: async (q) => (asked.push(q), null) });
     expect(r.code).toBe(0);
     expect(asked).toEqual([]);
-    expect(r.out).toMatch(/accepted "Main Office": added id entity \(source human\)/);
-    expect(r.out).toMatch(/accepted "Blue House": added id entity/);
+    expect(r.out).toMatch(/accepted "Quillhaven Annex": added id entity \(source human\)/);
+    expect(r.out).toMatch(/accepted "Marrowdale Depot": added id entity/);
     expect(r.out).toContain("undecided (3)");
     expect(savedSpec().entities.vocabulary).toBeUndefined();
     const second = await round("out2");
     expect(second.code).toBe(1);
-    expect(readFileSync(join(dir, "out2", "visit.txt"), "utf8")).not.toMatch(/Main Office|Blue House/);
+    expect(readFileSync(join(dir, "out2", "visit.txt"), "utf8")).not.toMatch(/Quillhaven|Marrowdale/);
   });
 
   test("decided candidates are not raised again: the next round is clean", async () => {

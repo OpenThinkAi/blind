@@ -51,6 +51,8 @@ const RUN_HELP = [
   "With --accept-leaks, a leak in the audit does not end the run: every leak (a spec entity, map value",
   "or enabled pattern that survives) is accepted into the spec at its suggested class, as",
   "`blind plan --from-audit <report> --accept-leaks` does, and apply and audit run again into <out>.",
+  "A leak that is not sensitive (dictionary words only, a value kept by a keep column or [keep].terms,",
+  "a measure, a number under 5 digits) is listed with why and left out.",
   "At most 3 rounds in all; it stops early when the audit finds no leak, or when accepting changed",
   "nothing. Candidates that are not leaks are never decided here: review them with",
   "`blind audit <out> --json` and `blind plan --from-audit`. No model is called for the decisions.",

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -11,7 +11,7 @@ import { runRun } from "../src/run.ts";
 // changed cannot survive. Synthetic data only (invented sites and case numbers).
 
 const BIN = join(import.meta.dir, "../bin/blind.js");
-const SITES = ["Main Office", "Blue House", "Old School", "New Building", "Back Garden"];
+const SITES = ["Quillhaven Annex", "Marrowdale Depot", "Orchard Point", "Fennimore Yard", "Tarnwick Lodge"];
 
 function blind(cwd: string, ...args: string[]): { code: number; out: string; err: string } {
   const r = Bun.spawnSync([process.execPath, BIN, ...args], { cwd, stdout: "pipe", stderr: "pipe" });
@@ -39,17 +39,25 @@ describe("blind run stages every round", () => {
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
   /**
-   * Runs in process. When round 2 is announced, `between` runs first: here it makes "9123", a value
-   * in a file name and a folder name, an entity, as accepting a leak on it would (the engine renames
-   * names through spec entities), and it reports what round 1 had staged.
+   * Runs in process. Once round 1 is staged, `leak` writes a site name back into the staged tree,
+   * the way a missed value would be (the engine itself leaves none); the audit then finds a leak.
+   * When round 2 is announced, `between` runs: here it makes "9123", a value in a file name and a
+   * folder name, an entity, as accepting a leak on it would (the engine renames names through spec
+   * entities), and it reports what round 1 had staged.
    */
   async function run(argv: string[], between?: () => void) {
     const out = new PassThrough();
     const err = new PassThrough();
     let o = "";
     let e = "";
+    let staged = false;
     out.on("data", (d) => {
       o += d;
+      if (!staged && /^wrote \d+ files? to /m.test(String(d))) {
+        staged = true;
+        const stage = readdirSync(dir).find((n) => n.startsWith(".out.blind-stage-"));
+        if (stage !== undefined) appendFileSync(join(dir, stage, "sites", "visits.txt"), `Back at ${SITES[3]}.\n`);
+      }
       if (String(d).includes("round 2: apply and audit again")) between?.();
     });
     err.on("data", (d) => (e += d));

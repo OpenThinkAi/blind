@@ -36,9 +36,10 @@ Columns you already know about can be decided in `blind.toml`, with no model at 
 Your documents are never sent to a model. These are the only things that are:
 
 - **The profile and your policy.** `blind plan` sends the profile of the corpus: file names,
-  column headers, statistics, and a few short sample values. `blind profile` prints exactly that,
-  so you can read it before anything is sent. The policy is the classes, description, examples and
-  keep list from `blind.toml`.
+  column headers, statistics, and a few short sample values (under `profile-only`: statistics
+  only, with every name as a token). `blind profile` prints exactly that, so you can read it
+  before anything is sent. The policy is the classes, description, examples and keep list from
+  `blind.toml`.
 - **The blinded output, for the model audit, and only on your machine.** Under `local-only`, the
   auditor model reads the already-blinded output (never the originals) in short lines. Under
   `profile-only` it gets only a profile of the output, like the analyst, which is a coarse check.
@@ -49,7 +50,7 @@ and never falls back to a less private mode:
 | Mode | Models | Sent |
 |---|---|---|
 | `local-only` (default) | Only a server on this machine (`127.0.0.1`, `::1`, `localhost`). `claude -p` and the hosted Anthropic API are refused. | The profile with up to 5 sample values per column (`[profile] samples`), and your policy. |
-| `profile-only` | Any model over https, including `claude -p` and the Anthropic API. | Exactly the profile and the policy, with no sample values by default. No document outlines or speaker names. File, folder and sheet names go as opaque tokens such as `file_3` and `sheet_1`, and so does any header or JSON key that looks like a name or an identifier (`Avery`, `avery_q`, a spec entity, anything with a digit), one at a time (`col_2`, `["key_1"]`); blind maps the reply back locally. Ordinary headers and keys made of dictionary words or keep terms (`Status`, `user_id`), and the statistics, still go out. A lower-case name that is not yet a spec entity (`$.users.avery`) is not caught. |
+| `profile-only` | Any model over https, including `claude -p` and the Anthropic API. | The model never sees a value. Exactly the profile's statistics and the policy: no sample values (`[profile] samples` above 0 is refused), no document outlines, sentences or speaker names. Every file, folder and sheet name, every column header and every JSON key goes as an opaque token (`file_3`, `sheet_1`, `col_2`, `["key_1"]`); blind maps the reply back locally. A call carrying anything else is refused before it is sent. |
 | `none` | No model is called. The planner uses built-in detectors only and the audit has no model layer. | Nothing. |
 
 Two limits hold in every mode. **Nothing over 120 characters is sent:** sample values are cut to
@@ -57,6 +58,14 @@ Two limits hold in every mode. **Nothing over 120 characters is sent:** sample v
 shortened. And every call is announced on stderr (backend, model, mode, bytes) before it is sent.
 How a reply is held to a schema, and what a model can and cannot change, is in
 [SECURITY.md](SECURITY.md).
+
+**When a model must help, use `profile-only`.** It is the recommended setup for a hosted model:
+the analyst writes column rules from statistics (how many distinct values, how many digits, how
+many dictionary words, which shapes match) and your policy, and never sees a value, a header or a
+file name. Put what you already know in `blind.toml` as [`[[columns]]` rules](docs/policy.md#columns)
+("keep species, weight and visit date"): they decide those columns locally, ahead of the model,
+and the analyst's rules fill in the rest. Review the spec as usual. The model audit has little to
+go on in this mode (it too sees no value), so the rule-based audit layers do the work.
 
 **What the audit cannot promise.** `clean` means only that blind's checks found nothing they look
 for: every value in your spec and the map, the shapes of emails, hosts, IPs, GUIDs and IDs, and

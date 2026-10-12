@@ -130,10 +130,12 @@ async function askPolicy(p: Prompter): Promise<Policy> {
     policy.models.auditor = await askModel(p, "Auditor", policy.models.analyst);
   }
   // Accepting the mode's default leaves `samples` unset in blind.toml, so it follows a later mode change.
+  // profile-only takes no samples (a remote model never sees a value), so it is not asked.
   const byMode = defaultSamples(policy.privacy.mode);
-  const samples = await p.ask("Sample values per column shown to the analyst", String(byMode), (a) =>
-    /^\d+$/.test(a) ? null : "expected a whole number (0 or more)",
-  );
+  const samples =
+    policy.privacy.mode === "profile-only"
+      ? String(byMode)
+      : await p.ask("Sample values per column shown to the analyst", String(byMode), (a) => (/^\d+$/.test(a) ? null : "expected a whole number (0 or more)"));
   policy.profile.samples = Number(samples);
   policy.profile.samplesExplicit = policy.profile.samples !== byMode;
   const classes = await p.ask("Classes to blind, comma-separated", policy.sensitive.classes.join(","), (a) => {

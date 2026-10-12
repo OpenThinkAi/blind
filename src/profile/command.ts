@@ -192,7 +192,7 @@ export async function runProfile(argv: string[], io: ProfileIO, cwd = process.cw
       io.err.write(`blind profile: wrote ${written} (mode 0600)\n`);
     } else {
       io.output.write(renderProfile(profile, skipped, notes));
-      const seen = policy.privacy.mode === "profile-only" ? "A model would see no more than this, with the names above sent as tokens." : "This is everything a model would see.";
+      const seen = policy.privacy.mode === "profile-only" ? "A model would see these statistics, with every name above sent as a token, and no value." : "This is everything a model would see.";
       io.output.write(`\nwrote ${written} (mode 0600). ${seen}\n`);
     }
     if (skipped.length > 0) {

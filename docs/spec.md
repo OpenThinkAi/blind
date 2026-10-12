@@ -688,8 +688,9 @@ up to three layers, mechanical, semantic, then model; the report lists the layer
     (zip members recursively, XML as its text and attribute values), plus each file and member name,
     cut into lines of at most 120 characters (at whitespace where possible) and sent in chunks of at
     most 8 kB, each with the policy. Binary content is not sent and is listed under "not sent".
-  - `profile-only`: only the profile of the output tree (`blind profile <out>`, with that mode's
-    samples, outlines and speaker lists left out and names tokenised) and the policy, in one call.
+  - `profile-only`: only the profile of the output tree (`blind profile <out>`, with every sample,
+    outline and speaker list left out and every name tokenised) and the policy, in one call. It
+    carries no value, so the model has nothing to quote: this layer adds little in that mode.
   The reply is `{"candidates": [{"line" | "file", "quote", "reason"}]}`: the line index sent (or
   the file token), the quoted text (at most 120 characters), and a reason from `person`, `org`,
   `host`, `email`, `id`, `location`, `context`. Each becomes a `candidate` with source `model` and
@@ -880,7 +881,8 @@ the sample count and the privacy mode) reads CSV (`.csv`), TSV (`.tsv`, `.tab`; 
 WebVTT (`.vtt`) and SRT (`.srt`) transcripts, and DOCX (`.docx`) files, writes `.blind/profile.json` (mode
 0600) and prints it as a table; `--json` prints the JSON instead. `k` is `[profile] samples` in
 `blind.toml`, or `--samples N`. When `samples` is unset, `k` follows `[privacy] mode`: 5 under
-`local-only` and `none`, 0 (headers and statistics only) under `profile-only`.
+`local-only` and `none`, 0 (headers and statistics only) under `profile-only`, where `blind.toml`
+may not set it above 0 and any samples a `--samples N` run collects are left out (below).
 
 - **Paths.** Directories are walked recursively in sorted order; `path` is relative to the input
   directory, or the file name for a file named directly. Hidden entries, symbolic links, files in
@@ -906,13 +908,14 @@ WebVTT (`.vtt`) and SRT (`.srt`) transcripts, and DOCX (`.docx`) files, writes `
 - **Documents.** The outline is the first non-empty line, then, for Markdown, each heading (fenced
   code is skipped), at most 50 entries. Sample sentences are up to `k` distinct sentences spread
   evenly through the document; for logs, each line is one sample. Under `profile-only` the outline
-  is left out (an empty array) and a note says how many documents it was left out of.
+  and the sample sentences are left out (empty arrays) and a note says how many documents they
+  were left out of.
 - **Transcripts.** Found by content, as `blind apply` finds them
   ([transcripts](#transcripts-in-apply)). A VTT, SRT or transcript-shaped text or DOCX file gets a
   `transcripts` entry; a transcript-shaped text file is also profiled as a document. A `.vtt` or
   `.srt` file that is not a transcript is listed under "not profiled". A DOCX that is not
-  transcript-shaped is profiled as a document, from its paragraphs read as text. Under `profile-only` the speaker list is left out (an empty array) and a note
-  says how many transcripts it was left out of.
+  transcript-shaped is profiled as a document, from its paragraphs read as text. Under `profile-only` the speaker list and the sample lines are left out
+  (empty arrays) and a note says how many transcripts they were left out of.
 - **Co-occurrence.** Every pair of table columns or JSON key paths, in the same or different files, whose distinct
   values (compared case-insensitively, trimmed) overlap by more than half of the smaller column's
   distinct values.
@@ -927,72 +930,65 @@ or backend.
 | Mode | Model calls | What is sent |
 |---|---|---|
 | `local-only` (default) | Loopback endpoints only (127.0.0.0/8, `::1`, `localhost`). `claude-cli`, the hosted Anthropic API and any other host are refused with "privacy.mode is local-only". | The caller's data, every string at most 120 characters. |
-| `profile-only` | Remote endpoints allowed, over https (a loopback server may still use http). | Exactly the profile and the policy (classes, description split into pieces of at most 120 characters, examples, keep list). Anything else is refused. |
+| `profile-only` | Remote endpoints allowed, over https (a loopback server may still use http). | Exactly the profile and the policy (classes, description split into pieces of at most 120 characters, examples, keep list), with no value in the profile and every name a token (below). Anything else is refused. |
 | `none` | None. `blind plan` uses the heuristic analyst; `blind audit` runs its mechanical and semantic layers only. | Nothing. |
 
 `blind audit`'s model layer sends, under `local-only`, the blinded output's text as lines of at
 most 120 characters, and under `profile-only` only the output's profile (see "How `blind audit`
 checks the output").
 
-**Document text under `profile-only`.** The only document text a `profile-only` profile carries
-is what `sampleCount` bounds: `samples`, `sampleSentences` and `sampleLines`, at most `sampleCount`
-each (none at the default of 0). Document outlines (a file's first line and its headings) and
-transcript speaker labels have no such bound, so under `profile-only` `blind profile` and
-`blind plan` leave them out: the document or transcript is still listed, with an empty `outline`
-or `speakers`, and a note says so. They are omitted rather than reduced to counts or lengths, so
-the profile shape does not change between modes. What stays is structure, with its statistics;
-the names in it are sent as tokens (below). A `profile-only` call whose
-profile carries a non-empty `outline` or `speakers` (for example a profile built under
-`local-only`) is refused before anything is sent. Under `local-only` outlines and speakers are
-kept and sent as before.
+**No value under `profile-only`.** `profile-only` is the mode in which a model never sees a value
+(AGT-1832): it gets the profile's structure and statistics and the policy, nothing from a cell, a
+line or a name. So:
 
-**Names under `profile-only`.** File and folder names, sheet names, some JSON keys and some
-headers are document text too ("Avery Quill review.md", a sheet named after a client, an object
-keyed by people's names, a headerless CSV whose first row of names was taken as the header). Under
-`profile-only` every model call replaces them with opaque local tokens, and the reply is mapped back
-to the real locations on this machine before it is checked and saved. `.blind/profile.json` and
-`.blind/spec.json` keep the real names; the tokens exist only in memory for the one call.
+- `[profile] samples` must be 0 or unset; `blind.toml` with `samples` above 0 under `profile-only`
+  is an error, and `blind init` does not ask for it in that mode.
+- `blind profile` and `blind plan` leave out every `samples`, `sampleSentences` and `sampleLines`
+  entry, every document `outline` (a file's first line and its headings) and every transcript
+  `speakers` list, and set `sampleCount` to 0, whatever `k` the profile was built with (`blind
+  profile --samples N`). The documents, transcripts, columns and keys are still listed with
+  their statistics, so the profile shape does not change between modes, and a note says what was
+  left out. `.blind/profile.json` is saved the same way.
+- A `profile-only` call whose profile has a `sampleCount` above 0, or any sample, sample sentence,
+  sample line, outline entry or speaker (for example a profile built under `local-only`), is
+  refused before anything is sent. Under `local-only` all of these are kept and sent as before.
 
-| Profile string | Token | When |
-|---|---|---|
-| File path | every folder `dir_N`, the file `file_N`: `dir_1/dir_2/file_3` | always |
-| Sheet name | `sheet_N` | always |
-| JSON key segment | `["key_N"]` | the key is not ASCII-identifier-shaped (`[A-Za-z_][A-Za-z0-9_]*`, so it was written `["..."]`), matches the host, email or ip pattern, or is name-like (below); `[*]`, `.*` and `.*~` segments stay |
-| Table header row | every header of the table becomes `col_N` (its 1-based column) | the header row looks like values: half the width or less filled, or not mostly text (always so when row 1 was used because no header row was found), a cell matches a pattern (ip, email, host, guid, mac), or at least half the filled cells are two or more capitalised words (`Marlo Fenwick`) |
-| One table header | that header becomes `col_N` (its 1-based column); the others stay | the header is name-like (below), whatever the rest of the row |
+**Names under `profile-only`.** File and folder names, sheet names, headers and JSON keys are
+document text too ("Avery Quill review.md", a sheet named after a client, an object keyed by
+people's names, a headerless CSV whose first row of names was taken as the header, a header that
+is itself a value). Under `profile-only` every model call replaces every one of them with an opaque
+local token, and the reply is mapped back to the real locations on this machine before it is
+checked and saved. `.blind/profile.json` and `.blind/spec.json` keep the real names; the tokens
+exist only in memory for the one call.
 
-A header or key segment is **name-like** when any of these holds:
-
-- it carries a spec entity's canonical form, alias or part, in any case, as whole words or with the
-  separators removed (`rowan`, `rowan_pike` and `rowanPike` for the entity `Rowan Pike`). The
-  entities are those of the saved `.blind/spec.json` on a re-plan, and of the spec being audited;
-- it has a Title-Case word that is neither in blind's built-in dictionary (with a few header words
-  and abbreviations such as `hostname` and `addr`, and plural and tense endings taken off) nor a
-  word of a keep term (`Avery` in `Avery, Status, Amount`);
-- it is identifier-shaped: it has a `_` or `.` and a part that is not a dictionary word (`avery_q`,
-  so `$.users.avery_q.role` goes as `$.users["key_1"].role`; `user_id` and `created_at` stay);
-- it has a digit (`srv01`, `Q3 Total`), or is shaped like a token (`col_3`, `key_1`).
-
-A header or key that is exactly a keep term is not name-like by the last three rules; a spec entity
-always is.
+| Profile string | Token |
+|---|---|
+| File path | every folder `dir_N`, the file `file_N`: `dir_1/dir_2/file_3` |
+| Sheet name | `sheet_N` |
+| Table header | `col_N`, its 1-based column in its table, for every header (`Status` and `Species` too) |
+| JSON key segment | `["key_N"]` for every `.name` and `["..."]` segment: `$.visits[*].weight` goes as `$["key_2"][*]["key_1"]`; `[*]`, `.*` and `.*~` segments stay |
 
 `N` counts from 1 over the distinct real strings in code-unit sorted order (headers: column
 order), so the same profile always gives the same tokens. A token is a counter, never a hash or
-anything derived from the salt, so it says nothing about the name it stands for. Name-like JSON
-keys are tokenised rather than left out, so the analyst still classifies their values. Tokens in a
-question's text are replaced by the real names, JSON-quoted. A reply that names a location that
-was not sent is rejected whole. A `profile-only` call whose profile carries an untokenised path,
-sheet name, value-like header row, name-like header (or a `col_N` in another column) or flagged
-key segment is refused before anything is sent; the check uses the call's keep terms and spec
-entities. `blind profile` and `blind plan` print a note with how many of each are tokenised (the
-note's count does not apply keep terms or spec entities). A table of ordinary title-case headers
-("First Name", "Last Name") can be caught by the header-row rule, and a header word blind does not
-know (`Comments (Optional)`) by the name-like rule; those headers then go out as `col_N` with their
-statistics, which costs the analyst context, never privacy. A lower-case name that is not a spec
-entity and has no `_`, `.` or digit (`$.users.avery`) is not name-like and goes out as it is.
+anything derived from the salt, so it says nothing about the name it stands for. Keys and headers
+are tokenised rather than left out, so the analyst still classifies their values from their
+statistics. Tokens in a question's text (`file_N`, `dir_N`, `sheet_N`, `key_N`) are replaced by the
+real names, JSON-quoted. A reply that names a location that was not sent is rejected whole. A
+`profile-only` call whose profile carries a path, sheet name, header or key segment that is not a
+token (or a `col_N` in another column) is refused before anything is sent. `blind profile` and
+`blind plan` print a note with how many of each are tokenised.
+
+**Column rules under `profile-only`.** With no value and no name to read, the analyst classifies
+each column and key from its statistics and the policy; the system prompt tells it so and to ask
+when the statistics cannot decide. Its column rules come back as `col_N` and `["key_N"]`, are
+mapped to the real headers and keys, and are saved with `source: "analyst"` like any other. The
+`[[columns]]` rules in `blind.toml` ([policy.md](policy.md#columns)) are applied after it, locally,
+exactly as in the other modes, and win (`source: "policy"`). This is the recommended setup when a
+hosted model must help: state what you know in `[[columns]]`, and let the model propose the rest
+without seeing a value.
 
 Each call prints one line to stderr before it is sent, after the command's name:
 `blind plan: analyst · openai-compatible · m · local-only · 31570 bytes sent`. The line is
 `role · backend · model · mode · [samples k ·] N bytes sent`, where `N` is the size of the request
-and `samples k` is the profile's `sampleCount`, shown under `profile-only`. Under `profile-only`
+and `samples k` is the profile's `sampleCount` (always 0), shown under `profile-only`. Under `profile-only`
 the line is printed even when the command is quiet (`--quiet`).

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Readable } from "node:stream";
 import { type InitIO, runInit } from "../src/init.ts";
-import { defaultPolicy, loadPolicy } from "../src/policy.ts";
+import { defaultPolicy, loadPolicy, renderPolicy } from "../src/policy.ts";
 
 interface Captured {
   io: InitIO;
@@ -139,9 +139,7 @@ describe("interactive prompts", () => {
       "openai-compatible", // auditor
       "http://127.0.0.1:8000/v1",
       "example-model-b",
-      "",
-      "many", // invalid samples, asked again
-      "0",
+      "", // profile-only asks no sample count: a model there never sees a value
       "person, org,person",
       "Widget, Gizmo",
     ];
@@ -160,16 +158,18 @@ describe("interactive prompts", () => {
     expect(p.sensitive.classes).toEqual(["person", "org"]);
     expect(p.keep.terms).toEqual(["Widget", "Gizmo"]);
     expect(c.out()).toContain("expected one of");
-    expect(c.out()).toContain("expected a whole number");
+    expect(c.out()).not.toContain("Sample values");
+    expect(renderPolicy(p)).toContain("# samples = 0");
   });
 
   test("privacy mode none skips the model prompts", async () => {
-    const c = capture(true, ["none", "3", "", ""]);
+    const c = capture(true, ["none", "many", "3", "", ""]);
     expect(await runInit([dir], c.io)).toBe(0);
     const p = loadPolicy(dir);
     expect(p.privacy.mode).toBe("none");
     expect(p.profile.samples).toBe(3);
     expect(c.out()).not.toContain("Analyst");
+    expect(c.out()).toContain("expected a whole number");
   });
 
   test("an unknown class is asked again", async () => {

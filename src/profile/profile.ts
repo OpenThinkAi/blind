@@ -7,7 +7,7 @@ import { POLICY_FILE, type PrivacyMode } from "../policy.ts";
 import { decode, EncodingError } from "../engine/encoding.ts";
 import { DocxError, docxParagraphs, planDocx } from "../engine/docx.ts";
 import { type Entry, planTranscript, shapeParagraphs, speakersOf } from "../engine/transcript.ts";
-import { type Cooccurrence, type Location, MAX_EXCERPT, type Profile, type ProfileDocument, type ProfileFile, type ProfileJsonKey, type ProfileTable, type ProfileTranscript } from "../schema.ts";
+import { type Cooccurrence, type Location, MAX_EXCERPT, type Profile, type ProfileDocument, type ProfileFile, type ProfileJsonKey, type ProfileTable, type ProfileTranscript, type ValueStats } from "../schema.ts";
 import { profileJson, scanJsonFile } from "./json.ts";
 import { distinct, excerpt, pick } from "./stats.ts";
 import { ParseError, parseTable, profileTable } from "./table.ts";
@@ -330,29 +330,27 @@ export function buildProfile(inputs: readonly string[], k: number, cwd: string):
 }
 
 /**
- * Fits a profile to the privacy mode. Under profile-only the profile may carry no document text
- * beyond what `sampleCount` bounds, so document outlines (first lines and headings) and transcript
- * speaker labels are emptied, and a note says how many were left out. Other modes are unchanged.
- * File paths, sheet names, value-like headers and flagged JSON key segments stay real here (the
- * saved profile and spec name real locations); they are tokenised for each model call
- * (tokeniseProfile in tokens.ts), and a note says so.
+ * Fits a profile to the privacy mode. Under profile-only a model sees no value (AGT-1832): every
+ * sample value, sample sentence and sample line, every document outline (first lines and headings)
+ * and every transcript speaker label is emptied, sampleCount becomes 0, and a note says what was
+ * left out. blind.toml refuses `[profile] samples` above 0 under profile-only, so normally only
+ * outlines and speakers are dropped here. Other modes are unchanged.
+ * File paths, sheet names, headers and JSON key segments stay real here (the saved profile and
+ * spec name real locations); they are tokenised for each model call (tokeniseProfile in
+ * tokens.ts), and a note says so.
  */
-/** A transcript's sample lines with each speaker label replaced by `speaker_N`; none when its speaker list was capped. */
-function unlabelled(t: ProfileTranscript): string[] {
-  if (t.speakers.length >= MAX_SPEAKERS) return [];
-  const longestFirst = t.speakers.map((name, i) => ({ name, token: `speaker_${i + 1}` })).sort((a, b) => b.name.length - a.name.length);
-  return t.sampleLines.map((line) => {
-    const hit = longestFirst.find((s) => line.startsWith(`${s.name}: `));
-    return hit === undefined ? line : `${hit.token}: ${line.slice(hit.name.length + 2)}`;
-  });
-}
-
 export function forPrivacyMode(result: ProfileResult, mode: PrivacyMode): ProfileResult {
   if (mode !== "profile-only") return result;
   const { profile } = result;
   const outlines = profile.documents.filter((d) => d.outline.length > 0).length;
   const speakers = profile.transcripts.filter((t) => t.speakers.length > 0).length;
+  const sampled =
+    profile.tables.reduce((n, t) => n + t.columns.filter((c) => c.stats.samples.length > 0).length, 0) +
+    profile.jsonKeys.filter((k) => k.stats.samples.length > 0).length +
+    profile.documents.filter((d) => d.sampleSentences.length > 0).length +
+    profile.transcripts.filter((t) => t.sampleLines.length > 0).length;
   const notes = [...result.notes];
+  if (sampled > 0) notes.push(`privacy.mode is profile-only: the samples of ${sampled} column(s), key(s), document(s) and transcript(s) are left out`);
   if (outlines > 0) notes.push(`privacy.mode is profile-only: the outline of ${outlines} document(s) is left out`);
   if (speakers > 0) notes.push(`privacy.mode is profile-only: the speaker list of ${speakers} transcript(s) is left out`);
   const { counts } = tokeniseProfile(profile);
@@ -362,17 +360,16 @@ export function forPrivacyMode(result: ProfileResult, mode: PrivacyMode): Profil
         `and ${counts.keys} JSON key segment(s) as opaque tokens (file_1, sheet_1, col_1, key_1), mapped back to the real names locally`,
     );
   }
+  const noSamples = <T extends { stats: ValueStats }>(x: T): T => ({ ...x, stats: { ...x.stats, samples: [] } });
   return {
     ...result,
     profile: {
       ...profile,
-      documents: profile.documents.map((d) => ({ ...d, outline: [] })),
-      // Every transcript's speakers (VTT, SRT, and transcript-shaped text and DOCX, AGT-1749) are
-      // names with no sampleCount bound: always emptied here, and refused by assertProfilePayload.
-      // A sample line starts with its speaker's name, so that label becomes `speaker_N` (N from the
-      // speaker list's first-appearance order). A capped list may not name every speaker, so then
-      // the sample lines are left out instead.
-      transcripts: profile.transcripts.map((t) => ({ ...t, speakers: [], sampleLines: unlabelled(t) })),
+      sampleCount: 0,
+      tables: profile.tables.map((t) => ({ ...t, columns: t.columns.map(noSamples) })),
+      jsonKeys: profile.jsonKeys.map(noSamples),
+      documents: profile.documents.map((d) => ({ ...d, outline: [], sampleSentences: [] })),
+      transcripts: profile.transcripts.map((t) => ({ ...t, speakers: [], sampleLines: [] })),
     },
     notes,
   };

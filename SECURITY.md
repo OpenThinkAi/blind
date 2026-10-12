@@ -26,16 +26,19 @@ these with hostile document content and a fake model that obeys any instruction 
   before anything is sent, not truncated: a long string there means document text is about to
   leave the machine. The profiler cuts samples to 120 characters when it builds the profile.
 - **Bounded samples.** Document text in the profile is limited to `sampleCount` samples per
-  column, sample sentences and sample lines: 5 under `local-only`, 0 under `profile-only` unless
-  `[profile] samples` sets it. Under `profile-only` document outlines and speaker labels are left
-  out, and a call carrying them is refused.
-- **Names as tokens.** Under `profile-only` file and folder names, sheet names, JSON key segments
-  that are not identifier-shaped (or match the host, email or ip pattern) and the headers of a
-  table whose header row looks like values are sent as opaque counter tokens (`dir_1/file_2`,
-  `sheet_1`, `["key_1"]`, `col_1`), never hashes and never derived from the salt. The reply is
-  mapped back to the real locations locally before it is checked and saved, and a reply naming a
-  location that was not sent is rejected. A call carrying an untokenised path, sheet name,
-  value-like header row or flagged key is refused. See "Privacy modes" in docs/spec.md.
+  column, sample sentences and sample lines: 5 under `local-only` unless `[profile] samples`
+  sets it.
+- **No value under `profile-only`.** A remote model never sees a value. `[profile] samples` above
+  0 is refused when `blind.toml` is read; the profile is stripped of every sample, sample
+  sentence, sample line, document outline and speaker label before it is sent; and a call whose
+  profile carries any of them, or a `sampleCount` above 0, is refused before anything is sent.
+- **Names as tokens.** Under `profile-only` every file and folder name, sheet name, table header
+  and JSON key segment is sent as an opaque counter token (`dir_1/file_2`, `sheet_1`, `col_1`,
+  `["key_1"]`), never a hash and never derived from the salt. The reply is mapped back to the real
+  locations locally before it is checked and saved, and a reply naming a location that was not
+  sent is rejected. A call carrying a path, sheet name, header or key that is not a token is
+  refused. See "Privacy modes" in docs/spec.md; test/bench/profile-only.test.ts checks it on
+  synthetic kit v2.
 - **Endpoints.** `local-only` (the default) refuses any endpoint that is not a loopback literal
   (127.0.0.0/8, `::1`, `localhost`) before sending, which rules out `claude -p` and the hosted
   Anthropic API. `profile-only` allows a remote model over https (a loopback server may use http), including

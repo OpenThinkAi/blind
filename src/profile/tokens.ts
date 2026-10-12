@@ -1,31 +1,25 @@
-// Profile-only tokens. Under privacy.mode "profile-only" the profile a model sees carries no
-// document text beyond what sampleCount bounds, yet file and folder names, sheet names, some JSON
-// keys and some table headers are document text: a file called "Avery Quill review.md", a sheet
-// named after a client, an object keyed by people's names, a headerless CSV whose first row of
-// names was taken as the header. tokeniseProfile() replaces those with opaque local tokens before
-// anything is sent, and restoreSpec() maps the analyst's reply back to the real locations.
+// Profile-only tokens. Under privacy.mode "profile-only" a model may see the corpus's shape and
+// statistics, never a value (AGT-1832). File and folder names, sheet names, table headers and JSON
+// keys are all document text: a file called "Avery Quill review.md", a sheet named after a client,
+// an object keyed by people's names, a headerless CSV whose first row of names was taken as the
+// header, a header that is itself a value. tokeniseProfile() replaces every one of them with an
+// opaque local token before anything is sent, and restoreSpec() maps the analyst's reply back to
+// the real locations.
 //
 // Tokens:
 //   file and folder paths  every segment: folders `dir_N`, the file `file_N` (`dir_1/dir_2/file_3`)
 //   sheet names            `sheet_N`
-//   JSON key segments      `["key_N"]`, for a key that is not ASCII-identifier-shaped, that
-//                          matches the host, email or ip pattern, or that is name-like (below)
-//   value-like headers     every header of the table becomes `col_N` (its 1-based column)
-//   name-like headers      that one header becomes `col_N` (its 1-based column), whatever the rest
-// A header cell or key segment is name-like (AGT-1808) when it matches a spec entity form, has a
-// Title-Case word that is neither in the dictionary nor a keep term (`Avery`), is identifier-shaped
-// (`_` or `.` with a part that is not a dictionary word: `avery_q`), has a digit, or is shaped like
-// a token. A header or key that is exactly a keep term is not name-like by the last three rules.
+//   table headers          every header becomes `col_N` (its 1-based column in its table)
+//   JSON key segments      every `.name` and `["key"]` segment becomes `["key_N"]`; only the
+//                          structural segments `[*]`, `.*` and `.*~` stay as written
 // N counts from 1 over the distinct real strings in code-unit sorted order (headers: column order).
 // A token is a counter, never a hash: it says nothing about the value and uses no salt. The same
 // profile always gives the same tokens. The mapping lives only in memory for one model call.
 //
 // untokenised() is the check model.ts runs on every profile-only payload: it lists any path,
-// sheet name, header or key segment that should have been a token. Pure functions, no I/O.
+// sheet name, header or key segment that is not a token. Pure functions, no I/O.
 
-import type { Entities, Location, Profile, ProfileTable, Question, Spec } from "../schema.ts";
-import { DETECTORS } from "./stats.ts";
-import { DICTIONARY } from "../engine/words.ts";
+import type { Location, Profile, ProfileTable, Question, Spec } from "../schema.ts";
 
 const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
@@ -33,99 +27,6 @@ const FILE_TOKEN = /^file_[1-9]\d*$/;
 const DIR_TOKEN = /^dir_[1-9]\d*$/;
 const SHEET_TOKEN = /^sheet_[1-9]\d*$/;
 const KEY_TOKEN = /^key_[1-9]\d*$/;
-/** Shaped like a header or key token; such a real string is always tokenised, so tokens never collide. */
-const TOKEN_SHAPED = /^(?:col|key)_\d+$/;
-const PLAIN_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const KEY_PATTERNS = [DETECTORS.host, DETECTORS.email, DETECTORS.ip];
-/** Header patterns: every shape finder, so a host, email, IP, GUID or MAC as a header is caught. */
-const HEADER_PATTERNS = [DETECTORS.host, DETECTORS.email, DETECTORS.ip, DETECTORS.guid, DETECTORS.mac];
-/** Two or more capitalised words ("Avery Quill", "Jean-Luc O'Brien", "McAllister Group"). */
-// Each repetition starts with a separator or a capital, so a lowercase run splits only one way: the
-// same words as `\p{Lu}[\p{Ll}\p{M}]*(?:['’-]?\p{Lu}?[\p{Ll}\p{M}]+)*` without its exponential backtracking.
-const TITLE_WORD = String.raw`\p{Lu}[\p{Ll}\p{M}]*(?:(?:['’-]\p{Lu}?|\p{Lu})[\p{Ll}\p{M}]+)*`;
-const TITLE_CASE_WORDS = new RegExp(`^${TITLE_WORD}(?: ${TITLE_WORD})+$`, "u");
-/** A header row is value-like when at least this share of its filled cells are title-case words. */
-export const TITLE_CASE_SHARE = 0.5;
-const NUMBER = /^[-+]?(?:\d[\d,]*)?(?:\.\d+)?(?:e[-+]?\d+)?%?$/i;
-
-/**
- * What a profile-only call knows about names beyond the profile: the policy's keep terms (allowed
- * out) and the spec's entity forms (never allowed out). Both default to none.
- */
-export interface NameHints {
-  keep?: readonly string[];
-  entities?: readonly string[];
-}
-
-/** Every canonical form, alias and part of a spec's entities, sorted and distinct. */
-export function entityForms(entities: Entities | undefined): string[] {
-  const forms = Object.values(entities ?? {}).flatMap((list) => (list ?? []).flatMap((e) => [e.canonical, ...e.aliases, ...e.parts]));
-  return [...new Set(forms.filter((f) => f.trim() !== ""))].sort(byCodeUnit);
-}
-
-/**
- * Header words the built-in dictionary lacks: column-name vocabulary and its usual abbreviations.
- * Only these keep a header in clear; a word missing here costs the analyst context, never privacy.
- */
-const HEADER_WORDS: ReadonlySet<string> = new Set(
-  `addr assignee attendee attendees cc desc dest dst firstname fullname guid hostname ip lastname
-  mac msg num qty ref reporter requester src surname timestamp ts uid url username uuid`.split(/\s+/),
-);
-
-const fold = (s: string): string => s.normalize("NFKC").toLowerCase();
-/** Lower-case words of `s`, split at anything not a letter, mark or digit and at camelCase humps. */
-const wordsOf = (s: string): string[] => fold(s.replace(/(\p{Ll})(\p{Lu})/gu, "$1 $2")).split(/[^\p{L}\p{M}\p{N}]+/u).filter((w) => w !== "");
-const TITLE_WORDS = /\p{Lu}[\p{Ll}\p{M}]+/gu;
-
-/** The compiled form of NameHints. */
-interface Names {
-  keepWhole: ReadonlySet<string>;
-  keepWords: ReadonlySet<string>;
-  forms: readonly string[][];
-}
-
-function compile(hints: NameHints = {}): Names {
-  const keep = hints.keep ?? [];
-  return {
-    keepWhole: new Set(keep.map((k) => wordsOf(k).join(" "))),
-    keepWords: new Set(keep.flatMap(wordsOf)),
-    forms: (hints.entities ?? []).map(wordsOf).filter((w) => w.length > 0),
-  };
-}
-
-/** A dictionary, header or keep word, also after a plural or tense ending comes off. */
-function known(word: string, names: Names): boolean {
-  const w = fold(word);
-  const has = (x: string) => x !== "" && (DICTIONARY.has(x) || HEADER_WORDS.has(x) || names.keepWords.has(x));
-  if (has(w)) return true;
-  if (w.endsWith("ies") && has(`${w.slice(0, -3)}y`)) return true;
-  return ["es", "s", "ed", "d", "ing", "ly"].some((end) => w.length > end.length + 2 && w.endsWith(end) && has(w.slice(0, -end.length)));
-}
-
-/** True when `s` has an entity form as a run of whole words, or is one with the separators removed. */
-function hasEntityForm(s: string, names: Names): boolean {
-  const words = wordsOf(s);
-  if (words.length === 0) return false;
-  const spaced = ` ${words.join(" ")} `;
-  const joined = words.join("");
-  return names.forms.some((f) => spaced.includes(` ${f.join(" ")} `) || joined === f.join(""));
-}
-
-/** The name-like test of the header comment, for one header cell or one key segment. */
-function nameLike(raw: string, names: Names): boolean {
-  const s = raw.trim();
-  if (s === "") return false;
-  if (TOKEN_SHAPED.test(s)) return true;
-  if (hasEntityForm(s, names)) return true;
-  if (names.keepWhole.has(wordsOf(s).join(" "))) return false;
-  if (/\p{N}/u.test(s)) return true;
-  if (/[_.]/.test(s) && s.split(/[_.]/).flatMap(wordsOf).some((w) => !known(w, names))) return true;
-  return [...s.matchAll(TITLE_WORDS)].some(([w]) => !known(w, names));
-}
-
-/** A header cell that must go out as `col_N` even when the rest of its table does not. */
-const flaggedHeader = (header: string, names: Names): boolean =>
-  HEADER_PATTERNS.some((re) => re.test(header.trim())) || nameLike(header, names);
 
 /** True for `file_N` or `dir_N/.../file_N`. */
 export function isTokenPath(path: string): boolean {
@@ -135,22 +36,6 @@ export function isTokenPath(path: string): boolean {
 }
 
 export const isTokenSheet = (sheet: string): boolean => SHEET_TOKEN.test(sheet);
-
-/**
- * True when a table's header cells look like data rather than names for columns: the row would
- * not have been picked as a header (half the width or less filled, or not mostly text; this is
- * always so when the profiler fell back to row 1), a cell matches a shape pattern, or at least
- * TITLE_CASE_SHARE of the filled cells are two or more capitalised words, like a person's name.
- */
-export function headersLookLikeValues(headers: readonly string[]): boolean {
-  const filled = headers.map((h) => h.trim()).filter((h) => h !== "");
-  if (filled.length === 0) return headers.length > 0;
-  if (filled.length * 2 <= headers.length) return true;
-  const text = filled.filter((h) => /\p{L}/u.test(h) && !NUMBER.test(h));
-  if (text.length * 2 <= filled.length) return true;
-  if (filled.some((h) => HEADER_PATTERNS.some((re) => re.test(h)))) return true;
-  return filled.filter((h) => TITLE_CASE_WORDS.test(h)).length >= TITLE_CASE_SHARE * filled.length;
-}
 
 /** A key path segment: `raw` as written, `key` the decoded key for a `.name` or `["key"]` segment. */
 interface Segment {
@@ -177,9 +62,6 @@ function segments(path: string): Segment[] | null {
   return out;
 }
 
-/** A key that must not leave the machine under profile-only. */
-const flaggedKey = (key: string, names: Names): boolean => !PLAIN_KEY.test(key) || KEY_PATTERNS.some((re) => re.test(key)) || nameLike(key, names);
-
 const locKey = (l: Location): string => JSON.stringify([l.file, l.sheet ?? null, l.header ?? null, l.jsonPath ?? null]);
 
 function makeLocation(file: string, sheet: string | undefined, header: string | undefined, jsonPath: string | undefined): Location {
@@ -188,7 +70,7 @@ function makeLocation(file: string, sheet: string | undefined, header: string | 
 }
 
 export interface Tokenised {
-  /** The profile with every path, sheet name, flagged key segment and value-like header tokenised. */
+  /** The profile with every path, sheet name, header and JSON key segment tokenised. */
   profile: Profile;
   /** The real location of a location in `profile`, or undefined when it is not one. */
   restore(loc: Location): Location | undefined;
@@ -203,12 +85,8 @@ function numbered(values: Iterable<string>, prefix: string): Map<string, string>
   return new Map([...new Set(values)].sort(byCodeUnit).map((v, i) => [v, `${prefix}_${i + 1}`]));
 }
 
-/**
- * Tokenises a profile for a profile-only call. See the header comment for the scheme. Give it the
- * same hints the call's assertProfilePayload gets (the policy's keep terms, the spec's entity forms).
- */
-export function tokeniseProfile(profile: Profile, hints: NameHints = {}): Tokenised {
-  const names = compile(hints);
+/** Tokenises a profile for a profile-only call. See the header comment for the scheme. */
+export function tokeniseProfile(profile: Profile): Tokenised {
   const realFiles = [
     ...profile.files.map((f) => f.path),
     ...profile.tables.map((t) => t.file),
@@ -238,7 +116,7 @@ export function tokeniseProfile(profile: Profile, hints: NameHints = {}): Tokeni
     parsed.set(p, segs);
   }
   const keyTokens = numbered(
-    [...parsed.values()].flatMap((segs) => segs.flatMap((s) => (s.key !== undefined && flaggedKey(s.key, names) ? [s.key] : []))),
+    [...parsed.values()].flatMap((segs) => segs.flatMap((s) => (s.key === undefined ? [] : [s.key]))),
     "key",
   );
 
@@ -254,7 +132,7 @@ export function tokeniseProfile(profile: Profile, hints: NameHints = {}): Tokeni
   };
   const sheet = (s: string | undefined): string | undefined => (s === undefined ? undefined : token(sheetTokens, s));
   const keyPath = (p: string): string =>
-    `$${(parsed.get(p) ?? []).map((s) => (s.key !== undefined && flaggedKey(s.key, names) ? `[${JSON.stringify(token(keyTokens, s.key))}]` : s.raw)).join("")}`;
+    `$${(parsed.get(p) ?? []).map((s) => (s.key === undefined ? s.raw : `[${JSON.stringify(token(keyTokens, s.key))}]`)).join("")}`;
 
   const forward = new Map<string, Location>();
   const back = new Map<string, Location>();
@@ -266,15 +144,12 @@ export function tokeniseProfile(profile: Profile, hints: NameHints = {}): Tokeni
   let tables = 0;
   let headers = 0;
   const tableOut = profile.tables.map((t): ProfileTable => {
-    const whole = headersLookLikeValues(t.columns.map((c) => c.header));
-    const flagged = t.columns.map((c) => whole || flaggedHeader(c.header, names));
-    const n = flagged.filter(Boolean).length;
-    if (n > 0) tables++;
-    headers += n;
+    if (t.columns.length > 0) tables++;
+    headers += t.columns.length;
     const file = path(t.file);
     const sh = sheet(t.sheet);
     const columns = t.columns.map((c, i) => {
-      const header = flagged[i] ? `col_${i + 1}` : c.header;
+      const header = `col_${i + 1}`;
       link(makeLocation(t.file, t.sheet, c.header, undefined), makeLocation(file, sh, header, undefined));
       return { ...c, header };
     });
@@ -355,14 +230,12 @@ export function restoreSpec(spec: Spec, t: Tokenised): { spec: Spec; issues: Res
 
 /**
  * Every place in a profile that a profile-only payload must carry as a token but does not: a path
- * that is not `dir_N/.../file_N`, a sheet name that is not `sheet_N`, a table whose headers look
- * like values, a name-like header that is not `col_N` for its own column, a key path with a
- * flagged segment that is not `key_N` (or that is not a key path), and a co-occurrence naming a
- * column that is not in the payload's tables. Empty when the profile is fit to send. `hints` are
- * the call's keep terms and entity forms, as given to tokeniseProfile.
+ * that is not `dir_N/.../file_N`, a sheet name that is not `sheet_N`, a header that is not `col_N`
+ * for its own column, a key path with a key segment that is not `key_N` (or that is not a key
+ * path), and a co-occurrence naming a column that is not in the payload's tables. Empty when the
+ * profile is fit to send.
  */
-export function untokenised(profile: Profile, hints: NameHints = {}): string[] {
-  const names = compile(hints);
+export function untokenised(profile: Profile): string[] {
   const out: string[] = [];
   const file = (p: string, at: string) => {
     if (!isTokenPath(p)) out.push(at);
@@ -372,19 +245,16 @@ export function untokenised(profile: Profile, hints: NameHints = {}): string[] {
   };
   const key = (p: string, at: string) => {
     const segs = segments(p);
-    if (segs === null || segs.some((s) => s.key !== undefined && !KEY_TOKEN.test(s.key) && flaggedKey(s.key, names))) out.push(at);
+    if (segs === null || segs.some((s) => s.key !== undefined && !KEY_TOKEN.test(s.key))) out.push(at);
   };
   profile.files.forEach((f, i) => file(f.path, `$.profile.files[${i}].path`));
   const columns = new Set<string>();
   profile.tables.forEach((t, i) => {
     file(t.file, `$.profile.tables[${i}].file`);
     sheet(t.sheet, `$.profile.tables[${i}].sheet`);
-    if (headersLookLikeValues(t.columns.map((c) => c.header))) out.push(`$.profile.tables[${i}].columns[*].header`);
-    else {
-      t.columns.forEach((c, j) => {
-        if (c.header !== `col_${j + 1}` && flaggedHeader(c.header, names)) out.push(`$.profile.tables[${i}].columns[${j}].header`);
-      });
-    }
+    t.columns.forEach((c, j) => {
+      if (c.header !== `col_${j + 1}`) out.push(`$.profile.tables[${i}].columns[${j}].header`);
+    });
     for (const c of t.columns) columns.add(locKey(makeLocation(t.file, t.sheet, c.header, undefined)));
   });
   profile.jsonKeys.forEach((j, i) => {

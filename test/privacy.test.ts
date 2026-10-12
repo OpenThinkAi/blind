@@ -12,8 +12,8 @@ import {
   profilePayload,
   splitText,
 } from "../src/model.ts";
-import { type ModelConfig, type Policy, type PrivacyMode, defaultPolicy, parsePolicy, renderPolicy } from "../src/policy.ts";
-import { buildProfile, forPrivacyMode, MAX_SPEAKERS } from "../src/profile/profile.ts";
+import { type ModelConfig, type Policy, PolicyError, type PrivacyMode, defaultPolicy, parsePolicy, renderPolicy } from "../src/policy.ts";
+import { buildProfile, forPrivacyMode } from "../src/profile/profile.ts";
 import { tokeniseProfile } from "../src/profile/tokens.ts";
 import type { Profile } from "../src/schema.ts";
 
@@ -26,7 +26,7 @@ const SCHEMA = {
   properties: { label: { enum: ["person", "unknown"] } },
 } as const;
 const FIXTURE = JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "profile.valid.json"), "utf8")) as Profile;
-/** The fixture as a profile-only call sends it: no outlines, no speaker labels, names as tokens. */
+/** The fixture as a profile-only call sends it: no samples, outlines or speaker labels, names as tokens. */
 const PROFILE_ONLY = tokeniseProfile(forPrivacyMode({ profile: FIXTURE, skipped: [], notes: [] }, "profile-only").profile).profile;
 const REMOTE: ModelConfig = { backend: "openai-compatible", url: "https://models.example.com/v1", model: "m", key_env: "" };
 
@@ -134,7 +134,7 @@ describe("profile-only", () => {
     });
     const size = Buffer.byteLength(bodies[0] ?? "");
     expect(events).toEqual([
-      `analyst · openai-compatible · m · profile-only · samples 3 · ${size} bytes sent`,
+      `analyst · openai-compatible · m · profile-only · samples 0 · ${size} bytes sent`,
       "fetch https://models.example.com/v1/chat/completions",
     ]);
     expect(sentData(bodies[0] ?? "")).toEqual(payload());
@@ -179,8 +179,15 @@ describe("profile-only", () => {
         ...payload(),
         profile: { ...PROFILE_ONLY, tables: PROFILE_ONLY.tables.map((t) => ({ ...t, columns: t.columns.map((c, i) => ({ ...c, header: ["Avery Quill", "Robin Example"][i] ?? "x" })) })) },
       }),
-      "$.profile.tables[0].columns[*].header",
+      "$.profile.tables[0].columns[0].header, $.profile.tables[0].columns[1].header",
     ],
+    // AGT-1832: every header, even a dictionary word, and any sample at all.
+    [
+      "a dictionary-word header",
+      () => ({ ...payload(), profile: { ...PROFILE_ONLY, tables: PROFILE_ONLY.tables.map((t) => ({ ...t, columns: t.columns.map((c, i) => (i === 0 ? { ...c, header: "Status" } : c)) })) } }),
+      "$.profile.tables[0].columns[0].header",
+    ],
+    ["sample values", () => ({ ...payload(), profile: { ...tokeniseProfile(FIXTURE).profile, documents: PROFILE_ONLY.documents, transcripts: PROFILE_ONLY.transcripts } }), "$.profile.sampleCount, $.profile.tables[0].columns[0].stats.samples"],
     [
       "a name-like JSON key",
       () => ({ ...payload(), profile: { ...PROFILE_ONLY, jsonKeys: PROFILE_ONLY.jsonKeys.map((j) => ({ ...j, path: '$["Avery Quill"].role' })) } }),
@@ -206,20 +213,21 @@ describe("profile-only", () => {
   });
 });
 
-describe("profile-only transcript sample lines", () => {
-  const withLines = (speakers: string[], sampleLines: string[]): Profile => ({ ...FIXTURE, transcripts: [{ file: "standup.vtt", speakers, sampleLines }] });
-  const sent = (p: Profile) => forPrivacyMode({ profile: p, skipped: [], notes: [] }, "profile-only").profile.transcripts[0];
-
-  test("a sample line's speaker label goes as speaker_N, never as the name", () => {
-    const t = sent(withLines(["Avery Quill", "Avery Quill Jr", "Robin Example"], ["Avery Quill Jr: hi", "Robin Example: see you", "Avery Quill: ok", "no label here"]));
-    expect(t?.speakers).toEqual([]);
-    expect(t?.sampleLines).toEqual(["speaker_2: hi", "speaker_3: see you", "speaker_1: ok", "no label here"]);
-    expect(JSON.stringify(PROFILE_ONLY.transcripts)).not.toContain("Robin Example:");
+describe("profile-only sends no value (AGT-1832)", () => {
+  test("forPrivacyMode leaves out every sample, sample sentence, sample line, outline and speaker, and says so", () => {
+    const { profile, notes } = forPrivacyMode({ profile: FIXTURE, skipped: [], notes: [] }, "profile-only");
+    expect(profile.sampleCount).toBe(0);
+    for (const t of profile.tables) for (const c of t.columns) expect(c.stats.samples).toEqual([]);
+    for (const k of profile.jsonKeys) expect(k.stats.samples).toEqual([]);
+    for (const d of profile.documents) expect(d).toMatchObject({ outline: [], sampleSentences: [] });
+    for (const t of profile.transcripts) expect(t).toMatchObject({ speakers: [], sampleLines: [] });
+    expect(notes.some((n) => n.includes("the samples of") && n.includes("are left out"))).toBe(true);
+    // Statistics are kept: they are what the model classifies from.
+    expect(profile.tables[0]?.columns[0]?.stats.distinctRatio).toBe(FIXTURE.tables[0]?.columns[0]?.stats.distinctRatio as number);
   });
 
-  test("a capped speaker list may not name every speaker, so the sample lines are left out", () => {
-    const many = Array.from({ length: MAX_SPEAKERS }, (_, i) => `Speaker ${String.fromCharCode(65 + (i % 26))}${i}`);
-    expect(sent(withLines(many, ["Unlisted Person: hello"]))?.sampleLines).toEqual([]);
+  test("other modes are unchanged", () => {
+    expect(forPrivacyMode({ profile: FIXTURE, skipped: [], notes: [] }, "local-only").profile).toBe(FIXTURE);
   });
 });
 
@@ -235,10 +243,18 @@ describe("samples default to the mode", () => {
     expect(withMode("profile-only").profile).toEqual({ samples: 0, samplesExplicit: false });
   });
 
-  test("set explicitly, the count is kept in every mode", () => {
-    expect(withMode("profile-only", 4).profile).toEqual({ samples: 4, samplesExplicit: true });
-    expect(withMode("profile-only", 5).profile).toEqual({ samples: 5, samplesExplicit: true });
+  test("set explicitly, the count is kept under local-only and none", () => {
     expect(withMode("local-only", 0).profile).toEqual({ samples: 0, samplesExplicit: true });
+    expect(withMode("local-only", 9).profile).toEqual({ samples: 9, samplesExplicit: true });
+    expect(withMode("none", 2).profile).toEqual({ samples: 2, samplesExplicit: true });
+  });
+
+  test("profile-only refuses any sample count above 0 (AGT-1832); 0 set explicitly is fine", () => {
+    for (const n of [1, 5]) {
+      expect(() => withMode("profile-only", n)).toThrow(PolicyError);
+      expect(() => withMode("profile-only", n)).toThrow(`profile.samples must be 0 under privacy.mode = "profile-only" (got ${n})`);
+    }
+    expect(withMode("profile-only", 0).profile).toEqual({ samples: 0, samplesExplicit: true });
   });
 
   test("the default policy leaves samples unset, so changing the mode changes the count", () => {
@@ -282,28 +298,33 @@ describe("every sample in a payload is at most 120 characters", () => {
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  test("a profile built from a 10 kB cell sends nothing longer", async () => {
+  test("a profile built from a 10 kB cell sends nothing longer to a loopback model", async () => {
     const big = `Ada Example ${"lorem ipsum ".repeat(900)}`.slice(0, 10_240);
     expect(big.length).toBe(10_240);
     writeFileSync(join(dir, "staff.csv"), `owner,notes\nAda Example,"${big}"\nBen Sample,short\n`);
     writeFileSync(join(dir, "notes.txt"), `${big}.\nSecond line.\n`);
-    const { profile, skipped } = forPrivacyMode(buildProfile(["."], 5, dir), "profile-only");
+    const { profile, skipped } = buildProfile(["."], 5, dir);
     expect(skipped).toEqual([]);
 
-    const events: string[] = [];
     const bodies: string[] = [];
-    const p = policyWith("profile-only", REMOTE);
-    p.profile = { samples: 5, samplesExplicit: true };
-    await ask("analyst", "s", { task: "t", data: profilePayload(tokeniseProfile(profile).profile, p) }, SCHEMA, {
-      policy: p,
-      fetch: recorder(events, bodies),
-      stderr: (l) => events.push(l),
-    });
-    expect(events[0]).toContain("profile-only · samples 5 · ");
+    const p = policyWith("local-only", { url: "http://127.0.0.1:8000/v1", model: "m" });
+    await ask("analyst", "s", { task: "t", data: profilePayload(profile, p) }, SCHEMA, { policy: p, fetch: recorder([], bodies), quiet: true });
     const sent = strings(sentData(bodies[0] ?? ""));
     expect(sent.length).toBeGreaterThan(0);
     for (const s of sent) expect([...s].length).toBeLessThanOrEqual(MAX_DATA_STRING);
     expect(sent.some((s) => s.startsWith("Ada Example lorem"))).toBe(true);
+  });
+
+  test("under profile-only none of the cell is sent at all, even from a profile built with samples", async () => {
+    const big = `Ada Example ${"lorem ipsum ".repeat(900)}`.slice(0, 10_240);
+    writeFileSync(join(dir, "staff.csv"), `owner,notes\nAda Example,"${big}"\nBen Sample,short\n`);
+    const { profile } = forPrivacyMode(buildProfile(["."], 5, dir), "profile-only");
+    const bodies: string[] = [];
+    const p = policyWith("profile-only", REMOTE);
+    await ask("analyst", "s", { task: "t", data: profilePayload(tokeniseProfile(profile).profile, p) }, SCHEMA, { policy: p, fetch: recorder([], bodies), stderr: () => {} });
+    // The policy's own invented examples ("Ada Example") are the owner's words; the profile carries nothing of the file.
+    const sent = JSON.stringify((sentData(bodies[0] ?? "") as { profile: unknown }).profile);
+    for (const text of ["Ada", "Ben", "lorem", "short", "owner", "notes", "staff"]) expect(sent).not.toContain(text);
   });
 
   test("a hand-made profile carrying the 10 kB cell is refused, not truncated", async () => {

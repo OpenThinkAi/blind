@@ -257,3 +257,17 @@ The skeleton records no known gaps now. Both gaps it used to carry are fixed and
 (AGT-1779), and the vocabulary entry `SAM` keeps the acronym when the given-name part `Sam` has the
 same length (AGT-1783). A gap found later is recorded as `test.failing`, so it turns red when it is
 fixed and must then be switched to `test`.
+
+## The profile-only test
+
+`test/bench/profile-only.test.ts` checks the "model never sees a value" mode (AGT-1832) on kit v2,
+which has every shape the profiler reads: CSV, worksheets with sheet names, JSON keys, prose,
+DOCX and VTT transcripts. It builds the profile with samples on purpose, then checks what
+`profile-only` would send, and what `blind plan` actually sends to a fake remote analyst:
+
+- every string in the profile is a counter token (`dir_N/file_N`, `sheet_N`, `col_N`, a key path
+  of `["key_N"]` segments) or a file-format name, and `sampleCount` is 0;
+- no cell value (every CSV and worksheet cell, every JSON leaf, every oracle value) and no header,
+  sheet name, JSON key or file name of the kit appears in it;
+- the analyst's column rules, written against the tokens, land on the real headers in the saved
+  spec, and a `[[columns]]` rule in `blind.toml` still decides its column (`source: "policy"`).

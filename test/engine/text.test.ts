@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import type { Entities, PatternName } from "../../src/schema.ts";
+import type { Entities, PatternName, Patterns } from "../../src/schema.ts";
 import { EntityMatcher, findPatternSpans, findSpans } from "../../src/engine/text.ts";
 
-const ALL: Record<PatternName, boolean> = { ip: true, email: true, host: true, guid: true, mac: true };
-const NONE: Record<PatternName, boolean> = { ip: false, email: false, host: false, guid: false, mac: false };
+const ALL: Record<PatternName, boolean> = { ip: true, email: true, host: true, guid: true, mac: true, phone: true };
+const NONE: Record<PatternName, boolean> = { ip: false, email: false, host: false, guid: false, mac: false, phone: false };
 
-const matched = (text: string, patterns = ALL) => findPatternSpans(text, patterns).map((s) => [s.value, s.cls]);
+const matched = (text: string, patterns: Patterns = ALL) => findPatternSpans(text, patterns).map((s) => [s.value, s.cls]);
 
 describe("patterns", () => {
   test.each([
@@ -32,6 +32,41 @@ describe("patterns", () => {
     ["not@an email"],
   ])("%j finds nothing", (text) => {
     expect(matched(text)).toEqual([]);
+  });
+
+  test.each([
+    ["call (801) 555-0100 today", "(801) 555-0100"],
+    ["call (801)555-0100.", "(801)555-0100"],
+    ["call 801-555-0100, then", "801-555-0100"],
+    ["call 801.555.0100;", "801.555.0100"],
+    ["call 801 555 0100 now", "801 555 0100"],
+    ["call +1 801 555 0100 now", "+1 801 555 0100"],
+    ["call 1-801-555-0100 now", "1-801-555-0100"],
+    ["call +1 (801) 555-0100 now", "+1 (801) 555-0100"],
+    ["call +44 20 7946 0958 now", "+44 20 7946 0958"],
+    ["call +442079460958 now", "+442079460958"],
+  ])("phone: %j finds %j", (text, value) => {
+    expect(matched(text)).toEqual([[value, "id"]]);
+  });
+
+  test.each([
+    ["on 2026-10-12 at 10:30"],
+    ["paid 1,234,567.89 and 12.50"],
+    ["order 8015550100 shipped"],
+    ["id ACCT-000123 and 1234567"],
+    ["ssn-like 801-55-0100"],
+    ["serial 801-555-0100-77"],
+    ["ref 3801-555-0100"],
+    ["short +1 2"],
+    ["version 12.345.6789"],
+  ])("phone: %j finds nothing", (text) => {
+    expect(matched(text)).toEqual([]);
+  });
+
+  test("phone follows its switch, and is on when the spec predates it", () => {
+    expect(matched("call 801-555-0100", { ...ALL, phone: false })).toEqual([]);
+    // A spec written before the pattern existed has no `phone`: absent means on.
+    expect(matched("call 801-555-0100", { ip: true, email: true, host: true, guid: true, mac: true })).toEqual([["801-555-0100", "id"]]);
   });
 
   test("an email is one span, not a name and a host", () => {

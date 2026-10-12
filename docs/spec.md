@@ -35,7 +35,7 @@ Field names are camelCase. All examples below are synthetic.
     "person": [{ "canonical": "Avery Quill", "aliases": ["A. Quill", "Quill, Avery", "Aves"], "parts": ["Avery", "Quill"] }],
     "org": [{ "canonical": "Example Widgets", "aliases": ["Example Widgets Ltd", "EXW"], "parts": [] }]
   },
-  "patterns": { "ip": true, "email": true, "host": true, "guid": true, "mac": false },
+  "patterns": { "ip": true, "email": true, "host": true, "guid": true, "mac": false, "phone": true },
   "questions": [
     { "id": "q1", "text": "Values under ref_code look like internal project IDs. Hide them?", "options": ["blind", "keep"], "answer": null,
       "about": { "file": "tickets.json", "jsonPath": "$.items[*].ref_code" } }
@@ -96,6 +96,7 @@ the `[patterns]` table of `blind.toml` wins over the spec's value at apply and a
 | `host` | boolean | Host names, e.g. `db01.example.com`. |
 | `guid` | boolean | GUIDs, e.g. `123e4567-e89b-12d3-a456-426614174000`. |
 | `mac` | boolean | MAC addresses, e.g. `00:00:5e:00:53:01`. |
+| `phone` | boolean, optional | Phone numbers written with separators: North American (`(801) 555-0100`, `801-555-0100`, `801.555.0100`, `801 555 0100`, with an optional `+1` or `1`) and international with a leading `+` (`+44 20 7946 0958`). Replaced as an `Id_` pseudonym, and every way of writing one number (and the same number in a table column) shares one pseudonym. A run of bare digits, a date, an amount or an id that merely contains digits is not a phone. A spec without this field has it on. `blind plan` turns it on when the policy calls `id` sensitive, which the default policy does. |
 
 ### `questions`
 
@@ -187,7 +188,7 @@ same blinded output tree. No model is called.
 |---|---|
 | `--accept c1` | an entity of the suggested class, `{ "canonical": <value>, "aliases": [], "parts": [], "source": "human" }` |
 | `--accept c1=<class>` | the same, of `person`, `org`, `host`, `email`, `id` or `location` |
-| `--accept c1=pattern` | the shape pattern the whole value matches (`email`, `ip`, `mac`, `guid`, `host`) is turned on |
+| `--accept c1=pattern` | the shape pattern the whole value matches (`email`, `ip`, `mac`, `guid`, `phone`, `host`) is turned on |
 | `--reject c1` | a `vocabulary` entity with `source: "human"`, so the mechanical and semantic layers do not raise it again |
 | neither | nothing; the next audit raises it again |
 

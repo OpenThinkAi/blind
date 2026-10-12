@@ -4,14 +4,14 @@
 // element, never the value. Shared by the XLSX and DOCX handlers.
 
 import { localName, type RewriteRules, rewriteOoxml } from "../formats/ooxml.ts";
-import type { PatternName } from "../schema.ts";
+import type { PatternName, Patterns } from "../schema.ts";
 import { findPatternSpans, type Span } from "./text.ts";
 
 /**
  * Every pattern shape, enabled in the spec or not: the audit flags ip, guid and mac whatever the
  * spec says, and email and host when enabled, and a part nothing rewrites cannot honour a switch.
  */
-export const ALL_PATTERNS: Record<PatternName, boolean> = { email: true, ip: true, mac: true, guid: true, host: true };
+export const ALL_PATTERNS: Patterns = { email: true, ip: true, mac: true, guid: true, host: true, phone: true };
 
 /**
  * Spans in text that nothing rewrites: spec entities, recurring values and speakers (`entities`),

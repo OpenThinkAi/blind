@@ -34,7 +34,8 @@
         "email": { "type": "boolean" },
         "host": { "type": "boolean" },
         "guid": { "type": "boolean" },
-        "mac": { "type": "boolean" }
+        "mac": { "type": "boolean" },
+        "phone": { "type": "boolean" }
       }
     },
     "questions": {

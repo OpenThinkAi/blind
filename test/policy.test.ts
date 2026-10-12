@@ -120,12 +120,19 @@ describe("[patterns]", () => {
     expect(text).toMatch(/^\[patterns\]$/m);
     expect(text).toMatch(/^ip = true /m);
     expect(text).toMatch(/^host = true /m);
-    for (const name of ["email", "guid", "mac"]) expect(text).toMatch(new RegExp(`^# ${name} = true `, "m"));
+    for (const name of ["email", "guid", "mac", "phone"]) expect(text).toMatch(new RegExp(`^# ${name} = true `, "m"));
   });
 
   test("each pattern can be set on or off; an unset one is left out", () => {
     const text = valid().replace(/^# email = true .*$/m, "email = false").replace(/^ip = true .*$/m, "ip = false").replace(/^# mac = true .*$/m, "mac = true");
     expect(parsePolicy(text).patterns).toEqual({ ip: false, host: true, email: false, mac: true });
+  });
+
+  test("phone can be switched in blind.toml and wins over the spec", () => {
+    const text = valid().replace(/^# phone = true .*$/m, "phone = false");
+    expect(parsePolicy(text).patterns).toEqual({ ip: true, host: true, phone: false });
+    expect(withPolicyPatterns(spec(), { phone: true }).patterns.phone).toBe(true);
+    expect(withPolicyPatterns({ ...spec(), patterns: { ...spec().patterns, phone: true } }, { phone: false }).patterns.phone).toBe(false);
   });
 
   test("the table is optional: a blind.toml without it leaves every pattern to the spec", () => {
@@ -137,7 +144,7 @@ describe("[patterns]", () => {
   test("a non-boolean or unknown key is rejected, naming it", () => {
     expect(errorOf(valid().replace(/^ip = true .*$/m, 'ip = "yes"'))).toBe("blind.toml: patterns.ip must be true or false (got string)");
     expect(errorOf(valid().replace(/^ip = true .*$/m, "ipv4 = true"))).toBe(
-      "blind.toml: unknown key patterns.ipv4 (expected one of: ip, email, host, guid, mac)",
+      "blind.toml: unknown key patterns.ipv4 (expected one of: ip, email, host, guid, mac, phone)",
     );
     expect(errorOf(`patterns = 1\n${valid().replace(/\[patterns\][\s\S]*$/, "")}`)).toBe("blind.toml: patterns must be a table (got 1)");
   });

@@ -16,7 +16,7 @@
 
 import type { PseudoClass } from "./canonical.ts";
 import type { Pseudonymizer } from "./pseudonym.ts";
-import type { PatternName } from "../schema.ts";
+import type { PatternName, Patterns } from "../schema.ts";
 import { type EntityMatcher, findSpans, type Span } from "./text.ts";
 
 export type NameSlot = "file" | "folder" | "sheet" | "definedName";
@@ -78,7 +78,7 @@ export class NameRewriter {
    */
   constructor(
     private readonly matcher: EntityMatcher,
-    private readonly patterns: Record<PatternName, boolean>,
+    private readonly patterns: Patterns,
     private readonly keep: readonly string[] = [],
   ) {}
 

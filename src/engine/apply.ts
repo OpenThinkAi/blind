@@ -62,7 +62,7 @@ import { detectHeaderRow } from "../profile/table.ts";
 import { assertRowWidths, type Cell, CsvError, parseCsv, renderCell, type Row, serializeCsv, sniffDelimiter } from "./csv.ts";
 import { decode, type Encoding, EncodingError, encode } from "./encoding.ts";
 import { isJsonNumber, type JsonFormat, JsonError, type JsonToken, jsonCuts, quote, scanJson, scanJsonl, stringOffsets } from "./json.ts";
-import type { BlindMap } from "./map.ts";
+import { type BlindMap, foldText, withoutValues } from "./map.ts";
 import { type EntityEntry, Pseudonymizer } from "./pseudonym.ts";
 import { type ColumnDefault, type ColumnOutcome, decide, holdsWhole, isFallback, removedForms } from "./columns.ts";
 import { type ContextOptions, type ContextTriggerSpec, pairCells } from "./context.ts";
@@ -74,7 +74,7 @@ import { proseNamesWithTitles } from "./prose.ts";
 import { isHonorificOrRole } from "./honorifics.ts";
 import { isLabelCell, isLabelColumn } from "./labels.ts";
 import { personAliases } from "./identity.ts";
-import { commonNamePartCount, keepForms, keptWords, nameParts, personPartForms, personValues, proseForms, recurrenceForms, TextScanner, vocabularyForms } from "./recur.ts";
+import { commonNamePartCount, keepForms, keptWords, nameParts, personPartForms, personValues, proseForms, recurrenceExclusion, recurrenceForms, TextScanner, vocabularyForms } from "./recur.ts";
 import { EntityMatcher, type ExtraForm, keepDomains, type Span } from "./text.ts";
 import { entrySpans, keptSpeakers, planTranscript, shapeParagraphs, speakerForms, speakersOf, type TranscriptPlan, transcriptSpans } from "./transcript.ts";
 import { unrewrittenSpans } from "./unrewritten.ts";
@@ -219,6 +219,8 @@ export interface ApplyResult {
   /** Files not written, and why. Never silently dropped. */
   skipped: SkippedFile[];
   map: BlindMap;
+  /** Entries of the earlier map dropped because they hold a value of a `drop`/`redact`/secret column (AGT-1847). */
+  mapEntriesDropped: number;
   /**
    * The pseudonyms given to name parts that two or more people share (a surname of two people
    * blinded in a column): each got its own pseudonym, never either person's. Sorted.
@@ -730,12 +732,32 @@ function heldValues(plans: readonly Plan[]): Set<string> {
 }
 
 /**
+ * Whether a cell's text holds a value of a `drop`/`redact`/secret column (or a part of a name from one)
+ * inside a longer text. The fail-closed fallback must not pseudonymise such a cell whole: the map would
+ * record the text, secret included (AGT-1847). It is scanned instead, so the value is redacted in place.
+ */
+function hidesRemoved(plans: readonly Plan[]): (text: string) => boolean {
+  const removed = plans.flatMap((p) => (p.kind === "text" || p.kind === "docx" ? [] : p.kind === "xlsx" ? p.plan.removed : p.removed));
+  const needles = new Set<string>();
+  for (const f of removed) if (recurrenceExclusion(f.value.trim(), new Set()) === null) needles.add(foldText(f.value));
+  const names = [...new Set(removed.filter((f) => f.named === true).map((f) => f.value))];
+  for (const part of nameParts(names, [], new Set(), new Set())) if (part.exclusion === null) needles.add(foldText(part.form));
+  const list = [...needles];
+  return (text) => {
+    const t = foldText(text);
+    return list.some((n) => t.includes(n));
+  };
+}
+
+/**
  * Settle every cell the fail-closed fallback pseudonymised whole: one whose value is held whole in a
  * `keep` or `scan` cell somewhere (heldValues) is left as text instead, scanned like free text, and
  * counted in its column's `heldWhole`; it no longer recurs. Every plan's own decisions stand.
  */
 function settleFallback(plans: readonly Plan[]): void {
-  const held = heldValues(plans);
+  const heldSet = heldValues(plans);
+  const hides = hidesRemoved(plans);
+  const held = { has: (t: string): boolean => heldSet.has(t) || hides(t) };
   const release = <K>(fallback: readonly Fallback<K>[], edits: Map<K, CellEdit>, pending: Pending<K>[], mapped: ExtraForm[]): void => {
     const freed = new Set<ExtraForm>();
     for (const f of fallback) {
@@ -895,43 +917,52 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   // The values the column pass pseudonymised (an earlier map's are added by recurrenceForms), and
   // the people among them and in the map, whose name parts are matched alone too.
   const columnMapped = [...plans.flatMap((p) => (p.kind === "text" || p.kind === "docx" ? [] : p.kind === "xlsx" ? p.plan.mapped : p.mapped)), ...metadata];
-  // Values of dropped and redacted columns recur just as a pseudonymised column's do (AGT-1835).
-  // Their spans are reported apart, unless the same value is also pseudonymised in some column.
-  const removedValues = plans.flatMap((p) => (p.kind === "text" || p.kind === "docx" ? [] : p.kind === "xlsx" ? p.plan.removed : p.removed));
-  const formKey = (f: ExtraForm): string => `${f.cls}\0${f.value}`;
-  const mappedKeys = new Set(columnMapped.map(formKey));
-  const removedKeys = new Set(removedValues.map(formKey).filter((k) => !mappedKeys.has(k)));
+  // Values of dropped and redacted columns recur just as a pseudonymised column's do (AGT-1835), but
+  // are written as the redaction placeholder: never a pseudonym, never in the map (AGT-1847). The
+  // exception is a value some column also pseudonymises: that pseudonym wins, and only that path
+  // records it.
+  const vocabularySet = vocabularyForms(spec.entities);
+  const keepSet = keepForms(opts.keep);
+  const textKey = (v: string): string => canonicalize("value", v);
+  const mappedTexts = new Set(columnMapped.map((f) => textKey(f.value)));
+  const removedAll = plans.flatMap((p) => (p.kind === "text" || p.kind === "docx" ? [] : p.kind === "xlsx" ? p.plan.removed : p.removed));
+  const removedValues = removedAll.filter((f) => !mappedTexts.has(textKey(f.value)));
+  // A removed column of people's names: its name parts are redacted where they recur too.
+  const removedNames = [...new Set(removedValues.filter((f) => f.named === true).map((f) => f.value))].sort(cmp);
   // The words of values in keep columns: a column person's name part that is one of them is not
   // matched alone, so it never rewrites a kept cell (AGT-1852). The whole value still recurs.
   const read = proseInputs(plans);
-  const shield = keptWords(read.kept, personValues([...columnMapped, ...removedValues], opts.map));
-  // A name part is the person's, or its own when another person shares it, so it is traced by its form.
-  const partKeys = (values: ExtraForm[]): Set<string> =>
-    new Set(personPartForms(values, undefined, vocabularyForms(spec.entities), { keep: opts.keep, keptWords: shield }).map((f) => `${f.cls}\0${f.form}`));
-  const columnParts = partKeys(columnMapped);
-  const removedParts = new Set([...partKeys(removedValues.filter((f) => removedKeys.has(formKey(f))))].filter((k) => !columnParts.has(k)));
-  const asRemoved = (f: ExtraForm): ExtraForm =>
-    f.source === undefined && (removedKeys.has(formKey(f)) || ((f.cls === "person" || f.cls === "value") && removedParts.has(`${f.cls}\0${f.form}`))) ? { ...f, source: "removed" } : f;
+  const shield = keptWords(read.kept, [...personValues(columnMapped, opts.map), ...removedNames]);
+  const removedParts = (): ExtraForm[] =>
+    nameParts(removedNames, [], vocabularySet, new Set([...keepSet, ...shield]))
+      .filter((p) => p.exclusion === null)
+      .map((p) => ({ cls: "redact" as const, value: p.form, form: p.form, source: "removed" as const }));
+  // An earlier map's entries for such values go on the next write (the count is reported, never the values).
+  const redactedParts = removedParts();
+  const pruned = opts.map === undefined ? undefined : withoutValues(opts.map, [...removedValues.map((f) => f.value), ...redactedParts.map((f) => f.value)]);
+  const priorMap = pruned?.map;
+  const mapDropped = pruned?.dropped ?? 0;
+  const asRemoved = (f: ExtraForm): ExtraForm => (f.cls === "redact" ? { ...f, source: "removed" } : f);
   const mapped = [...columnMapped, ...removedValues];
   columnValues.push(...removedValues);
   const voiceNames = speakers.filter((n) => !kept(n));
-  const vocabularySet = vocabularyForms(spec.entities);
-  const keepSet = keepForms(opts.keep);
-  const people = personValues(mapped, opts.map);
+  const people = personValues(mapped, priorMap);
+  // Redacted names are people too for who-is-who and for what prose is new, though they get no pseudonym.
+  const knownPeople = [...people, ...removedNames];
   // People named only in prose (AGT-1830), in the text the scanner reads, less anyone already known.
-  const known = new Set([...people, ...voiceNames].map((v) => canonicalize("person", v)));
+  const known = new Set([...knownPeople, ...voiceNames].map((v) => canonicalize("person", v)));
   const found = proseNamesWithTitles(read.free, { keep: keepSet, vocabulary: vocabularySet, kept: read.kept });
   // Who is who (AGT-1842): "J. Sample" and "Dr. Sample" resolve to one known person when nothing else
   // fits (identity.ts). A lone name found after a title is considered with its title, as written.
   const titledSingles = [...found.titles].flatMap(([name, titles]) => (/\s/.test(name) ? [] : titles.map((t) => `${t} ${name}`)));
   const titled = new Set<string>();
-  for (const v of [...people, ...voiceNames]) {
+  for (const v of [...knownPeople, ...voiceNames]) {
     const first = v.trim().split(/\s+/)[0] ?? "";
     if (isHonorificOrRole(first) && !canonicalize("person", v).startsWith(first.toLowerCase().replace(/\.$/, ""))) titled.add(canonicalize("person", v));
   }
   for (const name of found.titles.keys()) titled.add(canonicalize("person", name));
   const unknownProse = found.names.filter((v) => !known.has(canonicalize("person", v)));
-  const aliases = personAliases([...people, ...voiceNames, ...unknownProse, ...titledSingles], titled);
+  const aliases = personAliases([...knownPeople, ...voiceNames, ...unknownProse, ...titledSingles], titled);
   // A lone name seen only after titles that all resolve to one person is that person, not a second
   // person sharing the name, so it does not make that person's own name part ambiguous.
   const resolvedSingle = (name: string): boolean => {
@@ -939,14 +970,19 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     return !/\s/.test(name) && targets.size === 1 && !targets.has(undefined);
   };
   const prosePeople = unknownProse.filter((v) => !resolvedSingle(v));
-  const voices = speakerForms(voiceNames, spoken, vocabularySet, people, keepSet, aliases);
+  const voices = speakerForms(voiceNames, spoken, vocabularySet, knownPeople, keepSet, aliases);
   // They count as other people for the known people's name parts, so a surname both share is ambiguous.
   const others = [...voiceNames, ...prosePeople];
   const recurOpts = { keep: opts.keep, speakers: others, aliases, keptWords: shield };
-  const parts = personPartForms(mapped, opts.map, vocabularySet, recurOpts).map(asRemoved);
-  const forms = recurrenceForms(mapped, spec.entities, opts.map, recurOpts).map(asRemoved);
+  const pseudoParts = personPartForms(mapped, priorMap, vocabularySet, recurOpts);
+  const pseudoForms = recurrenceForms(mapped, spec.entities, priorMap, recurOpts).map(asRemoved);
+  // A removed form whose text a pseudonymised form also matches is that pseudonym's, never the placeholder.
+  const pseudoTexts = new Set([...pseudoForms, ...pseudoParts, ...voices].filter((f) => f.cls !== "redact").map((f) => textKey(f.form ?? f.value)));
+  const redactable = (f: ExtraForm): boolean => f.cls !== "redact" || !pseudoTexts.has(textKey(f.form ?? f.value));
+  const parts = [...pseudoParts, ...redactedParts].filter(redactable);
+  const forms = [...pseudoForms, ...redactedParts].filter(redactable);
   // Name parts that are common words (dictionary, label, role, keep or kept-value words): reported, never matched alone.
-  const commonNameParts = commonNamePartCount(mapped, opts.map, vocabularySet, recurOpts);
+  const commonNameParts = commonNamePartCount(mapped, priorMap, vocabularySet, recurOpts);
   // A form already matched for a known value or a speaker keeps that value's pseudonym.
   const claimed = new Set([...forms, ...voices, ...parts].map((f) => `${f.cls}\0${f.form ?? f.value}`));
   // A titled lone name ("Dr. Sample") that resolves to one person is matched with its title, which stays
@@ -955,11 +991,12 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   const identity = (v: string): string => aliases.get(canonicalize("person", v))?.key ?? canonicalize("person", v);
   const sourceByPerson = new Map<string, ExtraForm["source"]>();
   for (const f of [...forms, ...parts, ...voices]) if (f.cls === "person" && !sourceByPerson.has(identity(f.value))) sourceByPerson.set(identity(f.value), f.source);
+  for (const name of removedNames) if (!sourceByPerson.has(identity(name))) sourceByPerson.set(identity(name), "removed");
   const sourceOf = (key: string): ExtraForm["source"] => sourceByPerson.get(key) ?? "map";
   const titledForms: ExtraForm[] = titledSingles.map((form) => {
     const name = form.slice(form.lastIndexOf(" ") + 1);
     const alias = aliases.get(canonicalize("person", form));
-    return alias !== undefined ? { cls: "person", value: form, form, source: sourceOf(alias.key), lead: 1 } : { cls: "person", value: name, form, source: "prose", lead: 1 };
+    return alias !== undefined ? { cls: sourceOf(alias.key) === "removed" ? "redact" : "person", value: form, form, source: sourceOf(alias.key), lead: 1 } : { cls: "person", value: name, form, source: "prose", lead: 1 };
   });
   const prose = [...proseForms(prosePeople, [...people, ...voiceNames], vocabularySet, keepSet, aliases), ...titledForms].filter(
     (f) => !claimed.has(`${f.cls}\0${f.form ?? f.value}`),
@@ -1046,7 +1083,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   for (const [cls, list] of Object.entries(spec.entities)) {
     if (cls !== "vocabulary" && list !== undefined) entities[cls as PseudoClass] = list;
   }
-  const pz = new Pseudonymizer({ salt: opts.salt, map: opts.map, entities, avoid, personAliases: aliases });
+  const pz = new Pseudonymizer({ salt: opts.salt, map: priorMap, entities, avoid, personAliases: aliases });
   const officeIds = new OfficeIds(opts.salt);
 
   // Pass 1 ends here: derive every pseudonym in sorted order.
@@ -1284,5 +1321,5 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     .filter((p) => p.shared && p.exclusion === null && requests.has(`person\0${p.value}`))
     .map((p) => pz.pseudonym("person", p.value))
     .sort(cmp);
-  return { outputs, files, skipped, map: pz.toMap(), sharedNameParts: [...new Set(sharedNameParts)], commonNameParts };
+  return { outputs, files, skipped, map: pz.toMap(), mapEntriesDropped: mapDropped, sharedNameParts: [...new Set(sharedNameParts)], commonNameParts };
 }

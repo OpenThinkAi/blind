@@ -196,7 +196,7 @@ export function renderReport(result: ApplyResult): string {
       lines.push(`  ${f.mappedReplacements} value${f.mappedReplacements === 1 ? "" : "s"} blinded in a column or in Office metadata replaced again where ${f.mappedReplacements === 1 ? "it recurs" : "they recur"} outside it`);
     }
     if ((f.removedReplacements ?? 0) > 0) {
-      lines.push(`  ${f.removedReplacements} value${f.removedReplacements === 1 ? "" : "s"} from dropped/redacted columns replaced where ${f.removedReplacements === 1 ? "it recurs" : "they recur"}`);
+      lines.push(`  ${f.removedReplacements} value${f.removedReplacements === 1 ? "" : "s"} from dropped/redacted columns replaced where ${f.removedReplacements === 1 ? "it recurs" : "they recur"}, written as the redaction placeholder`);
     }
     if ((f.metadataReplacements ?? 0) > 0) {
       lines.push(`  metadata: ${f.metadataReplacements} author, creator, company or account-name value${f.metadataReplacements === 1 ? "" : "s"} replaced`);
@@ -326,6 +326,9 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
       writeMap(mapPath, result.map);
     } catch (e) {
       throw new Refusal(`cannot write the map to ${mapPath}: ${(e as NodeJS.ErrnoException).code ?? "error"}`);
+    }
+    if (result.mapEntriesDropped > 0) {
+      io.err.write(`blind apply: warning: dropped ${result.mapEntriesDropped} map entr${result.mapEntriesDropped === 1 ? "y" : "ies"} that held values of dropped, redacted or secret columns; those values are written as the redaction placeholder now\n`);
     }
     try {
       for (const o of result.outputs) {

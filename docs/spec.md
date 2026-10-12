@@ -289,6 +289,8 @@ columns classed `vocabulary`, and the host labels and email local parts of a bli
 `blind audit` still reports any of these that survive, and spellings the case rules leave, so add
 them to the spec as entities if they must go.
 
+**Values of `drop` and `redact` columns** (and a `blind` column of class `secret`, which redacts) recur too, but as `REDACTED`, never as a pseudonym: they are not recorded in `map.json` (nor any name part or canonical form of them), so `blind reveal` has nothing to restore. If some other column pseudonymises the same value, that pseudonym wins. A fail-closed (unruled) cell that holds one inside a longer text is scanned as text, not pseudonymised whole, so the map never holds the text. An earlier `map.json` that holds such entries loses them on the next `blind apply`, which warns with the count (never the values).
+
 **Name parts.** Each person a column rule pseudonymised (or Office metadata names, or an earlier map holds) also has each part
 of their name replaced on its own, with that person's pseudonym: `Quill approved it; Avery agreed`
 after `Avery Quill` was blinded in an Owner column. A part is each word of the name as written and of

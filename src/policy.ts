@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { PatternName, Spec } from "./schema.ts";
 
 /** The policy file `blind init` writes and every later command reads. */
 export const POLICY_FILE = "blind.toml";
@@ -24,6 +25,22 @@ export interface ModelConfig {
   key_env: string;
 }
 
+/**
+ * The free-text shape patterns `[patterns]` can switch, each with the comment `blind init` writes.
+ * A Record so a new PatternName cannot be added without deciding how blind.toml shows it.
+ */
+const PATTERN_HELP: Record<PatternName, string> = {
+  ip: "IPv4 and IPv6 addresses",
+  email: "email addresses",
+  host: "host names",
+  guid: "GUIDs",
+  mac: "MAC addresses",
+};
+export const POLICY_PATTERNS = Object.keys(PATTERN_HELP) as PatternName[];
+
+/** Only the patterns blind.toml sets; an unset one follows the spec. */
+export type PolicyPatterns = Partial<Record<PatternName, boolean>>;
+
 export interface Policy {
   sensitive: { classes: SensitiveClass[]; description: string; examples: string[] };
   keep: { terms: string[] };
@@ -39,6 +56,15 @@ export interface Policy {
    */
   profile: { samples: number; samplesExplicit: boolean };
   privacy: { mode: PrivacyMode };
+  /** `[patterns]`: switches that win over the spec's `patterns` at apply and audit time. */
+  patterns: PolicyPatterns;
+}
+
+/** The spec with blind.toml's `[patterns]` switches laid over its own: the patterns apply and audit use. */
+export function withPolicyPatterns(spec: Spec, patterns: PolicyPatterns): Spec {
+  const set = POLICY_PATTERNS.filter((name) => patterns[name] !== undefined && patterns[name] !== spec.patterns[name]);
+  if (set.length === 0) return spec;
+  return { ...spec, patterns: { ...spec.patterns, ...Object.fromEntries(set.map((name) => [name, patterns[name]])) } };
 }
 
 /**
@@ -65,6 +91,8 @@ export function defaultPolicy(): Policy {
     models: { analyst: local(), auditor: local(), auditorExplicit: true },
     profile: { samples: defaultSamples("local-only"), samplesExplicit: false },
     privacy: { mode: "local-only" },
+    // IPs and host names are found in free text even when "host" is not a listed class.
+    patterns: { ip: true, host: true },
   };
 }
 
@@ -124,6 +152,13 @@ export function renderPolicy(p: Policy): string {
     "# none: no model is called.",
     `mode = ${str(p.privacy.mode)}`,
     "",
+    "[patterns]",
+    "# Free-text shape finders. true or false here wins over the spec's patterns; unset, the spec decides.",
+    ...POLICY_PATTERNS.map((name) => {
+      const v = p.patterns[name];
+      return v === undefined ? `# ${name} = true   # ${PATTERN_HELP[name]}` : `${name} = ${v}   # ${PATTERN_HELP[name]}`;
+    }),
+    "",
   ].join("\n");
 }
 
@@ -178,6 +213,12 @@ class Reader {
     return v;
   }
 
+  boolean(t: Table, key: string, path: string): boolean {
+    const v = t[key];
+    if (typeof v !== "boolean") this.fail(path, "true or false", v);
+    return v;
+  }
+
   strings(t: Table, key: string, path: string): string[] {
     const v = t[key];
     if (!Array.isArray(v) || !v.every((x) => typeof x === "string")) this.fail(path, "an array of strings", v);
@@ -225,7 +266,7 @@ export function parsePolicy(text: string, source = POLICY_FILE): Policy {
   }
   if (!isTable(doc)) throw new PolicyError(`${source}: not a TOML table`);
   const r = new Reader(source);
-  r.noExtra(doc, "", ["sensitive", "keep", "models", "profile", "privacy"]);
+  r.noExtra(doc, "", ["sensitive", "keep", "models", "profile", "privacy", "patterns"]);
 
   const sensitive = r.table(doc, "sensitive", "sensitive", ["classes", "description", "examples"]);
   const classes = r.strings(sensitive, "classes", "sensitive.classes");
@@ -243,6 +284,7 @@ export function parsePolicy(text: string, source = POLICY_FILE): Policy {
   const privacy = r.table(doc, "privacy", "privacy", ["mode"]);
   const mode = r.oneOf(privacy, "mode", "privacy.mode", PRIVACY_MODES);
   const samples = samplesExplicit ? r.count(profile, "samples", "profile.samples") : defaultSamples(mode);
+  const patterns = readPatterns(r, doc);
 
   return {
     sensitive: {
@@ -254,7 +296,17 @@ export function parsePolicy(text: string, source = POLICY_FILE): Policy {
     models: readModels(r, models),
     profile: { samples, samplesExplicit },
     privacy: { mode },
+    patterns,
   };
+}
+
+/** `[patterns]` is optional, and so is each key in it; a key that is present must be a boolean. */
+function readPatterns(r: Reader, doc: Table): PolicyPatterns {
+  if (doc.patterns === undefined) return {};
+  const t = r.table(doc, "patterns", "patterns", POLICY_PATTERNS);
+  const out: PolicyPatterns = {};
+  for (const name of POLICY_PATTERNS) if (t[name] !== undefined) out[name] = r.boolean(t, name, `patterns.${name}`);
+  return out;
 }
 
 /** Load `blind.toml` from `dir`. A missing file is a one-line PolicyError telling the user to run `blind init`. */
@@ -272,10 +324,15 @@ export function loadPolicy(dir = "."): Policy {
   return parsePolicy(text, path);
 }
 
+/** `dir`'s blind.toml, or null when there is none. A blind.toml that does not parse is a PolicyError. */
+export function loadPolicyIfAny(dir = "."): Policy | null {
+  return existsSync(join(dir, POLICY_FILE)) ? loadPolicy(dir) : null;
+}
+
 /**
  * The keep-list terms of `dir`'s blind.toml, for apply and audit. Without a blind.toml nothing is
  * kept, the more private reading; a blind.toml that does not parse is a PolicyError.
  */
 export function loadKeepTerms(dir = "."): string[] {
-  return existsSync(join(dir, POLICY_FILE)) ? loadPolicy(dir).keep.terms : [];
+  return loadPolicyIfAny(dir)?.keep.terms ?? [];
 }

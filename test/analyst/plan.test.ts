@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
-import { type PlanIO, runPlan } from "../../src/analyst/plan.ts";
+import { type PlanIO, renderSpec, runPlan } from "../../src/analyst/plan.ts";
 import type { AskOptions } from "../../src/model.ts";
 import { defaultPolicy, defaultSamples, type Policy, renderPolicy } from "../../src/policy.ts";
 import type { Profile, Spec } from "../../src/schema.ts";
@@ -698,4 +698,13 @@ describe("blind plan --no-model", () => {
     expect(r.out).toContain('privacy.mode is "none", so no model was called');
     expect(rule(savedSpec(), "contact_addr")).toMatchObject({ source: "heuristic" });
   });
+});
+
+test("the review shows blind.toml [patterns] switches over the spec's, naming both", () => {
+  const spec: Spec = { version: 1, columns: [], entities: {}, patterns: { ip: false, email: true, host: false, guid: true, mac: false }, questions: [] };
+  const line = (text: string) => text.split("\n").find((l) => l.startsWith("patterns:"));
+  expect(line(renderSpec(spec))).toBe("patterns: ip off, email on, host off, guid on, mac off");
+  expect(line(renderSpec(spec, { ip: true, host: false, email: false }))).toBe(
+    "patterns: ip on (blind.toml; spec: off), email off (blind.toml; spec: on), host off, guid on, mac off",
+  );
 });

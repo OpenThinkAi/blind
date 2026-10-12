@@ -21,6 +21,7 @@ import { MAP_FILE, runApply, SPEC_FILE } from "./apply.ts";
 import { EXIT_NOT_RUN, renderTable, runAudit } from "./audit/command.ts";
 import type { AuditReport } from "./audit/mechanical.ts";
 import { BLIND_DIR } from "./init.ts";
+import { loadPolicy } from "./policy.ts";
 import { parseSpec } from "./validate.ts";
 import { terminalStream } from "./terminal.ts";
 
@@ -134,7 +135,7 @@ async function chain(argv: string[], io: RunIO): Promise<number> {
   for (const n of report.notes) io.out.write(`note: ${n}\n`);
 
   if (needsReview(report)) {
-    io.out.write(renderSpec(spec));
+    io.out.write(renderSpec(spec, loadPolicy(io.cwd).patterns));
     if (report.reused || report.dropped.length > 0) io.out.write(`\n${renderDiff(report)}`);
     if (!values.yes) {
       io.out.write(

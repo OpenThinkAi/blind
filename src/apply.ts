@@ -11,7 +11,7 @@ import { type BlindMap, MapError, readMap, writeMap } from "./engine/map.ts";
 import { NameError } from "./engine/names.ts";
 import { MIN_SALT_BYTES, PseudonymError } from "./engine/pseudonym.ts";
 import { BLIND_DIR, SALT_FILE } from "./init.ts";
-import { loadKeepTerms, POLICY_FILE, PolicyError } from "./policy.ts";
+import { loadPolicyIfAny, POLICY_FILE, PolicyError, withPolicyPatterns } from "./policy.ts";
 import type { Spec } from "./schema.ts";
 import { parseSpec, SchemaError } from "./validate.ts";
 import { oneLine, terminalStream } from "./terminal.ts";
@@ -38,7 +38,8 @@ const APPLY_HELP = [
   "DOCX and VTT/SRT transcripts; other files are reported and not written. A text file or DOCX",
   "that reads as a transcript (timestamp, speaker, text) is one: its speaker tags are always",
   "replaced and its timing lines kept. File and folder names are blinded too; the report lists",
-  "each renamed file. Host names under a domain in the blind.toml keep list are kept.",
+  "each renamed file. Host names under a domain in the blind.toml keep list are kept, and its",
+  "[patterns] switches win over the spec's patterns.",
   "",
   "Options:",
   "  -o, --out <dir>       Output directory (must not overlap an input)",
@@ -232,9 +233,11 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
   }
 
   try {
-    const spec = loadSpec(io.cwd);
-    // The keep list's domains keep vendor host names as written. Without a policy nothing is kept.
-    const keep = loadKeepTerms(io.cwd);
+    // blind.toml's [patterns] switches win over the spec's. The keep list's domains keep vendor host
+    // names as written. Without a policy nothing is kept and the spec's patterns stand.
+    const policy = loadPolicyIfAny(io.cwd);
+    const spec = withPolicyPatterns(loadSpec(io.cwd), policy?.patterns ?? {});
+    const keep = policy?.keep.terms ?? [];
     const salt = readSecret(join(io.cwd, BLIND_DIR, SALT_FILE), "salt", "run `blind init` first");
     if (salt.length < MIN_SALT_BYTES) throw new Refusal(`${join(io.cwd, BLIND_DIR, SALT_FILE)} is too short; re-run \`blind init --force\``);
 

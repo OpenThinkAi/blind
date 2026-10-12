@@ -44,10 +44,14 @@ samples = 5
 
 [privacy]
 mode = "local-only"
+
+[patterns]
+ip = true
+host = true
 ```
 
 `[sensitive]`, `[keep]`, `[models.analyst]`, `[profile]` and `[privacy]` must be present.
-`[models.auditor]` and `profile.samples` are optional.
+`[models.auditor]`, `profile.samples` and `[patterns]` are optional.
 
 ## `[sensitive]`
 
@@ -64,7 +68,8 @@ question that names a class (`blind plan --answer q1=org`) blinds the column onl
 listed here, otherwise it keeps it; and the built-in detectors (`blind plan --no-model`) blind a
 column they recognise, and turn a pattern on, only when its class is listed (`host` covers IP
 addresses, host names and MAC addresses, `email` emails, `id` GUIDs and numeric IDs). It does not
-turn off a rule you wrote in the spec.
+turn off a rule you wrote in the spec. To switch a pattern regardless of the classes or the spec,
+use [`[patterns]`](#patterns).
 
 `description` and `examples` guide the model analyst. The `--no-model` planner does not read them.
 
@@ -85,8 +90,8 @@ What a keep term does:
 - **IP addresses.** A term may be an exact IP address or a CIDR range (`198.51.100.7`,
   `10.2.0.0/16`). The audit does not report an address equal to or inside one. Every other IP
   address in the output is a candidate unless the map says the engine issued it as a pseudonym,
-  whatever the spec's `patterns` say. Only the audit reads these terms; the engine matches IPs by
-  the spec's `ip` pattern.
+  whatever the `ip` pattern says. Only the audit reads these terms; the engine matches IPs by
+  the `ip` pattern (the spec's, or [`[patterns]`](#patterns) here).
 - **Audit.** The audit does not report a keep term, a Title-Case phrase made of keep terms, or a
   host under a kept domain, and the model auditor is told to leave them.
 - **Models.** The analyst and auditor are sent the list so they do not propose or report them.
@@ -167,6 +172,31 @@ pieces of at most 120 characters. The things you write cannot be cut for you: a 
 
 Each call prints a line to stderr first: `role · backend · model · mode · [samples k ·] N bytes
 sent`. `--quiet` hides it, except under `profile-only`.
+
+## `[patterns]`
+
+Switches for the free-text shape finders, read by `blind apply` and `blind audit`. A key set here
+wins over the spec's `patterns` in both directions, every run, without editing
+`.blind/spec.json`; a key left unset follows the spec. The table and every key in it are optional.
+
+| Key | Type | Finds |
+|---|---|---|
+| `ip` | `true` or `false` | IPv4 and IPv6 addresses |
+| `email` | `true` or `false` | email addresses |
+| `host` | `true` or `false` | host names |
+| `guid` | `true` or `false` | GUIDs |
+| `mac` | `true` or `false` | MAC addresses |
+
+`blind init` writes `ip = true` and `host = true`, so addresses and host names in free text are
+replaced even when `host` is not one of `[sensitive] classes`, and leaves the other three
+commented out (the spec decides). A `blind.toml` without the table behaves as before: the spec
+decides every pattern. `blind plan` and `blind run` show the patterns in force, marking one that
+blind.toml changed: `ip on (blind.toml; spec: off)`. The spec file itself is never changed. A
+pattern turned off finds nothing new, but a value an earlier run already replaced is still in the
+map and is replaced again wherever it recurs.
+
+Turning a pattern off here also turns it off for `blind plan --from-audit`: a candidate accepted
+as a pattern sets it in the spec, but a `false` here still wins.
 
 ## Choosing a setup
 

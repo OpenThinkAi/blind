@@ -14,6 +14,7 @@ import { generateKit, type Kit, type KitOptions, writeKit } from "../../src/benc
 import type { FileReport } from "../../src/engine/apply.ts";
 import type { Spec } from "../../src/schema.ts";
 import { makeZip } from "../audit/zipfixture.ts";
+import { defaultPolicy, renderPolicy } from "../../src/policy.ts";
 
 class Sink {
   text = "";
@@ -142,6 +143,21 @@ describe("blind bench on synthetic kit v1", () => {
     // Masked: the table never shows the value.
     expect(r.out).not.toContain("Iggy");
     expect(r.out).toContain("Ig***4");
+  });
+
+  test("blind.toml [patterns] turns the ip pattern on without a spec edit", async () => {
+    // The kit's spec has ip off. The sync log's RFC 5737 addresses are found only by the ip pattern.
+    const ipOff = (s: Spec) => void (s.patterns = { ...s.patterns, ip: false });
+    const template = renderPolicy(defaultPolicy());
+    const without = await bench({ edit: ipOff, prepare: (dir) => writeFileSync(join(dir, "blind.toml"), template.replace(/\[patterns\][\s\S]*$/, "")) });
+    expect(without.code).toBe(1);
+    const leaks = (without.report as BenchReport).leaks.items;
+    expect(leaks.length).toBeGreaterThan(0);
+    expect(new Set(leaks.map((l) => `${l.file} ${l.class}`))).toEqual(new Set(["sync.log host"]));
+
+    const withTable = await bench({ edit: ipOff, prepare: (dir) => writeFileSync(join(dir, "blind.toml"), template) });
+    expect(withTable.code).toBe(0);
+    expect((withTable.report as BenchReport).leaks.count).toBe(0);
   });
 
   test("no rule for the amount and date columns: they are measures, so nothing is damaged (AGT-1822)", async () => {

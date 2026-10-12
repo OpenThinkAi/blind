@@ -11,7 +11,7 @@ import { MAP_FILE, SPEC_FILE } from "../apply.ts";
 import { MapError, readMap } from "../engine/map.ts";
 import { BLIND_DIR } from "../init.ts";
 import { type AskOptions, ModelError, modelsEnabled } from "../model.ts";
-import { loadPolicy, PolicyError } from "../policy.ts";
+import { loadPolicy, PolicyError, type PolicyPatterns } from "../policy.ts";
 import { writeProfile } from "../profile/command.ts";
 import { buildProfile, forPrivacyMode, InputError } from "../profile/profile.ts";
 import type { ColumnRule, EntityClassName, Location, Spec } from "../schema.ts";
@@ -108,7 +108,7 @@ const where = (l: Location): string => `${q(l.file)}${l.sheet === undefined ? ""
 const CLASS_ORDER: EntityClassName[] = ["unknown", "person", "org", "host", "email", "id", "location", "vocabulary"];
 
 /** The spec as a review table: questions first, then columns grouped by class, entities, patterns. */
-export function renderSpec(spec: Spec): string {
+export function renderSpec(spec: Spec, policyPatterns: PolicyPatterns = {}): string {
   const out: string[] = [];
   const open = spec.questions.filter((x) => x.answer === null).length;
   out.push(spec.questions.length === 0 ? "questions: none" : `questions (${open} unanswered of ${spec.questions.length}):`);
@@ -141,7 +141,13 @@ export function renderSpec(spec: Spec): string {
     }
   }
   out.push("");
-  out.push(`patterns: ${Object.entries(spec.patterns).map(([name, on]) => `${name} ${on ? "on" : "off"}`).join(", ")}`);
+  // blind.toml's [patterns] wins at apply time, so the review shows what will be used.
+  const onOff = (on: boolean): string => (on ? "on" : "off");
+  const shown = Object.entries(spec.patterns).map(([name, on]) => {
+    const set = policyPatterns[name as keyof PolicyPatterns];
+    return set === undefined || set === on ? `${name} ${onOff(on)}` : `${name} ${onOff(set)} (blind.toml; spec: ${onOff(on)})`;
+  });
+  out.push(`patterns: ${shown.join(", ")}`);
   return `${out.join("\n")}\n`;
 }
 
@@ -239,7 +245,7 @@ function answer(raw: string[], io: PlanIO): number {
     spec = answerQuestion(spec, a.slice(0, eq), a.slice(eq + 1), policy);
   }
   const written = writeSpec(io.cwd, checked(spec));
-  io.out.write(renderSpec(spec));
+  io.out.write(renderSpec(spec, policy.patterns));
   io.out.write(`\nwrote ${written} (mode 0600). Nothing is changed until you run \`blind apply\`.\n`);
   return 0;
 }
@@ -355,7 +361,7 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
     if (values.json) {
       io.out.write(`${JSON.stringify({ spec: written, ...diff, notes: [...notes, ...remarks] }, null, 2)}\n`);
     } else {
-      io.out.write(renderSpec(spec));
+      io.out.write(renderSpec(spec, policy.patterns));
       if (diff.reused || diff.dropped.length > 0) io.out.write(`\n${renderDiff(diff)}`);
       for (const n of [...notes, ...remarks]) io.out.write(`note: ${n}\n`);
       io.out.write(`\nwrote ${written} (mode 0600). Nothing is changed until you run \`blind apply\`.\n`);

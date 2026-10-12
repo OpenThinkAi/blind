@@ -37,6 +37,8 @@ import { DICTIONARY } from "./words.ts";
 import { canonicalize, PSEUDO_CLASSES, type PseudoClass } from "./canonical.ts";
 import { isHonorificOrRole } from "./honorifics.ts";
 import { isDateWord } from "./datecontext.ts";
+import { identityOf, type PersonAliases } from "./identity.ts";
+import { looksLikePersonName } from "./prose.ts";
 import type { BlindMap } from "./map.ts";
 import type { ContextOptions } from "./context.ts";
 import { EntityMatcher, type ExtraForm, findPatternSpans, findSpans, type Span } from "./text.ts";
@@ -113,24 +115,28 @@ export interface NamePart {
  * people (or equal to someone's whole one-word name) is never given either person's pseudonym: its
  * value is the part itself, so it gets its own, as an ambiguous spec entity part does. Excluded
  * parts are returned too, with the reason, for callers that still need them. Sorted by form.
+ * `aliases` (identity.ts) tells people apart by who they are, not how they are written: "J. Quill"
+ * resolved to "Avery Quill" is not a second Quill.
  */
 export function nameParts(
   own: Iterable<string>,
   others: Iterable<string>,
   vocabulary: ReadonlySet<string>,
   keep: ReadonlySet<string>,
+  aliases?: PersonAliases,
 ): NamePart[] {
   const smallest = new Map<string, string>();
-  const canonicals = new Set<string>();
+  const canonicals = new Map<string, string>();
   const parts = new Map<string, { form: string; owners: Set<string>; own: boolean }>();
   const visit = (value: string, isOwn: boolean) => {
-    const c = canonicalize("person", value);
-    canonicals.add(c);
+    const written = canonicalize("person", value);
+    const c = identityOf(aliases, written);
+    canonicals.set(written, c);
     if (isOwn) {
       const prior = smallest.get(c);
       if (prior === undefined || value < prior) smallest.set(c, value);
     }
-    for (const w of personWords(value, c)) {
+    for (const w of personWords(value, written)) {
       const k = fold(w);
       const e = parts.get(k) ?? { form: w, owners: new Set<string>(), own: false };
       if (w < e.form) e.form = w;
@@ -144,7 +150,8 @@ export function nameParts(
   const out: NamePart[] = [];
   for (const [k, e] of parts) {
     if (!e.own) continue;
-    if (canonicals.has(k)) e.owners.add(k);
+    const whole = canonicals.get(k);
+    if (whole !== undefined) e.owners.add(whole);
     const shared = e.owners.size > 1;
     const value = shared ? e.form : (smallest.get([...e.owners][0] as string) as string);
     out.push({ form: e.form, value, shared, exclusion: partExclusion(e.form, vocabulary, keep) });
@@ -189,7 +196,7 @@ export function recurrenceForms(values: Iterable<ExtraForm>, entities: Entities,
   for (const v of list) add(v.cls, v.value, canonicalize(v.cls, v.value));
   for (const e of map?.entries ?? []) if (isPseudoClass(e.kind)) add(e.kind, e.value, e.canonical);
   // Name parts come after whole values: a part that is also a whole value keeps that value's form.
-  for (const p of personPartForms(list, map, vocabulary, opts)) if (!out.has(`person\0${p.form as string}`)) out.set(`person\0${p.form as string}`, p);
+  for (const p of personPartForms(list, map, vocabulary, opts)) if (!out.has(`${p.cls}\0${p.form as string}`)) out.set(`${p.cls}\0${p.form as string}`, p);
   return [...out.values()].sort((a, b) => cmp(a.cls, b.cls) || cmp(a.form as string, b.form as string) || cmp(a.value, b.value));
 }
 
@@ -198,6 +205,8 @@ export interface RecurrenceOptions {
   keep?: readonly string[];
   /** Transcript speakers: their parts are speakerForms', but a part a speaker shares with someone here is ambiguous. */
   speakers?: readonly string[];
+  /** Person forms that stand for another person (identity.ts). */
+  aliases?: PersonAliases;
 }
 
 /** Every spec vocabulary form, folded. */
@@ -208,22 +217,32 @@ export function vocabularyForms(entities: Entities): Set<string> {
 /** The keep list, folded, as nameParts compares it. */
 export const keepForms = (keep: readonly string[] = []): Set<string> => new Set(keep.map(fold));
 
-/** The person values of `values` and of the map's person entries. */
+/** A `value`-class value that reads as a person's full name (two or more words): it has name parts too (AGT-1842). */
+export const isNamedValue = (v: ExtraForm): boolean => v.cls === "value" && /\S\s+\S/.test(v.value.trim()) && looksLikePersonName(v.value);
+
+/** The person values of `values` (with the named `value`-class ones, isNamedValue) and of the map's person and named value entries. */
 export function personValues(values: Iterable<ExtraForm>, map?: BlindMap): string[] {
   const out = new Set<string>();
-  for (const v of values) if (v.cls === "person") out.add(v.value);
-  for (const e of map?.entries ?? []) if (e.kind === "person") out.add(e.value);
+  for (const v of values) if (v.cls === "person" || isNamedValue(v)) out.add(v.value);
+  for (const e of map?.entries ?? []) if (e.kind === "person" || (e.kind === "value" && isNamedValue({ cls: "value", value: e.value }))) out.add(e.value);
   return [...out].sort(cmp);
 }
 
 /**
- * Person forms for the name parts of the people in `values` (a column rule pseudonymised them) and
- * in the map, as nameParts gives them, leaving out the parts partExclusion excludes.
+ * Forms for the name parts of the people in `values` (a column rule pseudonymised them) and in the
+ * map, as nameParts gives them, leaving out the parts partExclusion excludes. A part whose person is
+ * known only as a named `value` cell keeps class `value`, so it carries that cell's `Value_`
+ * pseudonym rather than a new `Person_` one.
  */
 export function personPartForms(values: Iterable<ExtraForm>, map: BlindMap | undefined, vocabulary: ReadonlySet<string>, opts: RecurrenceOptions = {}): ExtraForm[] {
-  return nameParts(personValues(values, map), opts.speakers ?? [], vocabulary, keepForms(opts.keep))
+  const list = [...values];
+  const persons = new Set<string>();
+  for (const v of list) if (v.cls === "person") persons.add(identityOf(opts.aliases, canonicalize("person", v.value)));
+  for (const e of map?.entries ?? []) if (e.kind === "person") persons.add(identityOf(opts.aliases, canonicalize("person", e.value)));
+  const clsOf = (value: string): PseudoClass => (persons.has(identityOf(opts.aliases, canonicalize("person", value))) ? "person" : "value");
+  return nameParts(personValues(list, map), opts.speakers ?? [], vocabulary, keepForms(opts.keep), opts.aliases)
     .filter((p) => p.exclusion === null)
-    .map((p) => ({ cls: "person", value: p.value, form: p.form, ...(isDateWord(p.form) ? { datePart: true } : {}) }));
+    .map((p) => ({ cls: p.shared ? "person" : clsOf(p.value), value: p.value, form: p.form, ...(isDateWord(p.form) ? { datePart: true } : {}) }));
 }
 
 /**
@@ -232,10 +251,10 @@ export function personPartForms(values: Iterable<ExtraForm>, map: BlindMap | und
  * `others`, the people known from columns, speakers or the map, gets a pseudonym of its own). Every
  * form has source `prose`, so a cell under `keep` is never changed for one.
  */
-export function proseForms(names: readonly string[], others: Iterable<string>, vocabulary: ReadonlySet<string>, keep: ReadonlySet<string>): ExtraForm[] {
+export function proseForms(names: readonly string[], others: Iterable<string>, vocabulary: ReadonlySet<string>, keep: ReadonlySet<string>, aliases?: PersonAliases): ExtraForm[] {
   const out: ExtraForm[] = [];
   for (const v of names) if (recurrenceExclusion(v, vocabulary) === null) out.push({ cls: "person", value: v, form: v, source: "prose" });
-  for (const p of nameParts(names, others, vocabulary, keep)) {
+  for (const p of nameParts(names, others, vocabulary, keep, aliases)) {
     if (p.exclusion === null) out.push({ cls: "person", value: p.value, form: p.form, source: "prose", ...(isDateWord(p.form) ? { datePart: true } : {}) });
   }
   return out;

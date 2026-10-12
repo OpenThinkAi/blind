@@ -252,7 +252,10 @@ blinding a column. Rows above the header and the header row itself are treated a
 transcript speaker (`person`) and pseudonymised again in a `value` column keeps the speaker's
 `Person_` pseudonym rather than getting a `Value_` one too. A value is matched under the other
 class's canonical form (`Quill, Avery` finds the person `Avery Quill`), and an earlier map counts.
-The specific classes are issued before `value`, so their shape is the one kept. Phone-shaped values
+The specific classes are issued before `value`, so their shape is the one kept. A `person` and a
+`value` join only when the text is written like a full name (two or more words with letters and no
+digits): a pet called `Rex` in a `value` column and an owner or speaker called `Rex` are two
+entities with two pseudonyms. Other classes (a phone as `id` and as `value`) always join. Phone-shaped values
 canonicalise to their digits in every class, so `(801) 555-0100`, `801-555-0100` and
 `+1 801 555 0100` share one pseudonym (`blind reveal` restores each as the form the map records). A
 value of bare digits is never read as a phone, so numeric IDs keep their length.
@@ -282,7 +285,34 @@ letters, dictionary words (`Will`, `Price`), honorific and role words (`Dr`, `Mr
 `Nurse`, `Vet`, ...), keep-list terms and vocabulary forms. A part two
 different people share (`Quill` for `Avery Quill` and `Bea Quill`, or a column person and a
 transcript speaker) gets its own pseudonym, never either person's, and the apply report lists those
-pseudonyms. Spec entities are not split this way: their parts are the ones the spec lists.
+pseudonyms. Spec entities are not split this way: their parts are the ones the spec lists. A cell
+pseudonymised as `value` that reads as a person's name (`Avery Quill`, `Quill, Avery`; the same test
+as a column of people) has name parts too, which carry that cell's `Value_` pseudonym.
+
+**One person, one span.** Parts of the same person next to each other, in any order, are replaced
+once, as one span, when only a joiner separates them: spaces, a comma, `+`, `.`, `_`, `-`, or a
+URL-encoded space or comma (`%20`, `%2C`). So `q=Avery+Quill`, `Quill, Avery - schedule`,
+`Quill.Avery` and `Avery%20Quill` each become `Avery Quill`'s pseudonym once
+(`q=Person_A7F3`, `Person_A7F3 - schedule`), and a match may start right after a URL escape. A
+dotted initial right before or after such a span that is the initial of another word of that
+person's name is taken in too (`Quill A.` is one span). Two different people (`Avery, Bea`), a
+repeated word (`Quill Quill`) and a sentence break (`Avery. Quill`) are not joined.
+
+**Titles and initials.** A person's canonical form leaves out leading honorifics and role words
+(`Dr`, `Mrs`, `Nurse`, ...) when two or more words are left, and the dot of an initial: `Dr. Avery
+Quill`, `Avery Quill` and `Quill, Avery` are one person, as are `Dr. A. Quill` and `A Quill`. Two
+shorter forms are resolved to a known person only when the corpus leaves no doubt:
+
+- an initial and a surname (`A. Quill`) is the one known person with a full name of that surname
+  and initial (`Avery Quill`), provided no other known person with that surname has a different
+  initial. Next to `Avery Quill` and `Rex Quill`, `A. Quill` stays a person of its own;
+- a title and one name (`Dr. Quill`, as written in a column, a speaker tag or prose) is the one
+  known person with that name, or, when several have it, the one ever written with a title (`Dr. A.
+  Quill`, when the owner `Rex Quill` never is). In prose the title stays as written (`Dr.
+  Person_A7F3`).
+
+Known people are those from columns, speakers, the map and names found in prose (below). Anything
+ambiguous is left as before: the lone name is a shared part with a pseudonym of its own.
 
 **People named only in prose.** A person no column, transcript speaker, earlier map or spec entity
 names is found in the free text itself (text files, DOCX paragraphs, and the cells, headers and JSON

@@ -19,11 +19,25 @@
 // PSEUDO_CLASSES order wins. The engine asks for values sorted by class, so
 // the specific classes are issued before `value` and their shape is the one
 // kept.
+//
+// Cross-class reuse never joins a `person` with a `value` entry unless the
+// value is written like a full name (two or more words with letters, no
+// digits; mayShare): "Avery Quill" as a value cell and as a speaker is one person, but
+// a pet called "Rex" in a value column and an owner or speaker called "Rex"
+// are two entities (AGT-1842). Other class pairs (a phone as `id` and as
+// `value`) still reuse.
+//
+// People: `personAliases` (identity.ts) resolves an initialled or titled form
+// to the person it stands for, so "J. Sample" gets Jo Sample's pseudonym. A
+// reloaded map's person entries are also found under today's canonical form
+// of their recorded value, so a map written before titles were stripped
+// ("dr. jo sample") still pins "Jo Sample".
 
 import { createHmac } from "node:crypto";
 import { canonicalize, guidCore, PSEUDO_CLASSES, type PseudoClass, type RealPseudoClass } from "./canonical.ts";
 import { REDACTED_VALUE } from "../schema.ts";
 import { type BlindMap, MAP_VERSION, type MapEntry, type MapKind, sortEntries } from "./map.ts";
+import type { PersonAliases } from "./identity.ts";
 
 export { PSEUDO_CLASSES, type PseudoClass } from "./canonical.ts";
 
@@ -60,6 +74,8 @@ export interface PseudonymizerOptions {
   entities?: Partial<Record<PseudoClass, readonly EntityEntry[]>>;
   /** Real values from the corpus that no pseudonym may equal. */
   avoid?: Iterable<string>;
+  /** Person forms that stand for another person (identity.ts personAliases). */
+  personAliases?: PersonAliases;
 }
 
 export class PseudonymError extends Error {
@@ -170,6 +186,18 @@ interface Resolved {
   display?: string;
 }
 
+/**
+ * Whether a value asked for as `cls` may reuse another class's entry for the same text. A person and
+ * a `value` entry join only when the text is written like a full name: two or more words with
+ * letters and no digits ("Avery Quill", "Quill, Avery"). A one-word value ("Rex", a pet) never takes
+ * a person's pseudonym, nor a one-word person (a speaker "Rex", a lone name part) a value's.
+ */
+export function mayShare(cls: PseudoClass, other: PseudoClass, value: string): boolean {
+  if (!((cls === "person" && other === "value") || (cls === "value" && other === "person"))) return true;
+  const words = value.trim().split(/[\s,]+/).filter((w) => /\p{L}/u.test(w));
+  return words.length >= 2 && !/\p{N}/u.test(value);
+}
+
 export class Pseudonymizer {
   private readonly salt: Uint8Array | undefined;
   private readonly entries = new Map<string, MapEntry>();
@@ -177,6 +205,9 @@ export class Pseudonymizer {
   private readonly avoid = new Set<string>();
   private readonly index = new Map<PseudoClass, Map<string, Resolved>>();
   private readonly ambiguousKeys: { cls: PseudoClass; key: string }[] = [];
+  /** Map person entries under today's canonical form of their value, when that differs from the recorded one. */
+  private readonly rekeyed = new Map<string, MapEntry>();
+  private readonly personAliases: PersonAliases | undefined;
 
   constructor(opts: PseudonymizerOptions) {
     if (opts.salt !== undefined && opts.salt.length < MIN_SALT_BYTES) {
@@ -195,6 +226,12 @@ export class Pseudonymizer {
       this.entries.set(`${e.kind}\0${e.canonical}`, { ...e });
       this.issued.add(e.pseudonym);
     }
+    for (const e of this.entries.values()) {
+      if (e.kind !== "person") continue;
+      const now = `person\0${canonicalize("person", e.value)}`;
+      if (!this.entries.has(now) && !this.rekeyed.has(now)) this.rekeyed.set(now, e);
+    }
+    this.personAliases = opts.personAliases;
     for (const [cls, list] of Object.entries(opts.entities ?? {}) as [PseudoClass, EntityEntry[]][]) {
       this.indexEntities(cls, list);
     }
@@ -230,7 +267,14 @@ export class Pseudonymizer {
 
   private resolve(cls: PseudoClass, value: string): Resolved {
     const c = canonicalize(cls, value);
-    return this.index.get(cls)?.get(c) ?? { key: c };
+    const indexed = this.index.get(cls)?.get(c);
+    if (indexed !== undefined) return indexed;
+    const alias = cls === "person" ? this.personAliases?.get(c) : undefined;
+    return alias !== undefined ? { key: alias.key, display: alias.display } : { key: c };
+  }
+
+  private entry(key: string): MapEntry | undefined {
+    return this.entries.get(key) ?? this.rekeyed.get(key);
   }
 
   /**
@@ -238,7 +282,7 @@ export class Pseudonymizer {
    * code-unit-smallest one seen, so the map does not depend on call order.
    */
   private lookup(kind: MapKind, canonical: string, surface: string): string | undefined {
-    const known = this.entries.get(`${kind}\0${canonical}`);
+    const known = this.entry(`${kind}\0${canonical}`);
     if (known && surface < known.value) known.value = surface;
     return known?.pseudonym;
   }
@@ -323,10 +367,11 @@ export class Pseudonymizer {
    * recorded surface is updated as `lookup` does, so reveal stays independent of call order.
    */
   private shared(cls: PseudoClass, c: string, value: string, surface: string): MapEntry | undefined {
-    if (this.entries.has(`${cls}\0${c}`)) return undefined;
+    if (this.entry(`${cls}\0${c}`) !== undefined) return undefined;
     for (const other of PSEUDO_CLASSES) {
       if (other === cls) continue;
-      const known = this.entries.get(`${other}\0${this.resolve(other, value).key}`);
+      if (!mayShare(cls, other, value)) continue;
+      const known = this.entry(`${other}\0${this.resolve(other, value).key}`);
       if (known === undefined) continue;
       if (surface < known.value) known.value = surface;
       return known;

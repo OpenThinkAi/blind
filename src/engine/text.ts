@@ -20,6 +20,15 @@
 // even though a person part ("Sam") would also match its all-caps text.
 // Whitespace between the words of a multi-word form matches any run of
 // whitespace, so a name wrapped across lines is still found.
+//
+// One person, one span (AGT-1842): adjacent matches that stand for the same
+// person (the same class and value, `person` or a named `value`) and share no
+// word are joined into one span when only a joiner separates them: spaces, a
+// comma, `+`, `.`, `_`, `-` or a URL-encoded space or comma (`%20`, `%2C`). So
+// "q=Dana+Marwick", "Marwick, Dana" and "Marwick.Dana" each become the
+// person's pseudonym once. A dotted initial right before or after such a span
+// that is the initial of another word of that person's name is taken in too
+// ("Marwick D."). A match may start right after a URL escape ("%20Marwick").
 
 import { PSEUDO_CLASSES, phoneDigits, type PseudoClass, type RealPseudoClass } from "./canonical.ts";
 import { type Entities, type PatternName, type Patterns, patternOn } from "../schema.ts";
@@ -177,6 +186,8 @@ interface Form {
   source: "entity" | "map" | "speaker" | "prose" | "removed";
   /** A name part that is also a month or weekday word: not matched in a date context (datecontext.ts). */
   datePart: boolean;
+  /** Leading words matched but not replaced (ExtraForm.lead). */
+  lead: number;
 }
 
 const WORDCHAR_RE = /[\p{L}\p{N}]/u;
@@ -203,6 +214,11 @@ export interface ExtraForm {
   source?: "map" | "speaker" | "prose" | "removed";
   /** A name part (recur.ts nameParts): a month or weekday word among them is left alone in a date context (AGT-1813). */
   datePart?: boolean;
+  /**
+   * Leading words that must be there but stay as written: the title of "Dr. Thornby" when only the
+   * titled form resolves to one person (identity.ts). The span covers the words after them.
+   */
+  lead?: number;
 }
 
 /** An index of every entity form in the spec, ready to scan text with. */
@@ -217,10 +233,10 @@ export class EntityMatcher {
    */
   constructor(entities: Entities, extra: readonly ExtraForm[] = []) {
     const seen = new Set<string>();
-    const add = (key: string, cls: PseudoClass | null, raw: string, value: string, rank: number, source: Form["source"], datePart = false): void => {
+    const add = (key: string, cls: PseudoClass | null, raw: string, value: string, rank: number, source: Form["source"], datePart = false, lead = 0): void => {
       const words = raw.trim().split(/\s+/).filter((w) => w !== "");
-      if (words.length === 0) return;
-      const dedupe = `${key}\0${words.join(" ")}`;
+      if (words.length === 0 || lead >= words.length) return;
+      const dedupe = `${key}\0${lead}\0${words.join(" ")}`;
       if (seen.has(dedupe)) return;
       seen.add(dedupe);
       const form: Form = {
@@ -234,6 +250,7 @@ export class EntityMatcher {
         shield: key === "vocabulary",
         source,
         datePart: datePart && words.length === 1 && isDateWord(raw.trim()),
+        lead,
       };
       const first = (words[0] as string)[0]?.toLowerCase() as string;
       const list = this.byFirst.get(first) ?? [];
@@ -246,7 +263,7 @@ export class EntityMatcher {
         for (const raw of [e.canonical, ...e.aliases, ...e.parts]) add(key, cls, raw, raw, rank, "entity");
       }
     }
-    for (const x of extra) add(`extra:${x.cls}`, x.cls, x.form ?? x.value, x.value, ENTITY_CLASSES.length + PSEUDO_CLASSES.indexOf(x.cls as RealPseudoClass), x.source ?? "map", x.datePart === true);
+    for (const x of extra) add(`extra:${x.cls}`, x.cls, x.form ?? x.value, x.value, ENTITY_CLASSES.length + PSEUDO_CLASSES.indexOf(x.cls as RealPseudoClass), x.source ?? "map", x.datePart === true, x.lead ?? 0);
     // Longest first; at equal length a vocabulary form wins (so "SAM" listed as vocabulary is not
     // taken for the person part "Sam"); then class order, then text, so the scan is order-independent.
     for (const list of this.byFirst.values()) {
@@ -258,14 +275,15 @@ export class EntityMatcher {
     this.empty = this.byFirst.size === 0;
   }
 
-  /** End offset of `form` matched at `pos`, or -1. */
-  private matchAt(text: string, pos: number, form: Form, caseless = false): number {
+  /** End offset of `form` matched at `pos`, or -1. `starts`, when given, receives each word's offset. */
+  private matchAt(text: string, pos: number, form: Form, caseless = false, starts?: number[]): number {
     let i = pos;
     for (let w = 0; w < form.words.length; w++) {
       if (w > 0) {
         if (!isSpace(text[i])) return -1;
         while (isSpace(text[i])) i++;
       }
+      starts?.push(i);
       const word = form.words[w] as string;
       const got = text.slice(i, i + word.length);
       if (got.length !== word.length) return -1;
@@ -298,21 +316,77 @@ export class EntityMatcher {
         continue;
       }
       const ch = text[pos] as string;
-      const candidates = isWordChar(text[pos - 1]) && isWordChar(ch) ? undefined : this.byFirst.get(ch.toLowerCase());
+      const inWord = isWordChar(text[pos - 1]) && isWordChar(ch) && !URL_ESCAPE_BEFORE_RE.test(text.slice(Math.max(0, pos - 3), pos));
+      const candidates = inWord ? undefined : this.byFirst.get(ch.toLowerCase());
       let matched = false;
       for (const form of candidates ?? []) {
-        const end = this.matchAt(text, pos, form, caseless);
+        const starts: number[] = [];
+        const end = this.matchAt(text, pos, form, caseless, starts);
         if (end < 0 || (block !== undefined && end > block.start)) continue;
         if (form.datePart && inDateContext(text, pos, end)) continue;
-        out.push({ start: pos, end, cls: form.cls, value: form.value, source: form.source });
+        out.push({ start: starts[form.lead] as number, end, cls: form.cls, value: form.value, source: form.source });
         pos = end;
         matched = true;
         break;
       }
       if (!matched) pos++;
     }
-    return out;
+    return joinPersonSpans(text, out, taken);
   }
+}
+
+const URL_ESCAPE_BEFORE_RE = /%[0-9A-Fa-f]{2}$/;
+// What may stand between two parts of one person's name for them to be read as one name.
+const JOINER_RE = /^(?:[ \t\u00a0]+|[ \t\u00a0]*,[ \t\u00a0]*|,?\+|[._-]|%20|%2[Cc](?:%20|\+)?)$/;
+const nameWords = (s: string): string[] => s.normalize("NFKC").toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+
+/** Whether two spans may stand for one person: the same person-like class and value. */
+const samePerson = (a: Span, b: Span): boolean => a.cls === b.cls && (a.cls === "person" || a.cls === "value") && a.value === b.value;
+
+/**
+ * Adjacent spans of one person joined (see the header), and a dotted initial of that person taken in.
+ * `spans` are sorted and do not overlap; nor does the result, nor does it reach into `taken`.
+ */
+function joinPersonSpans(text: string, spans: Span[], taken: readonly Span[]): Span[] {
+  if (spans.length === 0) return spans;
+  const free = (start: number, end: number): boolean => !taken.some((t) => t.start < end && start < t.end);
+  const out: Span[] = [];
+  let words = new Set<string>();
+  for (const s of spans) {
+    const prev = out[out.length - 1];
+    const own = nameWords(text.slice(s.start, s.end));
+    if (
+      prev !== undefined &&
+      samePerson(prev, s) &&
+      JOINER_RE.test(text.slice(prev.end, s.start)) &&
+      own.every((w) => !words.has(w))
+    ) {
+      prev.end = s.end;
+      for (const w of own) words.add(w);
+      continue;
+    }
+    out.push({ ...s });
+    words = new Set(own);
+  }
+  for (let i = 0; i < out.length; i++) {
+    const s = out[i] as Span;
+    if (s.cls !== "person" && s.cls !== "value") continue;
+    const have = new Set(nameWords(text.slice(s.start, s.end)));
+    const valueWords = nameWords(s.value);
+    if (!valueWords.some((w) => have.has(w))) continue;
+    const initials = new Set(valueWords.filter((w) => !have.has(w) && [...w].length > 1).map((w) => String.fromCodePoint(w.codePointAt(0) as number)));
+    if (initials.size === 0) continue;
+    const lower = i > 0 ? (out[i - 1] as Span).end : 0;
+    const upper = i + 1 < out.length ? (out[i + 1] as Span).start : text.length;
+    const after = /^,?[ \t\u00a0]+(\p{Lu})\.(?![\p{L}\p{N}])/u.exec(text.slice(s.end, upper));
+    if (after !== null && initials.has((after[1] as string).toLowerCase()) && free(s.end, s.end + after[0].length)) {
+      s.end += after[0].length;
+      continue;
+    }
+    const before = /(?<![\p{L}\p{N}.])(\p{Lu})\.[ \t\u00a0]+$/u.exec(text.slice(lower, s.start));
+    if (before !== null && initials.has((before[1] as string).toLowerCase()) && free(s.start - before[0].length, s.start)) s.start -= before[0].length;
+  }
+  return out;
 }
 
 /**

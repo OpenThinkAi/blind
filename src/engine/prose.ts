@@ -176,8 +176,8 @@ function insideKept(words: readonly string[], ctx: Context): boolean {
   return false;
 }
 
-/** The people in one run, appended to `out`. */
-function fromRun(text: string, run: readonly Token[], ctx: Context, out: Set<string>): void {
+/** The people in one run, appended to `out`; a name found after a title gets that title as written ("Dr.") in `titles`. */
+function fromRun(text: string, run: readonly Token[], ctx: Context, out: Set<string>, titles: Map<string, Set<string>>): void {
   const isName = (t: Token | undefined): t is Token => t !== undefined && !t.initial && isNameWord(t.word, ctx);
   /** Name words from `i`: up to `max` words, middle initials allowed between them. Returns the end index. */
   const collect = (i: number, max: number): number => {
@@ -197,17 +197,19 @@ function fromRun(text: string, run: readonly Token[], ctx: Context, out: Set<str
     while (j > i && (run[j - 1] as Token).initial) j--;
     return j;
   };
-  const accept = (from: number, to: number): void => {
+  const accept = (from: number, to: number): string | undefined => {
     const toks = run.slice(from, to).filter((t) => !t.initial);
-    if (toks.length === 0) return;
+    if (toks.length === 0) return undefined;
     // The run goes on into a place, organisation or breed word: "Jordan River", "Jack Russell Terrier".
     const next = run[to];
-    if (next !== undefined && NON_PERSON.has(fold(next.word))) return;
+    if (next !== undefined && NON_PERSON.has(fold(next.word))) return undefined;
     const words = toks.map((t) => t.word);
-    if (NON_PERSON_PHRASES.has(fold(words.join(" ")))) return;
-    if (ctx.keep.has(fold(words.join(" "))) || ctx.vocabulary.has(fold(words.join(" ")))) return;
-    if (insideKept(words, ctx)) return;
-    out.add(text.slice((run[from] as Token).start, (run[to - 1] as Token).end));
+    if (NON_PERSON_PHRASES.has(fold(words.join(" ")))) return undefined;
+    if (ctx.keep.has(fold(words.join(" "))) || ctx.vocabulary.has(fold(words.join(" ")))) return undefined;
+    if (insideKept(words, ctx)) return undefined;
+    const name = text.slice((run[from] as Token).start, (run[to - 1] as Token).end);
+    out.add(name);
+    return name;
   };
   let i = 0;
   while (i < run.length) {
@@ -216,7 +218,12 @@ function fromRun(text: string, run: readonly Token[], ctx: Context, out: Set<str
     if (TITLES.has(f)) {
       const j = collect(i + 1, 3);
       if (j > i + 1) {
-        accept(i + 1, j);
+        const name = accept(i + 1, j);
+        if (name !== undefined) {
+          const set = titles.get(name) ?? new Set<string>();
+          set.add(text.slice(t.start, t.end + (t.dotted ? 1 : 0)));
+          titles.set(name, set);
+        }
         i = j;
       } else i++;
       continue;
@@ -259,9 +266,19 @@ function context(opts: ProseOptions): Context {
 
 /** The people named in `texts` (each name as written, deduplicated by case-folded form), sorted. */
 export function proseNames(texts: Iterable<string>, opts: ProseOptions): string[] {
+  return proseNamesWithTitles(texts, opts).names;
+}
+
+/**
+ * proseNames, with the titles each name was found after: `titles` maps a returned name to the
+ * titles as written before any spelling of it ("Dr.", "Mrs"), sorted. A name never found after a
+ * title is not in it.
+ */
+export function proseNamesWithTitles(texts: Iterable<string>, opts: ProseOptions): { names: string[]; titles: Map<string, string[]> } {
   const ctx = context(opts);
   const found = new Set<string>();
-  for (const text of texts) for (const run of runs(text)) fromRun(text, run, ctx, found);
+  const seen = new Map<string, Set<string>>();
+  for (const text of texts) for (const run of runs(text)) fromRun(text, run, ctx, found, seen);
   // One spelling per folded form, the smallest, so the result does not depend on input order.
   const byFold = new Map<string, string>();
   for (const v of found) {
@@ -269,7 +286,12 @@ export function proseNames(texts: Iterable<string>, opts: ProseOptions): string[
     const prior = byFold.get(k);
     if (prior === undefined || v < prior) byFold.set(k, v);
   }
-  return [...byFold.values()].sort(cmp);
+  const titles = new Map<string, string[]>();
+  for (const [v, set] of seen) {
+    const name = byFold.get(fold(v)) as string;
+    titles.set(name, [...new Set([...(titles.get(name) ?? []), ...set])].sort(cmp));
+  }
+  return { names: [...byFold.values()].sort(cmp), titles };
 }
 
 const NO_CONTEXT: Context = { keep: new Set(), vocabulary: new Set(), keptWords: new Map() };

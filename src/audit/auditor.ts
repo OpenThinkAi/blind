@@ -45,7 +45,7 @@ import {
 import { globalTerms, xmlViews } from "./semantic.ts";
 import { fold, type View, viewsOf, xmlBaseView } from "./views.ts";
 import { looksLikeXml } from "./xml.ts";
-import { looksLikeZip, readZip, ZipError } from "./zip.ts";
+import { looksLikeZip, readZip, type ZipBudget, ZipError, zipBudget } from "./zip.ts";
 
 /** Largest chunk of lines, in UTF-8 bytes of their JSON, sent in one call. */
 export const CHUNK_BYTES = 8 * 1024;
@@ -218,7 +218,7 @@ function textView(bytes: Uint8Array): View | null {
   return BINARY_RE.test(v.text) ? null : v;
 }
 
-function contentLines(out: Line[], notSent: NotSent[], file: string, part: string, name: string, bytes: Uint8Array, depth: number): void {
+function contentLines(out: Line[], notSent: NotSent[], file: string, part: string, name: string, bytes: Uint8Array, depth: number, budget: ZipBudget): void {
   if (looksLikeZip(bytes)) {
     if (depth >= MAX_ZIP_DEPTH) {
       notSent.push({ file, part, reason: `archive nested more than ${MAX_ZIP_DEPTH} deep` });
@@ -226,7 +226,7 @@ function contentLines(out: Line[], notSent: NotSent[], file: string, part: strin
     }
     let members;
     try {
-      members = readZip(bytes);
+      members = readZip(bytes, budget);
     } catch (e) {
       if (!(e instanceof ZipError)) throw e;
       notSent.push({ file, part, reason: `archive cannot be read (${e.message})` });
@@ -236,7 +236,7 @@ function contentLines(out: Line[], notSent: NotSent[], file: string, part: strin
       const memberPart = part === "" ? m.name : `${part}!${m.name}`;
       nameLines(out, file, memberPart, m.name, 0);
       if (m.bytes === undefined) notSent.push({ file, part: memberPart, reason: `member cannot be decoded (${m.error ?? "unknown"})` });
-      else contentLines(out, notSent, file, memberPart, m.name, m.bytes, depth + 1);
+      else contentLines(out, notSent, file, memberPart, m.name, m.bytes, depth + 1, budget);
     }
     return;
   }
@@ -259,7 +259,7 @@ export function extractLines(entries: readonly TreeEntry[]): { lines: Line[]; no
     if (e.kind !== "file") continue;
     const nameAt = e.path.lastIndexOf("/") + 1;
     nameLines(lines, e.path, "", e.path.slice(nameAt), nameAt);
-    contentLines(lines, notSent, e.path, "", e.path.slice(nameAt), e.bytes, 0);
+    contentLines(lines, notSent, e.path, "", e.path.slice(nameAt), e.bytes, 0, zipBudget());
   }
   return { lines, notSent };
 }

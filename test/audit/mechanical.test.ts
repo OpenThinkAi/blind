@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { auditTree, type AuditReport, maskValue, type TreeEntry } from "../../src/audit/mechanical.ts";
-import { readZip } from "../../src/audit/zip.ts";
+import { MAX_INFLATE_BYTES, readZip } from "../../src/audit/zip.ts";
 import { applySpec } from "../../src/engine/apply.ts";
 import type { BlindMap } from "../../src/engine/map.ts";
 import type { ColumnRule, Spec } from "../../src/schema.ts";
@@ -245,6 +245,37 @@ describe("auditTree", () => {
     expect(by("link")).toEqual([["candidate", "unscanned", "symbolic link, not followed"]]);
   });
 
+  test("one file's decompression allowance is shared by its nested archives, and members past it are candidates", () => {
+    const { entries, map } = kit();
+    const QUARTER = 250 * 1024 * 1024;
+    const inner = declareSizes(makeZip([{ name: "x.txt", data: "ok" }, { name: "y.txt", data: "Avery Quill" }]), QUARTER);
+    const outer = declareSizes(
+      makeZip([{ name: "a.txt", data: "ok" }, { name: "b.txt", data: "ok" }, { name: "c.txt", data: "ok" }, { name: "inner.zip", data: inner }]),
+      QUARTER,
+      ["a.txt", "b.txt", "c.txt"],
+    );
+    expect(4 * QUARTER).toBeLessThan(MAX_INFLATE_BYTES);
+    expect(5 * QUARTER).toBeGreaterThan(MAX_INFLATE_BYTES);
+    const r = auditTree([...entries, file("bomb.zip", outer)], SPEC, map);
+    const got = r.files.find((f) => f.path === "bomb.zip")!.findings.filter((f) => f.class === "unscanned");
+    expect(got.map((f) => [f.part, f.reason.split(";")[0]])).toEqual([
+      ["inner.zip!y.txt", `decompressing it would pass the ${MAX_INFLATE_BYTES}-byte limit for one file, not decoded`],
+    ]);
+    expect(r.status).not.toBe("clean");
+  });
+
+  test("readZip charges a shared budget and reports members past it", () => {
+    const zip = makeZip([{ name: "a.txt", data: "123456" }, { name: "s.txt", data: "stored", method: 0 }, { name: "b.txt", data: "123456" }]);
+    const budget = { left: 10 };
+    const z = readZip(zip, budget);
+    expect(z.map((m) => [m.name, m.bytes === undefined ? m.error : Buffer.from(m.bytes).toString()])).toEqual([
+      ["a.txt", "123456"],
+      ["s.txt", "stored"],
+      ["b.txt", `decompressing it would pass the ${MAX_INFLATE_BYTES}-byte limit for one file, not decoded`],
+    ]);
+    expect(budget.left).toBe(4);
+  });
+
   test("the report never carries a value in full", () => {
     const { entries, map } = kit();
     const r = auditTree([...entries, file("x.txt", "Robin Example, ZX-4471-Q, 10.1.2.3")], SPEC, map);
@@ -326,3 +357,14 @@ describe("keep-list hosts and blinded names (AGT-1737)", () => {
     expect(leaks(r).map((f) => f.class)).toEqual(["pattern:email"]);
   });
 });
+
+/** Rewrite the central directory's declared uncompressed size of the named members (all when none named). */
+function declareSizes(zip: Uint8Array, size: number, names?: string[]): Uint8Array {
+  const b = Buffer.from(zip);
+  for (let p = 0; p + 46 <= b.length; p++) {
+    if (b.readUInt32LE(p) !== 0x02014b50) continue;
+    const name = b.subarray(p + 46, p + 46 + b.readUInt16LE(p + 28)).toString("utf8");
+    if (names === undefined || names.includes(name)) b.writeUInt32LE(size, p + 24);
+  }
+  return b;
+}

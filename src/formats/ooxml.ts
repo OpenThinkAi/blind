@@ -12,6 +12,9 @@
 //
 // Fail closed: an unreadable zip throws ZipError; a member that cannot be read
 // or parsed is left untouched and reported with kind "error", never skipped.
+// That includes a member over MAX_MEMBER_BYTES, or one that would take the
+// archive past MAX_ARCHIVE_BYTES decompressed: sizes come from the archive, so
+// they are checked before anything is inflated (a zip bomb is reported, not read).
 
 import { deflateRawSync, inflateRawSync } from "node:zlib";
 
@@ -360,7 +363,14 @@ interface Zip {
   entries: Entry[];
   cdOffset: number;
   eocd: number;
+  /** Decompressed bytes reserved so far by memberData, against MAX_ARCHIVE_BYTES. */
+  inflated: number;
 }
+
+/** Largest decompressed member that is read; a bigger one is reported as an error member. */
+export const MAX_MEMBER_BYTES = 256 * 1024 * 1024;
+/** Most decompressed bytes read from one archive in one pass; members past it are error members. */
+export const MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024;
 
 const SIG_LOCAL = 0x04034b50;
 const SIG_CENTRAL = 0x02014b50;
@@ -427,7 +437,7 @@ function readZip(input: Uint8Array): Zip {
     at = e.dataEnd + e.descriptor;
   }
   if (at !== cdOffset) throw new ZipError(`unexpected bytes at offset ${at}, outside any member`);
-  return { bytes, view, entries, cdOffset, eocd };
+  return { bytes, view, entries, cdOffset, eocd, inflated: 0 };
 }
 
 const CRC_TABLE = (() => {
@@ -452,6 +462,10 @@ function memberData(zip: Zip, e: Entry): Uint8Array {
   let data: Uint8Array;
   if (e.method === 0) data = raw;
   else if (e.method === 8) {
+    // The recorded size bounds the inflate below, so checking it first bounds the memory used.
+    if (e.usize > MAX_MEMBER_BYTES) throw new ZipError(`recorded size ${e.usize} bytes exceeds the ${MAX_MEMBER_BYTES}-byte member limit`);
+    if (zip.inflated + e.usize > MAX_ARCHIVE_BYTES) throw new ZipError(`archive decompresses to more than the ${MAX_ARCHIVE_BYTES}-byte limit`);
+    zip.inflated += e.usize;
     try {
       data = inflateRawSync(raw, { maxOutputLength: Math.max(e.usize, 1) });
     } catch (err) {

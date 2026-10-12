@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readOoxml, rewriteOoxml, rewriteXml, ZipError, XmlError, type RewriteRules, defaultRules, localName } from "../../src/formats/ooxml.ts";
+import { MAX_ARCHIVE_BYTES, MAX_MEMBER_BYTES, readOoxml, rewriteOoxml, rewriteXml, ZipError, XmlError, type RewriteRules, defaultRules, localName } from "../../src/formats/ooxml.ts";
 import { buildZip, readZip, type FixtureEntry } from "./zipfixture.ts";
 
 // Synthetic OOXML, generated here. Names and hosts are invented.
@@ -125,6 +125,27 @@ describe("rewriteOoxml", () => {
     const r = rewriteOoxml(input, upper);
     expect(r.members).toEqual([{ name: "a.xml", kind: "error", error: "CRC mismatch" }]);
     expect(r.bytes).toEqual(input);
+  });
+
+  test("a member whose recorded size is over the member limit is an error member, never inflated", () => {
+    const input = recordSizes(buildZip(docx()), MAX_MEMBER_BYTES + 1, ["word/document.xml"]);
+    const r = rewriteOoxml(input, upper);
+    expect(r.members.find((m) => m.name === "word/document.xml")).toEqual({
+      name: "word/document.xml", kind: "error", error: `recorded size ${MAX_MEMBER_BYTES + 1} bytes exceeds the ${MAX_MEMBER_BYTES}-byte member limit`,
+    });
+    expect(readOoxml(input).find((m) => m.name === "word/document.xml")!.kind).toBe("error");
+  });
+
+  test("members past the archive's decompression limit are error members", () => {
+    const QUARTER = 250 * 1024 * 1024;
+    const names = ["a.xml", "b.xml", "c.xml", "d.xml", "e.xml"];
+    const input = recordSizes(buildZip(names.map((name) => ({ name, data: "<a><t>x</t></a>" }))), QUARTER, names);
+    expect(4 * QUARTER).toBeLessThan(MAX_ARCHIVE_BYTES);
+    expect(5 * QUARTER).toBeGreaterThan(MAX_ARCHIVE_BYTES);
+    const errors = readOoxml(input).map((m) => (m.kind === "error" ? m.error : m.kind));
+    // The first four reserve their recorded size, then fail its check; the fifth is refused before inflating.
+    expect(errors.slice(0, 4).every((e) => /^size \d+ differs from the recorded/.test(e))).toBe(true);
+    expect(errors[4]).toBe(`archive decompresses to more than the ${MAX_ARCHIVE_BYTES}-byte limit`);
   });
 
   test("rules can be chosen per member", () => {
@@ -288,3 +309,14 @@ test("a Node Buffer input (possibly a pooled slice) is never written through", (
   expect(readZip(r.bytes).find((e) => e.name === "xl/sharedStrings.xml")!.text).toContain("DANA PELL");
   expect(Buffer.from(rewriteOoxml(input, (v) => v).bytes).equals(copy)).toBe(true);
 });
+
+/** Rewrite the central directory's recorded uncompressed size of the named members. */
+function recordSizes(zip: Uint8Array, size: number, names: string[]): Uint8Array {
+  const b = Buffer.from(zip);
+  for (let p = 0; p + 46 <= b.length; p++) {
+    if (b.readUInt32LE(p) !== 0x02014b50) continue;
+    const name = b.subarray(p + 46, p + 46 + b.readUInt16LE(p + 28)).toString("utf8");
+    if (names.includes(name)) b.writeUInt32LE(size, p + 24);
+  }
+  return new Uint8Array(b);
+}

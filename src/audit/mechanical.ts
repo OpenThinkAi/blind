@@ -46,7 +46,7 @@ import { detectHeaderRow } from "../profile/table.ts";
 import { DICTIONARY } from "../profile/words.ts";
 import { fold, foldWithMap, stringView, type View, viewsOf, xmlBaseView } from "./views.ts";
 import { CONTENT_TYPES_PART, looksLikeXml, officeIdAttribute, ooxmlUriAttribute, walkXml } from "./xml.ts";
-import { looksLikeZip, readZip, ZipError } from "./zip.ts";
+import { looksLikeZip, readZip, type ZipBudget, ZipError, zipBudget } from "./zip.ts";
 
 export type Status = "clean" | "candidates" | "leak";
 export type Severity = "leak" | "candidate";
@@ -577,7 +577,7 @@ function scanName(sink: PartSink, part: string, where: Finding["in"], name: stri
   if (stemEnd < name.length) pushHits(sink, part, where, scanViews(stringView(name.slice(stemEnd)), ctx, isName), at + stemEnd);
 }
 
-function scanBytes(sink: PartSink, part: string, bytes: Uint8Array, depth: number, ctx: Context) {
+function scanBytes(sink: PartSink, part: string, bytes: Uint8Array, depth: number, ctx: Context, budget: ZipBudget) {
   if (!looksLikeZip(bytes)) {
     const kind = binaryKind(bytes);
     if (kind !== null) {
@@ -593,7 +593,7 @@ function scanBytes(sink: PartSink, part: string, bytes: Uint8Array, depth: numbe
   }
   let members;
   try {
-    members = readZip(bytes);
+    members = readZip(bytes, budget);
   } catch (e) {
     if (!(e instanceof ZipError)) throw e;
     unscanned(sink, part, `looks like a zip archive but cannot be read (${e.message}): raw bytes scanned only`);
@@ -616,7 +616,7 @@ function scanBytes(sink: PartSink, part: string, bytes: Uint8Array, depth: numbe
       unscanned(sink, memberPart, `${m.error ?? "not decoded"}; its raw bytes were scanned only`);
       continue;
     }
-    scanBytes(sink, memberPart, ooxml ? blankOoxmlUris(m.name, m.bytes) : m.bytes, depth + 1, ctx);
+    scanBytes(sink, memberPart, ooxml ? blankOoxmlUris(m.name, m.bytes) : m.bytes, depth + 1, ctx, budget);
   }
 }
 
@@ -769,7 +769,7 @@ export function auditTree(entries: readonly TreeEntry[], spec: Spec, map: BlindM
     scanName(sink, "", "name", entry.path.slice(nameAt), ctx, true, entry.kind === "file", nameAt);
     switch (entry.kind) {
       case "file":
-        scanBytes(sink, "", entry.bytes, 0, ctx);
+        scanBytes(sink, "", entry.bytes, 0, ctx, zipBudget());
         columnFindings(sink, entry.bytes, rulesByFile.get(entry.path) ?? []);
         break;
       case "symlink":

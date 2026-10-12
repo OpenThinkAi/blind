@@ -8,7 +8,7 @@ import { runAudit } from "../../src/audit/command.ts";
 import { type AuditReport, auditTree, blankOoxmlUris, type TreeEntry } from "../../src/audit/mechanical.ts";
 import { addSemanticLayer, xmlViews } from "../../src/audit/semantic.ts";
 import { xmlBaseView } from "../../src/audit/views.ts";
-import { type OfficeIdGroup, officeIdAttribute, ooxmlUriAttribute, walkXml } from "../../src/audit/xml.ts";
+import { type OfficeIdGroup, officeDisplayName, officeIdAttribute, ooxmlUriAttribute, walkXml } from "../../src/audit/xml.ts";
 import { readZip } from "../../src/audit/zip.ts";
 import { applySpec } from "../../src/engine/apply.ts";
 import { planDocx } from "../../src/engine/docx.ts";
@@ -283,10 +283,10 @@ describe("Office structural IDs: template ids are structure, linking ids are rew
     expect(attr(doc, "wp14:anchorId")).toEqual(attr(doc, "wp14:editId"));
     // The package still reads as a DOCX.
     expect(() => planDocx(bytes)).not.toThrow();
-    // No leak, and nothing from an id: the one candidate is the theme's Title-Case name ("Office Theme").
+    // No leak, no candidate: the theme and style display names ("Office Theme", "Default Paragraph Font") are structure.
     const r = audit([file("memo.docx", bytes)], map);
-    expect(leaks(r)).toEqual([]);
-    expect(findings(r).map((f) => [f.part, f.class, f.masked])).toEqual([["word/theme/theme1.xml", "semantic:phrase", "Of***12"]]);
+    expect(findings(r)).toEqual([]);
+    expect(r.status).toBe("clean");
   });
 
   test("an XLSX shaped like Excel output, through blind apply, audits clean; no linking id survives", () => {
@@ -310,8 +310,8 @@ describe("Office structural IDs: template ids are structure, linking ids are rew
     for (const v of [...attr(sheet, "xr:uid"), cfText as string]) expect(map.entries.some((e) => `{${e.pseudonym.toUpperCase()}}` === v)).toBe(true);
     expect(readWorkbook(bytes).sheets.map((s) => s.name)).toHaveLength(1);
     const r = audit([file("book.xlsx", bytes)], map);
-    expect(leaks(r)).toEqual([]);
-    expect(findings(r).map((f) => [f.part, f.class, f.masked])).toEqual([["xl/theme/theme1.xml", "semantic:phrase", "Of***12"]]);
+    expect(findings(r)).toEqual([]);
+    expect(r.status).toBe("clean");
   });
 
   test("before apply, a template id is not reported, but every linking GUID still is a leak", () => {
@@ -349,6 +349,46 @@ describe("Office structural IDs: template ids are structure, linking ids are rew
     ] as const) {
       expect(leaks(audit([file("memo.docx", zip)], map)).map((f) => [f.part, f.class])).toEqual([[part, "pattern:guid"]]);
     }
+  });
+
+  test("theme and style display names are skipped by position; the same words elsewhere are reported", () => {
+    const { bytes, map } = apply("memo.docx", docxMembers({ body: "open", officeIds: true }));
+    const phrases = (zip: Uint8Array) => findings(audit([file("memo.docx", zip)], map)).map((f) => [f.part, f.class]);
+    expect(phrases(bytes)).toEqual([]);
+    // A planted name in body text is still reported, even a theme's own name.
+    const inBody = plant(bytes, "word/document.xml", (x) => x.replace("<w:t>open</w:t>", "<w:t>Office Theme</w:t>"));
+    expect(phrases(inBody)).toEqual([["word/document.xml", "semantic:phrase"]]);
+    // So is a planted name in a position that is not a display name: another attribute, another member.
+    const otherAttr = plant(bytes, "word/theme/theme1.xml", (x) => x.replace('<a:latin typeface="Calibri Light"', '<a:latin typeface="Calibri Light" other="Planted Name"'));
+    expect(phrases(otherAttr)).toEqual([["word/theme/theme1.xml", "semantic:phrase"]]);
+    const otherMember = plant(bytes, "docProps/core.xml", (x) => x.replace("Quarterly notes", "Planted Name"));
+    expect(phrases(otherMember)).toEqual([["docProps/core.xml", "semantic:phrase"]]);
+    const styleText = plant(bytes, "word/styles.xml", (x) => x.replace("</w:styles>", '<w:style w:styleId="X"><w:foo w:val="Planted Name"/></w:style></w:styles>'));
+    expect(phrases(styleText)).toEqual([["word/styles.xml", "semantic:phrase"]]);
+  });
+
+  test("officeDisplayName names the theme and style display-name positions", () => {
+    const cases: [string, string, string, boolean][] = [
+      ["word/theme/theme1.xml", "a:theme", "name", true],
+      ["xl/theme/theme1.xml", "a:clrScheme", "name", true],
+      ["xl/theme/theme1.xml", "a:fontScheme", "name", true],
+      ["word/theme/theme1.xml", "thm15:themeFamily", "name", true],
+      ["word/styles.xml", "w:name", "w:val", true],
+      ["word/styles.xml", "w:basedOn", "w:val", true],
+      ["word/styles.xml", "w:lsdException", "w:name", true],
+      ["xl/styles.xml", "cellStyle", "name", true],
+      ["xl/styles.xml", "tableStyle", "name", true],
+      ["xl/styles.xml", "tableStyles", "defaultTableStyle", true],
+      // Same attribute, other element or member: not a display name.
+      ["word/document.xml", "a:theme", "name", false],
+      ["word/theme/theme1.xml", "a:latin", "name", false],
+      ["word/styles.xml", "w:foo", "w:val", false],
+      ["word/styles.xml", "w:style", "w:styleId", false],
+      ["word/document.xml", "w:name", "w:val", false],
+      ["xl/workbook.xml", "sheet", "name", false],
+      ["xl/workbook.xml", "definedName", "name", false],
+    ];
+    for (const [member, element, attr, want] of cases) expect([member, element, attr, officeDisplayName(member, element, attr)]).toEqual([member, element, attr, want]);
   });
 
   test("blind apply is deterministic over Office ids", () => {

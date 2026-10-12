@@ -7,10 +7,12 @@
 // saved entry is written back as the same object, so its JSON is byte-identical.
 
 import { createHash } from "node:crypto";
+import type { BlindMap } from "../engine/map.ts";
 import type { Policy } from "../policy.ts";
 import type { ColumnRule, Entities, Entity, EntityClassName, Location, PatternName, Profile, Question, Spec } from "../schema.ts";
 import { completeProposal, locationKey } from "./analyst.ts";
 import { profileLocations } from "./heuristic.ts";
+import { shieldedForms, shieldReason } from "./vocabguard.ts";
 
 type EntityClass = Exclude<EntityClassName, "unknown">;
 const ENTITY_CLASSES: readonly EntityClass[] = ["person", "org", "host", "email", "id", "location", "vocabulary"];
@@ -20,7 +22,9 @@ export type Dropped =
   | { kind: "column"; location: Location; reason: string }
   | { kind: "question"; id: string; reason: string }
   | { kind: "entity"; class: EntityClass; canonical: string; reason: string }
-  | { kind: "pattern"; name: PatternName; reason: string };
+  | { kind: "pattern"; name: PatternName; reason: string }
+  // An analyst vocabulary entry that would keep a blinded value in clear (vocabguard.ts).
+  | { kind: "vocabulary"; canonical: string; reason: string };
 
 /** What a plan changed. On a first plan everything is `added` and the rest is empty. */
 export interface PlanDiff {
@@ -87,7 +91,7 @@ function locked(rule: ColumnRule, askedBy: string | undefined): string | undefin
 }
 
 /** A fresh plan's diff: everything in the spec is new. */
-export function freshDiff(spec: Spec): PlanDiff {
+export function freshDiff(spec: Spec, dropped: Dropped[] = []): PlanDiff {
   return {
     reused: false,
     added: {
@@ -96,8 +100,30 @@ export function freshDiff(spec: Spec): PlanDiff {
       questions: spec.questions.map((q) => q.id),
     },
     classified: [],
-    dropped: [],
+    dropped,
   };
+}
+
+/** What the plan knows about the corpus beyond the part sent: the whole profile and the map, if one exists. */
+export interface VocabGuard {
+  profile: Profile;
+  map?: BlindMap;
+}
+
+/** A first plan's spec without the analyst vocabulary that would shield a blinded value; the rest is untouched. */
+export function guardFresh(spec: Spec, guard: VocabGuard): { spec: Spec; dropped: Dropped[] } {
+  const vocabulary = spec.entities.vocabulary ?? [];
+  if (vocabulary.length === 0) return { spec, dropped: [] };
+  const shields = shieldedForms(guard.profile, spec.columns, spec.entities, guard.map);
+  const dropped: Dropped[] = [];
+  const kept = vocabulary.filter((e) => {
+    const reason = shieldReason(e, shields);
+    if (reason !== undefined) dropped.push({ kind: "vocabulary", canonical: e.canonical, reason });
+    return reason === undefined;
+  });
+  if (dropped.length === 0) return { spec, dropped };
+  const { vocabulary: _v, ...rest } = spec.entities;
+  return { spec: { ...spec, entities: kept.length > 0 ? { ...rest, vocabulary: kept } : rest }, dropped };
 }
 
 /**
@@ -109,6 +135,7 @@ export function mergeProposal(
   proposal: Spec | null,
   part: Profile,
   policy: Pick<Policy, "sensitive">,
+  guard: VocabGuard,
 ): { spec: Spec; diff: PlanDiff; filled: Location[] } {
   const dropped: Dropped[] = [];
   const savedAt = new Map(saved.columns.map((c, i) => [locationKey(c), i]));
@@ -176,6 +203,7 @@ export function mergeProposal(
   const owner = new Map<string, { cls: EntityClass; canonical: string }>();
   for (const cls of ENTITY_CLASSES) for (const e of saved.entities[cls] ?? []) for (const f of formsOf(e)) if (!owner.has(f)) owner.set(f, { cls, canonical: e.canonical });
   const addedEntities: PlanDiff["added"]["entities"] = [];
+  let shields: ReturnType<typeof shieldedForms> | undefined;
   for (const cls of ENTITY_CLASSES) {
     for (const e of proposal?.entities[cls] ?? []) {
       if ((saved.entities[cls] ?? []).some((s) => sameEntity(s, e))) continue;
@@ -183,6 +211,15 @@ export function mergeProposal(
       if (clash !== undefined) {
         dropped.push({ kind: "entity", class: cls, canonical: e.canonical, reason: `it would change the saved ${clash.cls} entity ${JSON.stringify(clash.canonical)}` });
         continue;
+      }
+      if (cls === "vocabulary") {
+        // The last class, so `entities` already holds every person and org entity; `columns` is final.
+        shields ??= shieldedForms(guard.profile, columns, entities, guard.map);
+        const reason = shieldReason(e, shields);
+        if (reason !== undefined) {
+          dropped.push({ kind: "vocabulary", canonical: e.canonical, reason });
+          continue;
+        }
       }
       const taken = [...e.aliases, ...e.parts].filter((f) => owner.has(f));
       const entity = taken.length === 0 ? e : { canonical: e.canonical, aliases: e.aliases.filter((f) => !owner.has(f)), parts: e.parts.filter((f) => !owner.has(f)) };

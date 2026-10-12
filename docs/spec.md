@@ -143,6 +143,11 @@ plan (exit 2) before anything is profiled or sent.
   ask again about a column that already has a question, change a saved entity or flip a pattern
   has that part dropped and listed. A new entity's alias or part that is already a form of a saved
   entity is left out of it and listed. A new question whose id is taken gets the next free `qN`.
+- **Vocabulary that would shield.** A vocabulary entry the analyst proposes (first plan or re-plan) is
+  dropped and listed (`kind: "vocabulary"`) when one of its forms equals a value blinded in a profile
+  column (its samples), a map value or canonical form, or a person or org entity form or part. A
+  vocabulary form keeps its words in clear, and `blind run --yes` skips the review that would catch it.
+  Human vocabulary (`--answer`, `--from-audit`, hand edits) is not checked.
 - **The report.** After the spec, `blind plan` prints what was added, classified and dropped.
   `--json` prints that report as JSON instead of the spec:
   `{ "spec", "reused", "added": { "columns", "entities", "questions" }, "classified", "dropped", "notes" }`.

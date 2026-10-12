@@ -32,7 +32,7 @@ import {
   parseDecisions,
   type ReportFinding,
 } from "./fromaudit.ts";
-import { type Dropped, freshDiff, isEmptyPart, mergeProposal, type PlanDiff, seenAfter, unseenPart } from "./merge.ts";
+import { type Dropped, freshDiff, guardFresh, isEmptyPart, mergeProposal, type PlanDiff, seenAfter, unseenPart } from "./merge.ts";
 import { terminalStream, terminalText } from "../terminal.ts";
 
 export interface PlanIO {
@@ -169,6 +169,18 @@ function readSaved(cwd: string): Spec | undefined {
   return parseSpec(text, path);
 }
 
+/** The map `blind apply` wrote, if there is one: its values are blinded, so no analyst vocabulary may keep them. An unreadable map stops the plan. */
+function readMapIfAny(cwd: string): ReturnType<typeof readMap> | undefined {
+  const path = join(cwd, BLIND_DIR, MAP_FILE);
+  try {
+    return readMap(path);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    if (e instanceof MapError) throw new Refusal(`${path}: ${e.message}`);
+    throw new Refusal(`${path}: cannot read the map`);
+  }
+}
+
 const dropLabel = (d: Dropped): string => {
   switch (d.kind) {
     case "column":
@@ -179,6 +191,8 @@ const dropLabel = (d: Dropped): string => {
       return `${d.class} entity ${q(d.canonical)}`;
     case "pattern":
       return `pattern ${d.name}`;
+    case "vocabulary":
+      return `analyst vocabulary ${q(d.canonical)}`;
   }
 };
 
@@ -191,8 +205,12 @@ export function renderDiff(diff: PlanDiff): string {
   for (const e of entities) out.push(`  added ${e.class} entity ${q(e.canonical)}`);
   for (const id of questions) out.push(`  added question ${id}`);
   for (const c of diff.classified) out.push(`  classified ${where(c.location)}  ${c.from} -> ${c.to}`);
-  if (diff.dropped.length > 0) out.push(`  dropped (${diff.dropped.length}), because the analyst may not change a saved entry:`);
-  for (const d of diff.dropped) out.push(`    ${dropLabel(d)}: ${d.reason}`);
+  const saved = diff.dropped.filter((d) => d.kind !== "vocabulary");
+  const shielding = diff.dropped.filter((d) => d.kind === "vocabulary");
+  if (saved.length > 0) out.push(`  dropped (${saved.length}), because the analyst may not change a saved entry:`);
+  for (const d of saved) out.push(`    ${dropLabel(d)}: ${d.reason}`);
+  if (shielding.length > 0) out.push(`  dropped (${shielding.length}), because the analyst's vocabulary may not keep a blinded value in clear:`);
+  for (const d of shielding) out.push(`    ${dropLabel(d)}: ${d.reason}`);
   return `${out.join("\n")}\n`;
 }
 
@@ -300,20 +318,23 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
     if (!values["no-model"] && !useModel) remarks.push('privacy.mode is "none", so no model was called: heuristic analyst only');
     const modelOpts = { ...io.model, quiet: values.quiet, stderr: (line: string) => io.err.write(`blind plan: ${line}\n`) };
     let filled: Location[] = [];
+    let vocabDropped: Dropped[] = [];
     if (saved === undefined) {
       if (useModel) {
         const result = await runAnalyst(profile, policy, modelOpts);
+        const guarded = guardFresh(result.spec, { profile, map: readMapIfAny(io.cwd) });
         const seen = seenAfter([], profile);
-        spec = seen.length > 0 ? { ...result.spec, seen } : result.spec;
+        spec = seen.length > 0 ? { ...guarded.spec, seen } : guarded.spec;
         filled = result.filled;
+        vocabDropped = guarded.dropped;
       } else spec = heuristicSpec(profile, policy);
-      diff = freshDiff(spec);
+      diff = freshDiff(spec, vocabDropped);
     } else {
       const part = unseenPart(profile, saved);
       let proposal: Spec | null = null;
       if (useModel && isEmptyPart(part)) remarks.push(`${join(BLIND_DIR, SPEC_FILE)} already covers every column, key and document excerpt here, so no model was called`);
       else if (useModel) proposal = await proposeSpec(part, profile, policy, modelOpts);
-      const merged = mergeProposal(saved, proposal, part, policy);
+      const merged = mergeProposal(saved, proposal, part, policy, { profile, map: readMapIfAny(io.cwd) });
       spec = merged.spec;
       diff = merged.diff;
       filled = merged.filled;
@@ -325,7 +346,7 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
       io.out.write(`${JSON.stringify({ spec: written, ...diff, notes: [...notes, ...remarks] }, null, 2)}\n`);
     } else {
       io.out.write(renderSpec(spec));
-      if (diff.reused) io.out.write(`\n${renderDiff(diff)}`);
+      if (diff.reused || diff.dropped.length > 0) io.out.write(`\n${renderDiff(diff)}`);
       for (const n of [...notes, ...remarks]) io.out.write(`note: ${n}\n`);
       io.out.write(`\nwrote ${written} (mode 0600). Nothing is changed until you run \`blind apply\`.\n`);
     }

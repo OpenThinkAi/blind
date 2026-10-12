@@ -6,7 +6,7 @@
 import { describe, expect, test } from "bun:test";
 import { type AuditReport, auditTree, type Finding, type TreeEntry } from "../../src/audit/mechanical.ts";
 import { addSemanticLayer } from "../../src/audit/semantic.ts";
-import { generateKit, kitSpec } from "../../src/bench/synth.ts";
+import { generateKit, kitFileBytes, kitSpec } from "../../src/bench/synth.ts";
 import { applySpec } from "../../src/engine/apply.ts";
 import type { BlindMap } from "../../src/engine/map.ts";
 import type { Spec } from "../../src/schema.ts";
@@ -39,7 +39,7 @@ const names = (r: AuditReport): string[] => all(r).filter((f) => f.class === "se
 /** Kit v1 blinded under `spec`, audited by both layers, as `blind audit --no-model` runs them. */
 function kitAudit(spec: Spec): { report: AuditReport; text: string } {
   const kit = generateKit();
-  const r = applySpec(kit.files.map((f) => ({ path: f.path, bytes: Buffer.from(f.text) })), spec, { salt: SALT });
+  const r = applySpec(kit.files.map((f) => ({ path: f.path, bytes: kitFileBytes(f) })), spec, { salt: SALT });
   const entries = [{ path: "notes", kind: "dir" } as TreeEntry, ...r.outputs.map((o) => file(o.path, o.bytes))];
   const text = r.outputs.map((o) => Buffer.from(o.bytes).toString("utf8")).join("\n");
   return { report: audit(entries, spec, r.map), text };
@@ -62,7 +62,7 @@ describe("lone names on synthetic kit v1", () => {
     expect(report.summary.leaks).toBe(0);
     // Had it survived, the audit would call it a leak.
     const kit = generateKit();
-    const r = applySpec(kit.files.map((f) => ({ path: f.path, bytes: Buffer.from(f.text) })), spec, { salt: SALT });
+    const r = applySpec(kit.files.map((f) => ({ path: f.path, bytes: kitFileBytes(f) })), spec, { salt: SALT });
     const entries = r.outputs.map((o) => file(o.path, o.path === "notes/review.md" ? `${Buffer.from(o.bytes).toString("utf8")}\nAsk Marisol.\n` : o.bytes));
     const leaked = audit(entries, spec, r.map);
     expect(leaked.status).toBe("leak");

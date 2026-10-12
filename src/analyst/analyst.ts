@@ -107,13 +107,13 @@ export function dropRelaxed(spec: Spec, sent: Profile): { spec: Spec; dropped: D
 }
 
 /**
- * Turns back on every pattern the analyst explicitly set to false although the policy would have it on (the
+ * Turns back on every pattern the analyst set to false or left out where absent means off although the policy would have it on (the
  * pattern's class is sensitive), unless blind.toml `[patterns]` pins it: only blind.toml or a
- * human may switch a pattern off. Returns the names restored.
+ * human may switch a pattern off. Returns the names restored (an optional pattern the analyst omitted counts as off).
  */
 export function keepPatterns(spec: Spec, policy: Pick<Policy, "sensitive"> & Partial<Pick<Policy, "patterns">>): { spec: Spec; restored: PatternName[] } {
   const baseline = heuristicPatterns(policy);
-  const restored = (Object.keys(baseline) as PatternName[]).filter((name) => policy.patterns?.[name] === undefined && baseline[name] === true && spec.patterns[name] === false);
+  const restored = (Object.keys(baseline) as PatternName[]).filter((name) => policy.patterns?.[name] === undefined && baseline[name] === true && !patternOn(spec.patterns, name));
   if (restored.length === 0) return { spec, restored };
   return { spec: { ...spec, patterns: { ...spec.patterns, ...Object.fromEntries(restored.map((n) => [n, true])) } }, restored };
 }

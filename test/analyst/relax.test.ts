@@ -106,6 +106,22 @@ describe("the analyst cannot switch a pattern off (AGT-1863)", () => {
     expect(r.out).toMatch(/email off/);
   });
 
+  test("an optional pattern the analyst leaves out (absent means off) is restored and noted too", async () => {
+    // blind init pins secret in blind.toml; without the pin it is the policy's classes that decide.
+    writePolicy((p) => {
+      p.patterns = {};
+    });
+    const omitting = () => ({ ...relaxed(), patterns: ON });
+    const r = await plan(["in"], fake(omitting));
+    expect(r.code).toBe(0);
+    expect(savedSpec().patterns.address).toBe(true);
+    expect(savedSpec().patterns.secret).toBe(true);
+    expect(r.out).toContain("analyst turned pattern address off; it is on");
+    expect(r.out).toContain("analyst turned pattern secret off; it is on");
+    // Phone absent already means on, so it is not noted.
+    expect(r.out).not.toContain("analyst turned pattern phone off");
+  });
+
   test("a pattern the policy does not call sensitive stays as the analyst set it", async () => {
     writePolicy((p) => {
       p.sensitive.classes = ["person"];

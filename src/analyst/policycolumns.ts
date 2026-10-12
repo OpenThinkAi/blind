@@ -14,11 +14,18 @@ import { heuristicRule, profileLocations } from "./heuristic.ts";
 
 const fold = (s: string): string => s.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** Header and key names compare with separators folded: `_`, `-`, `.`, space and tab all count as one space. */
+const norm = (s: string): string => fold(s).replace(/[_\-. ]+/g, " ").trim();
 
-/** A header glob: `*` any run of characters, `?` one; case and runs of whitespace do not matter. */
-export function headerGlob(glob: string): RegExp {
-  const body = [...fold(glob)].map((ch) => (ch === "*" ? ".*" : ch === "?" ? "." : escapeRe(ch))).join("");
+/** A glob over names folded by `f`: `*` any run of characters, `?` one. */
+function globRe(glob: string, f: (s: string) => string): RegExp {
+  const body = [...f(glob)].map((ch) => (ch === "*" ? ".*" : ch === "?" ? "." : escapeRe(ch))).join("");
   return new RegExp(`^${body}$`, "su");
+}
+
+/** A header glob: `*` any run of characters, `?` one; case and separators (`_ - . ` and tab) do not matter. */
+export function headerGlob(glob: string): RegExp {
+  return globRe(glob, norm);
 }
 
 /** A path glob on a "/"-separated input-relative path: `*` and `?` within one segment, `**` across segments. */
@@ -126,7 +133,7 @@ class KeyPathGlob {
     this.segs = pathGlobSegments(glob).map((s) => (s === "**" ? "**" : headerGlob(s)));
   }
   test(path: string[]): boolean {
-    const folded = path.map(fold);
+    const folded = path.map(norm);
     const memo = new Map<string, boolean>();
     const go = (i: number, j: number): boolean => {
       const k = `${i},${j}`;
@@ -225,7 +232,7 @@ export class ColumnPolicy {
       rule,
       headers: rule.header === undefined ? null : rule.header.map((glob) => ({ glob, re: headerGlob(glob) })),
       path: rule.path === undefined ? null : new KeyPathGlob(rule.path),
-      sheet: rule.sheet === undefined ? null : headerGlob(rule.sheet),
+      sheet: rule.sheet === undefined ? null : globRe(rule.sheet, fold),
       file: rule.file === undefined ? null : pathGlob(rule.file),
     }));
     this.keep = new Set((policy.keep?.terms ?? []).map(fold).filter((t) => t !== ""));
@@ -235,7 +242,7 @@ export class ColumnPolicy {
   matches(loc: Location): RuleMatch[] {
     const name = loc.jsonPath !== undefined ? keyName(loc.jsonPath) : (loc.header as string);
     const segs = loc.jsonPath !== undefined ? keySegments(loc.jsonPath) : null;
-    const folded = name === null ? null : fold(name);
+    const folded = name === null ? null : norm(name);
     const out: RuleMatch[] = [];
     for (const c of this.rules) {
       // parsePolicy refuses a rule with neither; built by hand, it matches nothing rather than everything.

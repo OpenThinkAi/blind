@@ -268,6 +268,20 @@ treatment = "keep"
     expect(parsePolicy(renderPolicy(p))).toEqual(p);
   });
 
+  test("header and path names fold _ - . space and tab to one space (invoicetotal does not match)", () => {
+    const cp = new ColumnPolicy({ columns: [rule({ header: ["invoice total"], treatment: "keep", class: "vocabulary" })] });
+    const at = (header: string) => ({ file: "a.csv", header });
+    for (const h of ["invoice total", "invoice_total", "Invoice-Total", "INVOICE  TOTAL", "invoice.total", "_invoice total-"]) {
+      expect(cp.ruleFor(at(h))).toMatchObject({ treatment: "keep" });
+    }
+    expect(cp.ruleFor(at("invoicetotal"))).toBeUndefined();
+    expect(headerGlob("invoice_*").test("invoice total")).toBe(true);
+    expect(headerGlob("invoice-total").test("invoice total")).toBe(true);
+    const json = new ColumnPolicy({ columns: [rule({ path: "owner.visit_date", treatment: "drop" })] });
+    expect(json.ruleFor({ file: "u.json", jsonPath: '$.Owner["visit date"]' })).toMatchObject({ treatment: "drop" });
+    expect(json.ruleFor({ file: "u.json", jsonPath: "$.owner.visitdate" })).toBeUndefined();
+  });
+
   test("key segments and path globs: [*] ignored, $ optional, * one key, ** any number", () => {
     expect(keySegments("$.users[*].profile.dob")).toEqual(["users", "profile", "dob"]);
     expect(keySegments('$["visit date"]')).toEqual(["visit date"]);

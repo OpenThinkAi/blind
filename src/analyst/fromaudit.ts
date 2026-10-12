@@ -460,6 +460,7 @@ function notSensitive(c: Candidate, vocabulary: ReadonlySet<string>, kept: KeptV
   if (c.pattern === null) {
     const why = recurrenceExclusion(v, vocabulary);
     if (why === "only dictionary words") return "every word is a dictionary word: blind never recurs it";
+    if (why === "only dictionary or field-label words") return "every word is a dictionary or field-label word (Card, Phone, Email): blind never recurs it";
   }
   if (isMeasure(v)) return "a measure (a date, decimal, amount or quantity), not an identifier";
   if (!/\p{L}/u.test(v) && (v.match(/\d/g) ?? []).length < 5) return "a short number (under 5 digits, no letters), not an identifier";

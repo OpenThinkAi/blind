@@ -89,7 +89,7 @@ documents ------------ engine (deterministic) ---------------+--> blinded docume
 |---|---|
 | CSV, TSV | Delimiter, quoting and line endings kept |
 | JSON, JSONL | Edits spliced into the original text |
-| XLSX | Cells, sheet and defined names, formulas, comments, metadata, pivot caches |
+| XLSX | Cells, sheet and defined names, formulas, comments (including their legacy VML drawing, scrubbed only inside `<x:ClientData>`), metadata, pivot caches |
 | DOCX | Text across runs, tables, headers, comments, tracked changes, metadata |
 | Text, Markdown, logs | `.txt`, `.md`, `.log` |
 | VTT, SRT transcripts | Also transcript-shaped text and DOCX files, found by content |

@@ -849,8 +849,24 @@ to the real locations on this machine before it is checked and saved. `.blind/pr
 |---|---|---|
 | File path | every folder `dir_N`, the file `file_N`: `dir_1/dir_2/file_3` | always |
 | Sheet name | `sheet_N` | always |
-| JSON key segment | `["key_N"]` | the key is not ASCII-identifier-shaped (`[A-Za-z_][A-Za-z0-9_]*`, so it was written `["..."]`), or matches the host, email or ip pattern; `.name`, `[*]`, `.*` and `.*~` segments stay |
-| Table header | every header of the table becomes `col_N` (its 1-based column) | the header row looks like values: half the width or less filled, or not mostly text (always so when row 1 was used because no header row was found), a cell matches a pattern (ip, email, host, guid, mac), or at least half the filled cells are two or more capitalised words (`Marlo Fenwick`) |
+| JSON key segment | `["key_N"]` | the key is not ASCII-identifier-shaped (`[A-Za-z_][A-Za-z0-9_]*`, so it was written `["..."]`), matches the host, email or ip pattern, or is name-like (below); `[*]`, `.*` and `.*~` segments stay |
+| Table header row | every header of the table becomes `col_N` (its 1-based column) | the header row looks like values: half the width or less filled, or not mostly text (always so when row 1 was used because no header row was found), a cell matches a pattern (ip, email, host, guid, mac), or at least half the filled cells are two or more capitalised words (`Marlo Fenwick`) |
+| One table header | that header becomes `col_N` (its 1-based column); the others stay | the header is name-like (below), whatever the rest of the row |
+
+A header or key segment is **name-like** when any of these holds:
+
+- it carries a spec entity's canonical form, alias or part, in any case, as whole words or with the
+  separators removed (`rowan`, `rowan_pike` and `rowanPike` for the entity `Rowan Pike`). The
+  entities are those of the saved `.blind/spec.json` on a re-plan, and of the spec being audited;
+- it has a Title-Case word that is neither in blind's built-in dictionary (with a few header words
+  and abbreviations such as `hostname` and `addr`, and plural and tense endings taken off) nor a
+  word of a keep term (`Avery` in `Avery, Status, Amount`);
+- it is identifier-shaped: it has a `_` or `.` and a part that is not a dictionary word (`avery_q`,
+  so `$.users.avery_q.role` goes as `$.users["key_1"].role`; `user_id` and `created_at` stay);
+- it has a digit (`srv01`, `Q3 Total`), or is shaped like a token (`col_3`, `key_1`).
+
+A header or key that is exactly a keep term is not name-like by the last three rules; a spec entity
+always is.
 
 `N` counts from 1 over the distinct real strings in code-unit sorted order (headers: column
 order), so the same profile always gives the same tokens. A token is a counter, never a hash or
@@ -858,10 +874,14 @@ anything derived from the salt, so it says nothing about the name it stands for.
 keys are tokenised rather than left out, so the analyst still classifies their values. Tokens in a
 question's text are replaced by the real names, JSON-quoted. A reply that names a location that
 was not sent is rejected whole. A `profile-only` call whose profile carries an untokenised path,
-sheet name, value-like header row or flagged key segment is refused before anything is sent.
-`blind profile` and `blind plan` print a note with how many of each are tokenised. A table of
-ordinary title-case headers ("First Name", "Last Name") can be caught by the last rule; its
-headers then go out as `col_N` with their statistics, which costs the analyst context, never privacy.
+sheet name, value-like header row, name-like header (or a `col_N` in another column) or flagged
+key segment is refused before anything is sent; the check uses the call's keep terms and spec
+entities. `blind profile` and `blind plan` print a note with how many of each are tokenised (the
+note's count does not apply keep terms or spec entities). A table of ordinary title-case headers
+("First Name", "Last Name") can be caught by the header-row rule, and a header word blind does not
+know (`Comments (Optional)`) by the name-like rule; those headers then go out as `col_N` with their
+statistics, which costs the analyst context, never privacy. A lower-case name that is not a spec
+entity and has no `_`, `.` or digit (`$.users.avery`) is not name-like and goes out as it is.
 
 Each call prints one line to stderr before it is sent, after the command's name:
 `blind plan: analyst · openai-compatible · m · local-only · 31570 bytes sent`. The line is

@@ -6,7 +6,7 @@
 
 import { type AskOptions, ask } from "../model.ts";
 import type { Policy } from "../policy.ts";
-import { restoreSpec, tokeniseProfile } from "../profile/tokens.ts";
+import { entityForms, restoreSpec, tokeniseProfile } from "../profile/tokens.ts";
 import type { ColumnRule, EntityClassName, Location, Profile, Question, Spec } from "../schema.ts";
 import { type SchemaIssue, validateSpec } from "../validate.ts";
 import specSchema from "../../schema/spec.schema.json" with { type: "json" };
@@ -92,13 +92,15 @@ export function completeProposal(spec: Spec, profile: Profile, policy: Pick<Poli
  * Sends the analyst `sent` (the whole profile, or on a re-plan only what the saved spec lacks)
  * and returns its checked proposal. Column names are checked against `known`, the whole profile,
  * so a reply about a saved column reaches the merge and is reported there, not lost.
+ * `entities` are the saved spec's, on a re-plan: under profile-only a header or key carrying one is tokenised.
  * Throws ModelError (transport, privacy) or AnalystError (bad proposal).
  */
-export async function proposeSpec(sent: Profile, known: Profile, policy: Policy, opts: Omit<AskOptions, "policy">): Promise<Spec> {
-  // Under profile-only the analyst sees paths, sheet names, flagged keys and value-like headers
-  // as tokens; its reply is mapped back to the real locations here, before any check.
-  const tokens = policy.privacy.mode === "profile-only" ? tokeniseProfile(sent) : undefined;
-  const reply = await ask<Spec>("analyst", systemPrompt(policy), analystPrompt(tokens?.profile ?? sent, policy), proposalSchema, { ...opts, policy });
+export async function proposeSpec(sent: Profile, known: Profile, policy: Policy, opts: Omit<AskOptions, "policy">, entities?: Spec["entities"]): Promise<Spec> {
+  // Under profile-only the analyst sees paths, sheet names, flagged keys and value-like or name-like
+  // headers as tokens; its reply is mapped back to the real locations here, before any check.
+  const forms = entityForms(entities);
+  const tokens = policy.privacy.mode === "profile-only" ? tokeniseProfile(sent, { keep: policy.keep.terms, entities: forms }) : undefined;
+  const reply = await ask<Spec>("analyst", systemPrompt(policy), analystPrompt(tokens?.profile ?? sent, policy), proposalSchema, { ...opts, policy, entityForms: forms });
   let proposal = reply;
   if (tokens !== undefined) {
     const restored = restoreSpec(reply, tokens);

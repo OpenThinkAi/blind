@@ -571,7 +571,7 @@ describe("profile-only tokens (AGT-1782)", () => {
     // The saved profile keeps the real names; only what is sent is tokenised.
     const saved = JSON.parse(readFileSync(join(dir, ".blind", "profile.json"), "utf8")) as Profile;
     expect(saved.files.map((f) => f.path)).toContain(review);
-    expect(r.out).toContain("note: privacy.mode is profile-only: a model is sent 4 file path(s), 0 sheet name(s), the headers of 1 table(s) and 2 JSON key segment(s) as opaque tokens");
+    expect(r.out).toContain("note: privacy.mode is profile-only: a model is sent 4 file path(s), 0 sheet name(s), 3 header(s) in 1 table(s) and 2 JSON key segment(s) as opaque tokens");
   });
 
   test("a reply naming a location that was not sent is rejected and nothing is saved", async () => {
@@ -592,6 +592,51 @@ describe("profile-only tokens (AGT-1782)", () => {
     const data = dataOf(sent[0]?.body as { messages: { content: string }[] }) as unknown as { profile: Profile };
     expect(data.profile.files.map((f) => f.path)).toEqual(["Avery Quill/Marlo Fenwick review.csv", "notes.txt", "staff.csv", "team.json"]);
     expect(data.profile.jsonKeys.map((j) => j.path)).toEqual(['$["Tessaly Brook"].role', '$["Pell Varrick"].role']);
+  });
+
+  // AGT-1808: a single name header among ordinary ones, and an identifier-shaped key segment.
+  const names = () => {
+    writeFileSync(join(dir, "in", "ledger.csv"), "Avery,Status,Amount\nyes,open,12\nno,closed,30\n");
+    writeFileSync(join(dir, "in", "users.json"), '{"users": {"avery_q": {"role": "lead"}}}\n');
+  };
+
+  test("a single name header and an identifier-shaped key go as tokens, and the spec keeps the real locations", async () => {
+    names();
+    remote("profile-only");
+    const r = await plan(["in"], echoAnalyst());
+    expect(r.code).toBe(0);
+    const body = JSON.stringify(sent.map((x) => x.body));
+    expect(body.toLowerCase()).not.toContain("avery");
+    const data = dataOf(sent[0]?.body as { messages: { content: string }[] }) as unknown as { profile: Profile };
+    expect(data.profile.tables.map((t) => t.columns.map((c) => c.header))).toContainEqual(["col_1", "Status", "Amount"]);
+    expect(data.profile.jsonKeys.map((j) => j.path)).toEqual(['$.users["key_1"].role']);
+    const spec = savedSpec();
+    const real = spec.columns.map((c) => [c.file, c.header ?? c.jsonPath]);
+    for (const loc of [["ledger.csv", "Avery"], ["ledger.csv", "Status"], ["ledger.csv", "Amount"], ["users.json", "$.users.avery_q.role"]]) expect(real).toContainEqual(loc);
+    expect(spec.questions[0]?.about).toEqual({ file: "users.json", jsonPath: "$.users.avery_q.role" });
+  });
+
+  test("a re-plan tokenises a header or key that carries a saved spec entity", async () => {
+    remote("profile-only");
+    expect((await plan(["in"], echoAnalyst())).code).toBe(0);
+    // The saved spec now names an entity; a new file carries it in a lower-case header and a key.
+    const path = join(dir, ".blind", "spec.json");
+    const saved = savedSpec();
+    saved.entities = { person: [{ canonical: "Rowan Pike", aliases: [], parts: ["Rowan", "Pike"] }] };
+    rmSync(path);
+    writeFileSync(path, JSON.stringify(saved), { mode: 0o600 });
+    writeFileSync(join(dir, "in", "extra.csv"), "pike,Status\nx,open\n");
+    writeFileSync(join(dir, "in", "extra.json"), '{"byName": {"rowanPike": 1}}\n');
+    sent = [];
+    const r = await plan(["in"], echoAnalyst());
+    expect(r.code).toBe(0);
+    expect(sent).toHaveLength(1);
+    const body = JSON.stringify(sent.map((x) => x.body)).toLowerCase();
+    expect(body).not.toContain("pike");
+    expect(body).not.toContain("rowan");
+    const real = savedSpec().columns.map((c) => [c.file, c.header ?? c.jsonPath]);
+    expect(real).toContainEqual(["extra.csv", "pike"]);
+    expect(real).toContainEqual(["extra.json", "$.byName.rowanPike"]);
   });
 });
 

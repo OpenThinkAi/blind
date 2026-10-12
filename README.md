@@ -43,7 +43,7 @@ and never falls back to a less private mode:
 | Mode | Models | Sent |
 |---|---|---|
 | `local-only` (default) | Only a server on this machine (`127.0.0.1`, `::1`, `localhost`). `claude -p` and the hosted Anthropic API are refused. | The profile with up to 5 sample values per column (`[profile] samples`), and your policy. |
-| `profile-only` | Any model over https, including `claude -p` and the Anthropic API. | Exactly the profile and the policy, with no sample values by default. No document outlines or speaker names. File, folder and sheet names, and some JSON keys and headers, go as opaque tokens such as `file_3` and `sheet_1`; blind maps the reply back locally. Column headers, statistics and JSON key names still go out. |
+| `profile-only` | Any model over https, including `claude -p` and the Anthropic API. | Exactly the profile and the policy, with no sample values by default. No document outlines or speaker names. File, folder and sheet names go as opaque tokens such as `file_3` and `sheet_1`, and so does any header or JSON key that looks like a name or an identifier (`Avery`, `avery_q`, a spec entity, anything with a digit), one at a time (`col_2`, `["key_1"]`); blind maps the reply back locally. Ordinary headers and keys made of dictionary words or keep terms (`Status`, `user_id`), and the statistics, still go out. A lower-case name that is not yet a spec entity (`$.users.avery`) is not caught. |
 | `none` | No model is called. The planner uses built-in detectors only and the audit has no model layer. | Nothing. |
 
 Two limits hold in every mode. **Nothing over 120 characters is sent:** sample values are cut to

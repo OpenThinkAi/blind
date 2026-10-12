@@ -28,7 +28,7 @@ import type { AskOptions, PolicyView } from "../model.ts";
 import { ask, MAX_DATA_STRING, ModelError, ModelRefusal, ModelRejected, policyView, profilePayload, resolveEndpoint } from "../model.ts";
 import type { Policy } from "../policy.ts";
 import { buildProfile, forPrivacyMode } from "../profile/profile.ts";
-import { tokeniseProfile } from "../profile/tokens.ts";
+import { entityForms, tokeniseProfile } from "../profile/tokens.ts";
 import type { Spec } from "../schema.ts";
 import type { Schema } from "../validate.ts";
 import {
@@ -409,7 +409,8 @@ async function auditProfile(entries: readonly TreeEntry[], policy: Policy, opts:
   const result = forPrivacyMode(buildProfile([opts.root], policy.profile.samples, opts.cwd), "profile-only");
   summary.notSent = result.skipped.map((s) => ({ file: s.path, part: "", reason: `not in the profile: ${s.reason}` }));
   summary.chunks = 1;
-  const tokens = tokeniseProfile(result.profile);
+  const forms = entityForms(opts.spec.entities);
+  const tokens = tokeniseProfile(result.profile, { keep: policy.keep.terms, entities: forms });
   const real = new Map(tokens.profile.files.map((f, i) => [f.path, result.profile.files[i]?.path as string]));
   let reply: Reply<{ file: string }>;
   try {
@@ -421,7 +422,7 @@ async function auditProfile(entries: readonly TreeEntry[], policy: Policy, opts:
         data: profilePayload(tokens.profile, policy),
       },
       PROFILE_REPLY_SCHEMA,
-      { ...opts.ask, policy },
+      { ...opts.ask, policy, entityForms: forms },
     );
   } catch (e) {
     if (e instanceof ModelRefusal || !(e instanceof ModelError)) throw e;

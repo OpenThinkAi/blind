@@ -89,10 +89,28 @@ remove or weaken anything else:
 Saved entries are written back as the same objects, so their JSON is byte-identical. `blind plan`
 prints what was added, classified and dropped (`--json` for the same report as JSON).
 
-On a first plan there is no saved spec to protect, and a schema-valid reply that misclassifies a
-column is accepted as the analyst's proposal. That is why nothing is applied until a human has
-reviewed the spec (`blind plan` prints it, questions first), and why the audit below does not
-depend on a model.
+On a first plan there is no saved spec to protect, so a schema-valid reply is the analyst's
+proposal, with these exceptions, which apply to every plan and so to `blind run --yes`, which
+applies the spec with no human review (`dropForbidden`, `dropRelaxed` and `keepPatterns` in
+`src/analyst/analyst.ts`). The offending part is removed, the rest of the reply is kept, and
+`blind plan` prints a value-free note (a count and the header, or its token under `profile-only`,
+never a value):
+
+- **No treatment that only the owner sets.** A rule with `drop`, `redact` or `scan` is dropped.
+- **No keeping an identifying column.** A `keep` (or `vocabulary`) rule is dropped for a column
+  the profile shows to hold identifying values: a shape the heuristic analyst classifies (email,
+  host, IP, GUID, MAC, address, phone, plate, handle, numeric ID), or a column of people's names.
+  The column falls back to the heuristic rule. Measures and small categories can still be kept.
+- **No switching a pattern off.** A pattern the analyst sets to `false` is turned back on when the
+  policy's sensitive classes call it sensitive. A switch pinned in blind.toml `[patterns]` is the
+  owner's and is left as it is.
+- **No vocabulary that shields a blinded value**.
+
+The owner can still keep a column or turn a pattern off, in blind.toml (`[[columns]]` with
+`treatment = "keep"`, `[patterns]`) or by editing the spec. Anything else a reply gets wrong,
+such as a misclassified column that is not identifying, is accepted, which is why nothing is
+applied without a human's review outside `--yes` (`blind plan` prints the spec, questions
+first), and why the audit below does not depend on a model.
 
 ## The mechanical audit is independent
 

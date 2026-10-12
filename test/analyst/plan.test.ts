@@ -52,7 +52,7 @@ function proposal(): Spec {
       person: [{ canonical: "Avery Quill", aliases: ["A. Quill"], parts: ["Avery", "Quill"] }],
       org: [{ canonical: "Example Widgets", aliases: [], parts: [] }],
     },
-    patterns: { ip: true, email: true, host: true, guid: true, mac: false },
+    patterns: { ip: true, email: true, host: true, guid: true, mac: true },
     questions: [
       { id: "q1", text: "Values under ref_code look like internal project codes. Hide them?", options: ["blind", "keep"], answer: null, about: at("ref_code") },
     ],
@@ -299,6 +299,7 @@ describe("blind plan with a saved spec", () => {
       "column: the saved rule is a human decision",
       "column: the saved rule is already person",
       'entity: it would change the saved person entity "Avery Quill"',
+      "pattern: the saved spec has it on",
       "pattern: the saved spec has it on",
       "pattern: the saved spec has it on",
       "pattern: the saved spec has it on",

@@ -70,6 +70,9 @@ export function systemPrompt(policy: Pick<Policy, "sensitive" | "privacy">): str
     "10. Never use the treatments \"drop\", \"redact\" or \"scan\": they are not available to you. The owner's column rules in " +
       "data.policy that drop, redact or scan a column are applied after you, by blind itself, so do not repeat them; write the rule you " +
       "would have written without them (or leave that column out), and a rule that uses one of those treatments is discarded.",
+    "11. You cannot switch a pattern off: set every pattern that is sensitive under the policy to true; a pattern you turn off is turned back on. " +
+      "You cannot keep an identifying column (a person, email, phone, id, account, address, host...) in clear: a keep or vocabulary rule for one is discarded " +
+      "and blind decides that column itself. Only the owner, in blind.toml or by editing the spec, can do either.",
     ...(policy.privacy.mode === "profile-only" ? [VALUE_FREE] : []),
   ].join("\n");
 }

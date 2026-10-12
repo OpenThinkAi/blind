@@ -49,7 +49,7 @@ import type { ColumnRule, EntityClassName, Spec, Treatment } from "../schema.ts"
 import type { PseudoClass } from "./canonical.ts";
 // The profiler's header rule: spec rules name columns by the headers the profile reported.
 import { detectHeaderRow } from "../profile/table.ts";
-import { type Cell, CsvError, parseCsv, renderCell, type Row, serializeCsv, sniffDelimiter } from "./csv.ts";
+import { assertRowWidths, type Cell, CsvError, parseCsv, renderCell, type Row, serializeCsv, sniffDelimiter } from "./csv.ts";
 import { decode, type Encoding, EncodingError, encode } from "./encoding.ts";
 import { isJsonNumber, type JsonFormat, JsonError, type JsonToken, quote, scanJson, scanJsonl, stringOffsets } from "./json.ts";
 import type { BlindMap } from "./map.ts";
@@ -305,6 +305,7 @@ function planTable(
   // 0-based; like the profiler, row 1 stands in when no row looks like a header.
   const detected = detectHeaderRow(rows.map((r) => r.cells.map((c) => c.value)));
   const headerRow = rows.length === 0 ? -1 : (detected ?? 1) - 1;
+  assertRowWidths(rows.map((r) => r.cells), headerRow);
   const headerCells = headerRow >= 0 ? (rows[headerRow] as Row).cells : [];
   const width = Math.max(0, ...rows.map((r) => r.cells.length));
   const headers = Array.from({ length: width }, (_, i) => headerCells[i]?.value ?? "");

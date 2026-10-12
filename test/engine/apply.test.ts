@@ -397,6 +397,20 @@ describe("refusals and skips", () => {
     expect(res.skipped[0]?.reason).toMatch(/malformed CSV: unterminated quoted field/);
   });
 
+  test("an unclosed quote closed by a later quote is refused, not truncated", () => {
+    const res = run([file("bad.csv", 'id,name\n1,"Avery\n2,"Blake"\n3,Casey\n')]);
+    expect(res.outputs).toEqual([]);
+    expect(res.skipped[0]?.reason).toMatch(/malformed CSV: unexpected text after the closing quote/);
+  });
+
+  test("a row narrower than the header is refused, but a title line above the header is fine", () => {
+    const short = run([file("short.csv", "id,name,city\n1,Avery,Oslo\n2,Blake\n")]);
+    expect(short.outputs).toEqual([]);
+    expect(short.skipped[0]?.reason).toMatch(/malformed CSV: row 3 has 2 cells but the header has 3/);
+    const titled = run([file("titled.csv", "Quarterly list\nid,name,city\n1,Avery,Oslo\n2,Blake,Rome\n")]);
+    expect(titled.skipped).toEqual([]);
+  });
+
   test("a rule for a column that is not in the file is an error", () => {
     const s = spec({ columns: [rule("t.csv", "Ownr", "person", "blind")] });
     expect(() => run([file("t.csv", "Owner\nAvery Quill\n")], s)).toThrow(ApplyError);

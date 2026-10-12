@@ -2,7 +2,7 @@
 // Everything here is a pure function of its input: no clock, no randomness, no locale.
 
 import { type DetectorName, MAX_EXCERPT, type ValueStats } from "../schema.ts";
-import { DICTIONARY } from "./words.ts";
+import { DICTIONARY } from "../engine/words.ts";
 
 const OCTET = "(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)";
 

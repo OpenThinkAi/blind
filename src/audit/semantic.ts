@@ -15,7 +15,7 @@
 //   term (an exact address or a CIDR range) is kept;
 // - lone capitalised words (a given name or nickname the spec missed, AGT-1801): a
 //   Title-Case word of 3 or more letters standing alone (not part of a longer
-//   Title-Case run), not in the built-in dictionary (src/profile/words.ts), not
+//   Title-Case run), not in the built-in dictionary (src/engine/words.ts), not
 //   a keep or vocabulary term, and either not sentence-initial or repeated in a
 //   non-initial position elsewhere in the same file. A month or weekday
 //   abbreviation written with its dot ("9 Feb.") is not a name.
@@ -41,7 +41,7 @@ import { JsonError, scanJson, scanJsonl } from "../engine/json.ts";
 import type { BlindMap } from "../engine/map.ts";
 import { isPseudonym } from "../engine/pseudonym.ts";
 import { keepDomains, underKeptDomain, validIpv6 } from "../engine/text.ts";
-import { DICTIONARY } from "../profile/words.ts";
+import { DICTIONARY } from "../engine/words.ts";
 import type { Spec } from "../schema.ts";
 import {
   addLayer,

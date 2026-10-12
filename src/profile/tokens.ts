@@ -25,7 +25,7 @@
 
 import type { Entities, Location, Profile, ProfileTable, Question, Spec } from "../schema.ts";
 import { DETECTORS } from "./stats.ts";
-import { DICTIONARY } from "./words.ts";
+import { DICTIONARY } from "../engine/words.ts";
 
 const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 

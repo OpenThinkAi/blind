@@ -15,7 +15,7 @@
 // - not a value with fewer than MIN_RECUR_LENGTH letters and digits: the audit
 //   only ever calls a survivor that short a candidate, and "42" or "N/A"
 //   would otherwise be rewritten in every sentence;
-// - not a value whose every word is in the built-in dictionary (src/profile/words.ts),
+// - not a value whose every word is in the built-in dictionary (src/engine/words.ts),
 //   such as "open" or "Main Office": ordinary words are left to the spec, which
 //   can still list them as entities. The audit still reports them;
 // - not a spec vocabulary form, and (the caller's part) not a value from a
@@ -33,7 +33,7 @@
 // and a mapped value ranks after the spec entities when lengths tie.
 
 import type { Entities, PatternName, Patterns } from "../schema.ts";
-import { DICTIONARY } from "../profile/words.ts";
+import { DICTIONARY } from "./words.ts";
 import { canonicalize, PSEUDO_CLASSES, type PseudoClass } from "./canonical.ts";
 import { isHonorificOrRole } from "./honorifics.ts";
 import { isDateWord } from "./datecontext.ts";

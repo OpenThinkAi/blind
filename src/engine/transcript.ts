@@ -19,7 +19,7 @@
 // - Cue timing lines, SRT cue numbers and paragraph timestamps are never
 //   scanned, so they stay byte-identical.
 
-import { DICTIONARY } from "../profile/words.ts";
+import { DICTIONARY } from "./words.ts";
 import { isDateWord } from "./datecontext.ts";
 import { isOnlyHonorificsOrRoles } from "./honorifics.ts";
 import { nameParts, recurrenceExclusion } from "./recur.ts";

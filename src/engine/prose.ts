@@ -23,7 +23,7 @@
 // part of a value in a `keep` column ("Okonkwo" when the Vet column, kept, says
 // "Dr. Marisol Okonkwo") is kept too, so a policy that keeps a column keeps its names in prose.
 
-import { DICTIONARY } from "../profile/words.ts";
+import { DICTIONARY } from "./words.ts";
 import { isDateWord } from "./datecontext.ts";
 import { isGivenName, isSurname } from "./gazetteer.ts";
 import { isHonorificOrRole } from "./honorifics.ts";

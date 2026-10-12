@@ -80,6 +80,7 @@ optional and `{}` is valid. Each value is an array of entities:
 | `canonical` | string, non-empty | yes | The one form every mention resolves to, and the input to the pseudonym. Example: `"Avery Quill"`. |
 | `aliases` | array of non-empty strings | yes | Other ways the same entity is written: nicknames, misspellings, `Last, First`, acronyms, legal suffixes. Example: `["A. Quill", "Aves"]`. May be `[]`. |
 | `parts` | array of non-empty strings | yes | Pieces that also refer to it on their own, such as a given name or surname. Example: `["Avery", "Quill"]`. May be `[]`. |
+| `source` | `analyst` \| `human` \| `heuristic` | no | Who added it. `blind plan --from-audit` writes `"human"` on every entity it adds (see [below](#feeding-the-audit-back-into-the-spec)). The analyst cannot set it: a reply that does is rejected. |
 
 ### `patterns`
 
@@ -145,6 +146,45 @@ plan (exit 2) before anything is profiled or sent.
 - **The report.** After the spec, `blind plan` prints what was added, classified and dropped.
   `--json` prints that report as JSON instead of the spec:
   `{ "spec", "reused", "added": { "columns", "entities", "questions" }, "classified", "dropped", "notes" }`.
+
+## Feeding the audit back into the spec
+
+`blind plan --from-audit <report.json> -o <out>` turns what an audit could not explain into spec
+changes you decide. `<report.json>` is the output of `blind audit <out> --json`, and `-o` names the
+same blinded output tree. No model is called.
+
+- **Candidates.** The report shows masked values only, so each finding that points at one value
+  (a byte offset, a decoding, a masked value) is mapped back to its place in `<out>` (the file, the
+  zip member, its name or content) and the value is read there. It must mask exactly as the report
+  says and must not be a pseudonym in the map (`--map`, default `.blind/map.json`); otherwise the
+  finding is listed on stderr as not read back and the exit status is 1. A value found inside a
+  longer word is taken as that whole word. Each distinct value is one candidate, `c1`, `c2`, ... in
+  report order, listed with what raised it, where, and the class it suggests (`id` for identifier
+  shapes, `email`, `host`, the class of a spec entity or map value, none for a Title-Case phrase).
+- **Not candidates.** Findings that are not one value (a column the spec declares unknown or does
+  not mention, an unanswered question, a part the audit could not read, a model chunk not checked)
+  are listed and change nothing: `blind plan <inputs>` and `--answer` decide those.
+- **Deciding.** On a terminal you are asked about each candidate. Otherwise `--accept c1,c2=org`
+  and `--reject c3` (repeatable) decide them; without either, nothing is written. A bad id, an
+  accept with no class to give, or a refused reject stops with exit 2 and nothing written.
+
+| Decision | Spec change |
+|---|---|
+| `--accept c1` | an entity of the suggested class, `{ "canonical": <value>, "aliases": [], "parts": [], "source": "human" }` |
+| `--accept c1=<class>` | the same, of `person`, `org`, `host`, `email`, `id` or `location` |
+| `--accept c1=pattern` | the shape pattern the whole value matches (`email`, `ip`, `mac`, `guid`, `host`) is turned on |
+| `--reject c1` | a `vocabulary` entity with `source: "human"`, so the mechanical and semantic layers do not raise it again |
+| neither | nothing; the next audit raises it again |
+
+- **Saved entries are never changed.** New entities are appended; everything saved is written back
+  byte-identical. A value that is already a form of a saved entity changes nothing (and is said so);
+  accepting a saved vocabulary form is refused (delete it by hand first).
+- **Rejecting fails closed.** A value the mechanical layer found as a spec entity, map value or
+  pattern match cannot be rejected, nor can a value that contains, as whole words, a form of a spec
+  entity or a value or canonical form from the map: as vocabulary it would be kept and would shield
+  those words. Accept it or leave it undecided.
+- **Then** run `blind apply` and `blind audit` again. `--json` prints
+  `{ "spec", "candidates", "changes", "undecided", "other", "unmapped" }`.
 
 ## How `blind apply` uses the spec
 

@@ -91,7 +91,11 @@
       "properties": {
         "canonical": { "$ref": "#/$defs/nonEmpty" },
         "aliases": { "type": "array", "items": { "$ref": "#/$defs/nonEmpty" } },
-        "parts": { "type": "array", "items": { "$ref": "#/$defs/nonEmpty" } }
+        "parts": { "type": "array", "items": { "$ref": "#/$defs/nonEmpty" } },
+        "source": {
+          "description": "Who added the entity. Written by blind plan --from-audit (\"human\"); the analyst cannot set it.",
+          "enum": ["analyst", "human", "heuristic"]
+        }
       }
     },
     "question": {

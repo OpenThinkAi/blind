@@ -5,9 +5,10 @@
 // Nothing here changes a document: `blind apply` does that, and only from a saved spec.
 
 import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { SPEC_FILE } from "../apply.ts";
+import { MAP_FILE, SPEC_FILE } from "../apply.ts";
+import { MapError, readMap } from "../engine/map.ts";
 import { BLIND_DIR } from "../init.ts";
 import { type AskOptions, ModelError, modelsEnabled } from "../model.ts";
 import { loadPolicy, PolicyError } from "../policy.ts";
@@ -17,6 +18,20 @@ import type { ColumnRule, EntityClassName, Location, Spec } from "../schema.ts";
 import { parseSpec, SchemaError, validateProfile, validateSpec } from "../validate.ts";
 import { AnalystError, answerQuestion, proposeSpec, runAnalyst } from "./analyst.ts";
 import { heuristicSpec } from "./heuristic.ts";
+import {
+  ACCEPT_CLASSES,
+  type AcceptClass,
+  applyDecisions,
+  type Candidate,
+  type Change,
+  type Collected,
+  collectCandidates,
+  type Decision,
+  FromAuditError,
+  parseAuditReport,
+  parseDecisions,
+  type ReportFinding,
+} from "./fromaudit.ts";
 import { type Dropped, freshDiff, isEmptyPart, mergeProposal, type PlanDiff, seenAfter, unseenPart } from "./merge.ts";
 
 export interface PlanIO {
@@ -26,11 +41,14 @@ export interface PlanIO {
   cwd: string;
   /** Test seams, passed through to the model call. */
   model?: Pick<AskOptions, "fetch" | "spawn" | "env" | "timeoutMs">;
+  /** Asks the human one line on a terminal (`--from-audit` without decisions); null at end of input. Absent when stdin is not a TTY. */
+  prompt?: (question: string) => Promise<string | null>;
 }
 
 const PLAN_HELP = [
   "Usage: blind plan <inputs...> [--no-model] [--quiet] [--force] [--json]",
   "       blind plan --answer <id>=<option> [--answer ...]",
+  "       blind plan --from-audit <report.json> -o <out> [--accept <ids>] [--reject <ids>] [--map <path>] [--json]",
   "",
   "Profiles the inputs, asks the analyst model (models.analyst in blind.toml) for a spec, saves it as",
   ".blind/spec.json (mode 0600) and prints it for review: questions first, then columns by class,",
@@ -44,6 +62,16 @@ const PLAN_HELP = [
   "question is about. Human rules, answered questions, entities and patterns are never changed;",
   "any attempt is dropped and listed with what was added and classified.",
   "",
+  "With --from-audit, the report of `blind audit <out> --json` is turned into spec changes you decide.",
+  "Each value the audit raised is read back from the blinded output <out> (the report shows masked",
+  "values only) and listed once as a candidate c1, c2, ... with what raised it and where. On a",
+  "terminal you are asked about each; otherwise decide with --accept and --reject. Accepted, a value",
+  "is added to the spec as an entity (source human) of the class you give, or the suggested one; or",
+  "with <id>=pattern, its shape pattern is turned on. Rejected, it is added to the spec's vocabulary",
+  "so the audit does not raise it again. Undecided candidates change nothing and stay in the audit.",
+  "Saved entries are never changed. Findings that are not one value (columns, unanswered questions,",
+  "parts the audit could not read) are listed, not turned into changes. No model is called.",
+  "",
   "Options:",
   "  --answer <id>=<option>  Answer a question in the saved spec and print it again (repeatable)",
   "  --no-model              Heuristic analyst only: classify a column only when an email, ip, host,",
@@ -53,9 +81,15 @@ const PLAN_HELP = [
   "  --force                 Ignore the saved .blind/spec.json and plan from scratch (its edits and",
   "                          answers are lost)",
   "  --json                  Print what changed (added, classified, dropped) as JSON instead of the spec",
+  "  --from-audit <report>   Turn a `blind audit --json` report into spec changes (see above)",
+  "  -o, --out <out>         With --from-audit: the blinded output tree the report audited",
+  "  --accept <ids>          With --from-audit: accept candidates, e.g. c1,c2=org,c3=pattern (repeatable)",
+  "  --reject <ids>          With --from-audit: reject candidates into the vocabulary, e.g. c4,c5 (repeatable)",
+  "  --map <path>            With --from-audit: the map apply wrote (default .blind/map.json)",
   "  -h, --help              Show this help",
   "",
-  "Exit status: 0 spec saved; 1 spec saved but some inputs were not profiled (listed); 2 refused or failed.",
+  "Exit status: 0 spec saved; 1 spec saved but some inputs were not profiled, or (--from-audit) some findings",
+  "could not be read back from the output (listed); 2 refused or failed, nothing written.",
   "",
 ].join("\n");
 
@@ -195,6 +229,11 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
         quiet: { type: "boolean", default: false },
         force: { type: "boolean", default: false },
         json: { type: "boolean", default: false },
+        "from-audit": { type: "string" },
+        out: { type: "string", short: "o" },
+        accept: { type: "string", multiple: true },
+        reject: { type: "string", multiple: true },
+        map: { type: "string" },
         help: { type: "boolean", short: "h", default: false },
       },
     });
@@ -208,6 +247,30 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
     return 0;
   }
   const answers = values.answer ?? [];
+  const fromAuditOnly = values.out !== undefined || values.accept !== undefined || values.reject !== undefined || values.map !== undefined;
+  if (values["from-audit"] !== undefined) {
+    if (answers.length > 0 || positionals.length > 0 || values["no-model"] || values.force) {
+      io.err.write("blind plan: --from-audit changes the saved spec only; give it no inputs, --answer, --no-model or --force\n");
+      return 2;
+    }
+    if (values.out === undefined) {
+      io.err.write("blind plan: --from-audit needs -o <out>, the blinded output tree the report audited\n");
+      return 2;
+    }
+    try {
+      return await fromAudit(values["from-audit"], values.out, values, io);
+    } catch (e) {
+      if (e instanceof Refusal || e instanceof FromAuditError || e instanceof SchemaError || e instanceof MapError || e instanceof AnalystError) {
+        io.err.write(`blind plan: ${e.message}\nno spec was written\n`);
+        return 2;
+      }
+      throw e;
+    }
+  }
+  if (fromAuditOnly) {
+    io.err.write("blind plan: -o, --accept, --reject and --map go with --from-audit\n");
+    return 2;
+  }
   if (answers.length > 0 && (positionals.length > 0 || values["no-model"] || values.force || values.json)) {
     io.err.write("blind plan: --answer changes the saved spec only; give it no inputs, --no-model, --force or --json\n");
     return 2;
@@ -281,6 +344,156 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
   }
 }
 
+// --- --from-audit ------------------------------------------------------------
+
+const placeLabel = (p: { file: string; part: string; in: string; line: number | null }): string =>
+  `${p.part === "" ? p.file : `${p.file}!${p.part}`}${p.in === "content" ? "" : ` [${p.in}]`}${p.line === null ? "" : ` line ${p.line}`}`;
+
+function renderCandidate(c: Candidate): string[] {
+  const shown = c.places.slice(0, 3).map(placeLabel).join("; ");
+  const more = c.places.length > 3 ? `; and ${c.places.length - 3} more` : "";
+  const traits = [
+    c.severity,
+    c.kinds.join(", "),
+    `accept as: ${c.suggested ?? `(name one: ${ACCEPT_CLASSES.join("|")})`}`,
+    ...(c.pattern === null ? [] : [`shape: ${c.pattern}`]),
+    ...(c.known ? ["cannot be rejected (the spec or map already treats it as sensitive)"] : []),
+  ];
+  return [`  ${c.id}  ${q(c.value)}  ${traits.join("  ")}`, `      at ${shown}${more}`];
+}
+
+function renderChange(x: Change): string {
+  switch (x.result) {
+    case "entity":
+      return `  ${x.id}  accepted ${q(x.value)}: added ${x.class} entity (source human)`;
+    case "pattern":
+      return `  ${x.id}  accepted ${q(x.value)}: turned pattern ${x.pattern} on`;
+    case "vocabulary":
+      return `  ${x.id}  rejected ${q(x.value)}: added to the vocabulary (source human)`;
+    case "unchanged":
+      return `  ${x.id}  ${q(x.value)}: no change, ${x.note}`;
+  }
+}
+
+/** Asks about each candidate on the terminal. Returns the decisions made; skipped ones are left out. */
+async function promptDecisions(collected: Collected, saved: Spec, map: ReturnType<typeof readMap>, io: PlanIO & { prompt: NonNullable<PlanIO["prompt"]> }): Promise<Decision[]> {
+  const decisions: Decision[] = [];
+  for (const c of collected.candidates) {
+    io.out.write(`\n${renderCandidate(c).join("\n")}\n`);
+    const opts = [`a = accept as ${c.suggested ?? "(name a class)"}`, `<class> = accept as ${ACCEPT_CLASSES.join("|")}`];
+    if (c.pattern !== null) opts.push(`pattern = turn pattern ${c.pattern} on`);
+    if (!c.known) opts.push("r = reject (vocabulary)");
+    opts.push("s or empty = skip", "q = stop");
+    for (;;) {
+      const raw = await io.prompt(`  ${c.id}? ${opts.join(", ")}: `);
+      const a = raw?.trim() ?? "q";
+      if (a === "q") return decisions;
+      if (a === "" || a === "s") break;
+      let d: Decision;
+      if (a === "a") d = { id: c.id, action: "accept", as: null };
+      else if (a === "r") d = { id: c.id, action: "reject" };
+      else if (a === "pattern" || ACCEPT_CLASSES.includes(a as AcceptClass)) d = { id: c.id, action: "accept", as: a as AcceptClass | "pattern" };
+      else {
+        io.out.write(`  not an option: ${q(a)}\n`);
+        continue;
+      }
+      try {
+        applyDecisions(saved, collected.candidates, [...decisions, d], map);
+      } catch (e) {
+        if (!(e instanceof FromAuditError)) throw e;
+        io.out.write(`  ${e.message}\n`);
+        continue;
+      }
+      decisions.push(d);
+      break;
+    }
+  }
+  return decisions;
+}
+
+async function fromAudit(reportPath: string, out: string, values: { accept?: string[]; reject?: string[]; map?: string; json: boolean }, io: PlanIO): Promise<number> {
+  const saved = readSaved(io.cwd);
+  if (saved === undefined) throw new Refusal(`${join(io.cwd, BLIND_DIR, SPEC_FILE)} not found; run \`blind plan <inputs>\` first`);
+  const mapPath = resolve(io.cwd, values.map ?? join(BLIND_DIR, MAP_FILE));
+  let map;
+  try {
+    map = readMap(mapPath);
+  } catch (e) {
+    if (e instanceof MapError) throw e;
+    throw new Refusal(`${mapPath}: cannot read the map; pass --map with the map \`blind apply\` wrote`);
+  }
+  const reportFile = resolve(io.cwd, reportPath);
+  let text: string;
+  try {
+    text = readFileSync(reportFile, "utf8");
+  } catch {
+    throw new Refusal(`${reportFile}: cannot read the audit report`);
+  }
+  const findings = parseAuditReport(text, reportPath);
+  const collected = collectCandidates(findings, resolve(io.cwd, out), map);
+
+  const flagged = values.accept !== undefined || values.reject !== undefined;
+  // Checked before anything is printed or asked: a bad id or a refused decision writes nothing.
+  let decisions = parseDecisions(values.accept ?? [], values.reject ?? []);
+  let applied = applyDecisions(saved, collected.candidates, decisions, map);
+  const interactive = !flagged && !values.json && io.prompt !== undefined && collected.candidates.length > 0;
+
+  if (!values.json) {
+    io.out.write(collected.candidates.length === 0 ? "audit candidates: none to decide\n" : `audit candidates (${collected.candidates.length}):\n`);
+    if (!interactive) for (const c of collected.candidates) io.out.write(`${renderCandidate(c).join("\n")}\n`);
+    if (collected.other.length > 0) {
+      io.out.write(`\nnot one value, so not turned into spec changes (${collected.other.length}); \`blind plan <inputs>\` and --answer decide columns and questions:\n`);
+      for (const f of collected.other) io.out.write(`  ${placeLabel(f)}  ${f.class}  ${f.reason}\n`);
+    }
+  }
+  if (interactive) {
+    decisions = await promptDecisions(collected, saved, map, { ...io, prompt: io.prompt as NonNullable<PlanIO["prompt"]> });
+    applied = applyDecisions(saved, collected.candidates, decisions, map);
+  }
+
+  const decided = new Set(decisions.map((d) => d.id));
+  const undecided = collected.candidates.filter((c) => !decided.has(c.id)).map((c) => c.id);
+  const changed = applied.spec !== saved;
+  const written = changed ? writeSpec(io.cwd, checked(applied.spec)) : null;
+
+  if (values.json) {
+    const unmapped = collected.unmapped.map(({ finding: f, why }) => ({ file: f.file, part: f.part, in: f.in, offset: f.offset, class: f.class, masked: f.masked, why }));
+    const other = collected.other.map((f: ReportFinding) => ({ file: f.file, part: f.part, in: f.in, class: f.class, reason: f.reason }));
+    io.out.write(`${JSON.stringify({ spec: written, candidates: collected.candidates, changes: applied.changes, undecided, other, unmapped }, null, 2)}\n`);
+  } else {
+    if (applied.changes.length > 0) io.out.write(`\nchanges to the saved spec:\n${applied.changes.map(renderChange).join("\n")}\n`);
+    if (undecided.length > 0) {
+      io.out.write(`\nundecided (${undecided.length}): ${undecided.join(", ")}. Nothing was added for them; the audit will raise them again.\n`);
+      if (!flagged && !interactive) io.out.write("decide with: blind plan --from-audit <report> -o <out> --accept <ids> --reject <ids>\n");
+    }
+    io.out.write(
+      written === null
+        ? "\nthe spec was not changed.\n"
+        : `\nwrote ${written} (mode 0600). Run \`blind apply\` and \`blind audit\` again to see the effect.\n`,
+    );
+  }
+  for (const { finding: f, why } of collected.unmapped) io.err.write(`blind plan: not read back: ${placeLabel(f)}  ${f.class} ${f.masked}: ${why}\n`);
+  if (collected.unmapped.length > 0) {
+    io.err.write(`blind plan: ${collected.unmapped.length} finding(s) could not be read back from ${out}, so they are not candidates here\n`);
+    return 1;
+  }
+  return 0;
+}
+
 export function processPlanIO(): PlanIO {
-  return { out: process.stdout, err: process.stderr, cwd: process.cwd() };
+  const io: PlanIO = { out: process.stdout, err: process.stderr, cwd: process.cwd() };
+  if (process.stdin.isTTY) {
+    io.prompt = async (question) => {
+      const { createInterface } = await import("node:readline/promises");
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      try {
+        return await rl.question(question);
+      } catch {
+        return null;
+      } finally {
+        rl.close();
+      }
+    };
+  }
+  return io;
 }

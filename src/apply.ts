@@ -14,6 +14,7 @@ import { BLIND_DIR, SALT_FILE } from "./init.ts";
 import { loadPolicyIfAny, POLICY_FILE, PolicyError, withPolicyPatterns } from "./policy.ts";
 import type { Spec } from "./schema.ts";
 import { parseSpec, SchemaError } from "./validate.ts";
+import { readPreviousOutputs, staleOutputs } from "./runmanifest.ts";
 import { oneLine, terminalStream } from "./terminal.ts";
 
 export const SPEC_FILE = "spec.json";
@@ -47,6 +48,10 @@ const APPLY_HELP = [
   "      --map-out <path>  Where to write the reversal map (default .blind/map.json, mode 0600).",
   "                        An existing map there is reused, so earlier pseudonyms stay the same.",
   "  -h, --help            Show this help",
+  "",
+  "Files are written into <out> over whatever is there: apply never removes a file, so a file from an",
+  "earlier apply stays. When one sits where an input was written before its name was blinded, apply",
+  "warns. (`blind run` stages each round and never leaves an earlier round's file in <out>.)",
   "",
   "Exit status: 0 every input written, 1 some inputs not written (listed), 2 refused or failed.",
   "",
@@ -313,6 +318,13 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
     }
 
     io.out.write(renderReport(result));
+    // Files already in <out> that this apply did not write, where an input's earlier blinded name would be.
+    const outRel = toPosix(relative(io.cwd, outDir)) || ".";
+    for (const s of staleOutputs(outDir, result.files, readPreviousOutputs(io.cwd, outRel))) {
+      io.err.write(
+        `blind apply: warning: ${oneLine(s.stale)} in ${oneLine(outRel)} was not written by this apply, but it is where ${oneLine(s.input)} was written before its name was blinded; it may be an earlier copy of that input still holding values blinded now. blind never removes files it did not write; delete it if it is stale\n`,
+      );
+    }
     for (const i of collected.ignored) io.out.write(`ignored ${oneLine(i.path)}: ${oneLine(i.reason)}\n`);
     const skipped = [...collected.skipped, ...result.skipped];
     io.onResult?.(result, skipped);

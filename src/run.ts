@@ -11,19 +11,21 @@
 // class), and apply and audit run again, at most MAX_ROUNDS rounds in all. It stops early when
 // accepting changed nothing, since another round would find the same leaks.
 
-import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { PassThrough } from "node:stream";
+import { chmodSync, copyFileSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, unlinkSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { PassThrough, Writable } from "node:stream";
 import { parseArgs } from "node:util";
 import type { PlanDiff } from "./analyst/merge.ts";
 import { decideFromReport, type PlanIO, renderDiff, renderSpec, runPlan } from "./analyst/plan.ts";
 import { MAP_FILE, runApply, SPEC_FILE } from "./apply.ts";
+import type { ApplyResult, SkippedFile } from "./engine/apply.ts";
+import { type FileAuditStatus, type ManifestInput, readPreviousOutputs, type RunManifest, staleOutputs, writeRunManifest } from "./runmanifest.ts";
 import { EXIT_NOT_RUN, renderTable, runAudit } from "./audit/command.ts";
 import type { AuditReport } from "./audit/mechanical.ts";
 import { BLIND_DIR } from "./init.ts";
 import { loadPolicyIfAny } from "./policy.ts";
 import { parseSpec } from "./validate.ts";
-import { terminalStream } from "./terminal.ts";
+import { oneLine, terminalStream } from "./terminal.ts";
 
 export interface RunIO {
   out: NodeJS.WritableStream;
@@ -52,6 +54,12 @@ const RUN_HELP = [
   "At most 3 rounds in all; it stops early when the audit finds no leak, or when accepting changed",
   "nothing. Candidates that are not leaks are never decided here: review them with",
   "`blind audit <out> --json` and `blind plan --from-audit`. No model is called for the decisions.",
+  "",
+  "Each round is written to a private staging directory beside <out> and audited there; only the final",
+  "round's tree is moved into <out>, so no earlier round's file survives under an old name. Files",
+  "already in <out> are left alone (as `blind apply` does); run warns when one looks like a stale copy",
+  "of an input. .blind/run.json (mode 0600) records each input's output path, why any input was not",
+  "written, and the final audit status per output file.",
   "",
   "Options:",
   "  -o, --out <dir>       Output directory (must not overlap an input)",
@@ -150,56 +158,220 @@ async function chain(argv: string[], io: RunIO): Promise<number> {
     if (report.dropped.length > 0) io.out.write(renderDiff(report));
   }
 
-  // 2. Apply.
+  // 2. Apply, into a staging directory beside <out>; only the final round's tree reaches <out>.
   const mapOut = values["map-out"] ?? join(BLIND_DIR, MAP_FILE);
-  const applyCode = await runApply([...positionals, "-o", values.out, "--map-out", mapOut], { out: io.out, err: io.err, cwd: io.cwd });
-  if (applyCode === 2) {
-    io.err.write("blind run: apply refused or failed; nothing was audited\n");
+  const mapAbs = resolve(io.cwd, mapOut);
+  const outAbs = resolve(io.cwd, values.out);
+  const outRel = toPosix(relative(io.cwd, outAbs)) || ".";
+  if (within(mapAbs, outAbs)) {
+    io.err.write("blind run: the map must not be written inside the output directory: it holds the original values\n");
     return EXIT_NOT_RUN;
   }
+  const previous = readPreviousOutputs(io.cwd, outRel);
+  let stage: string | undefined;
+  const dropStage = (): void => {
+    if (stage !== undefined) rmSync(stage, { recursive: true, force: true });
+    stage = undefined;
+  };
+  try {
+    let last: Applied | undefined;
+    const round = async (): Promise<Applied> => {
+      const fresh = newStage(outAbs);
+      const a = await applyInto(fresh, outAbs, outRel, positionals, mapOut, io);
+      if (a.code === 2) {
+        rmSync(fresh, { recursive: true, force: true });
+        dropStage();
+        return a;
+      }
+      dropStage(); // the previous round's tree: nothing of it reaches <out>
+      stage = fresh;
+      last = a;
+      return a;
+    };
+    const refused = (what: string): number => {
+      io.err.write(`blind run: apply refused or failed; ${what}; nothing was written to ${outRel}\n`);
+      return EXIT_NOT_RUN;
+    };
 
-  // 3. Audit, over what apply wrote.
-  const mapAbs = resolve(io.cwd, mapOut);
-  const auditArgs = [values.out, "--map", mapAbs, ...(values["no-model"] ? ["--no-model"] : [])];
-  let auditCode: number;
-  let worst = Math.max(planCode, applyCode);
-  if (!values["accept-leaks"]) auditCode = await runAudit(auditArgs, io);
-  else {
-    // The audit's own JSON report feeds the next round; the table printed is rendered from it.
-    let report = await auditRound(auditArgs, io);
-    auditCode = report.code;
-    for (let round = 1; auditCode === EXIT_LEAK && round < MAX_ROUNDS; round++) {
-      io.out.write(`\n--accept-leaks: round ${round} left leaks; accepting each at its suggested class\n`);
-      let changed: boolean;
-      try {
-        const reportText = report.text;
-        const decided = await decideFromReport(() => reportText, `the round ${round} audit`, values.out, { acceptLeaks: true, map: mapOut, json: false }, { out: io.out, err: io.err, cwd: io.cwd });
-        changed = decided.changed;
-        worst = Math.max(worst, decided.code);
-      } catch (e) {
-        io.err.write(`blind run: --accept-leaks: ${(e as Error).message}; the round ${round} audit stands\n`);
-        break;
+    const first = await round();
+    if (first.code === 2) return refused("nothing was audited");
+
+    // 3. Audit, over what apply staged.
+    const auditArgs = (): string[] => [stage as string, "--map", mapAbs, ...(values["no-model"] ? ["--no-model"] : [])];
+    const audit = async (): Promise<{ code: number; text: string }> => auditRound(auditArgs(), rewriteIO(io, stage as string, outAbs, outRel));
+    let worst = Math.max(planCode, first.code);
+    let rounds = 1;
+    let final = await audit();
+    if (values["accept-leaks"]) {
+      for (let r = 1; final.code === EXIT_LEAK && r < MAX_ROUNDS; r++) {
+        io.out.write(`\n--accept-leaks: round ${r} left leaks; accepting each at its suggested class\n`);
+        let changed: boolean;
+        try {
+          const reportText = final.text;
+          const decided = await decideFromReport(() => reportText, `the round ${r} audit`, stage as string, { acceptLeaks: true, map: mapOut, json: false }, { out: io.out, err: io.err, cwd: io.cwd });
+          changed = decided.changed;
+          worst = Math.max(worst, decided.code);
+        } catch (e) {
+          io.err.write(`blind run: --accept-leaks: ${(e as Error).message}; the round ${r} audit stands\n`);
+          break;
+        }
+        if (!changed) {
+          io.out.write(`--accept-leaks: the spec did not change, so another round would find the same leaks; stopping after round ${r}\n`);
+          break;
+        }
+        io.out.write(`\n--accept-leaks: round ${r + 1}: apply and audit again\n`);
+        const again = await round();
+        if (again.code === 2) return refused("nothing more was audited");
+        worst = Math.max(worst, again.code);
+        rounds = r + 1;
+        final = await audit();
       }
-      if (!changed) {
-        io.out.write(`--accept-leaks: the spec did not change, so another round would find the same leaks; stopping after round ${round}\n`);
-        break;
-      }
-      io.out.write(`\n--accept-leaks: round ${round + 1}: apply and audit again\n`);
-      const again = await runApply([...positionals, "-o", values.out, "--map-out", mapOut], { out: io.out, err: io.err, cwd: io.cwd });
-      if (again === 2) {
-        io.err.write("blind run: apply refused or failed; nothing more was audited\n");
-        return EXIT_NOT_RUN;
-      }
-      worst = Math.max(worst, again);
-      report = await auditRound(auditArgs, io);
-      auditCode = report.code;
     }
+    let code = final.code;
+    if (code === 0 && worst !== 0) {
+      io.err.write("blind run: the audit is clean, but some inputs were not profiled or not written (listed above), so the run is not clean\n");
+      code = 1;
+    }
+
+    // 4. Promote the final round's tree into <out>, and record the run.
+    try {
+      promote(stage as string, outAbs);
+      stage = undefined;
+    } catch (e) {
+      io.err.write(`blind run: cannot move the output into ${outRel} (${(e as Error).message}); nothing was written there\n`);
+      return EXIT_NOT_RUN;
+    }
+    const applied = last as Applied;
+    const files = applied.result?.files ?? [];
+    for (const s of staleOutputs(outAbs, files, previous)) {
+      io.err.write(
+        `blind run: warning: ${oneLine(s.stale)} in ${oneLine(outRel)} was not written by this run, but it is where ${oneLine(s.input)} was written before; it may be an earlier copy still holding values. blind never removes files it did not write; delete it if it is stale\n`,
+      );
+    }
+    const report = final.code === EXIT_NOT_RUN ? undefined : (JSON.parse(final.text) as AuditReport);
+    const statusOf = new Map((report?.files ?? []).map((f) => [f.path, f.status] as const));
+    const manifest: RunManifest = {
+      version: 1,
+      out: outRel,
+      rounds,
+      exit: code,
+      audit: report === undefined ? null : { status: report.status, leaks: report.summary.leaks, candidates: report.summary.candidates },
+      inputs: [
+        ...files.map((f): ManifestInput => ({ input: f.path, output: f.outputPath, audit: fileStatus(report, statusOf.get(f.outputPath)) })),
+        ...applied.notWritten.map((n): ManifestInput => ({ input: n.path, output: null, reason: n.reason, audit: null })),
+      ],
+    };
+    writeRunManifest(io.cwd, manifest);
+    return code;
+  } finally {
+    dropStage();
   }
-  if (auditCode === 0 && worst !== 0) {
-    io.err.write("blind run: the audit is clean, but some inputs were not profiled or not written (listed above), so the run is not clean\n");
-    return 1;
+}
+
+const toPosix = (p: string): string => p.split(sep).join("/");
+const within = (child: string, parent: string): boolean => {
+  const rel = relative(parent, child);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+};
+
+/** The audit's word for one file: clean when the audit ran and listed nothing for it. */
+function fileStatus(report: AuditReport | undefined, s: string | undefined): FileAuditStatus | null {
+  if (report === undefined) return null;
+  return s === "leak" || s === "candidates" ? s : "clean";
+}
+
+interface Applied {
+  code: number;
+  result: ApplyResult | undefined;
+  notWritten: readonly SkippedFile[];
+}
+
+/** A fresh private directory beside <out>, so the final move into it stays on one file system. */
+function newStage(outAbs: string): string {
+  mkdirSync(dirname(outAbs), { recursive: true });
+  return mkdtempSync(join(dirname(outAbs), `.${basename(outAbs)}.blind-stage-`));
+}
+
+/** Streams that name the staging directory as <out>: the user never chose, or needs to know, its name. */
+function rewriting(target: NodeJS.WritableStream, stageAbs: string, outAbs: string, outRel: string, cwd: string): NodeJS.WritableStream {
+  const stageRel = toPosix(relative(cwd, stageAbs));
+  return new Writable({
+    write(chunk, _enc, cb) {
+      target.write(String(chunk).split(stageAbs).join(outAbs).split(stageRel).join(outRel));
+      cb();
+    },
+  });
+}
+
+function rewriteIO(io: RunIO, stageAbs: string, outAbs: string, outRel: string): RunIO {
+  return { ...io, out: rewriting(io.out, stageAbs, outAbs, outRel, io.cwd), err: rewriting(io.err, stageAbs, outAbs, outRel, io.cwd) };
+}
+
+async function applyInto(stageAbs: string, outAbs: string, outRel: string, inputs: string[], mapOut: string, io: RunIO): Promise<Applied> {
+  const r = rewriteIO(io, stageAbs, outAbs, outRel);
+  const applied: Applied = { code: 0, result: undefined, notWritten: [] };
+  applied.code = await runApply([...inputs, "-o", stageAbs, "--map-out", mapOut], {
+    out: r.out,
+    err: r.err,
+    cwd: io.cwd,
+    onResult: (result, notWritten) => {
+      applied.result = result;
+      applied.notWritten = notWritten;
+    },
+  });
+  return applied;
+}
+
+/**
+ * Moves the staged tree into <out>. Into a missing or empty <out> it is one rename. Into a
+ * directory that already holds files, each staged file replaces the same path there and the rest
+ * are left alone, which is what `blind apply` does into a non-empty directory.
+ */
+export function promote(stage: string, out: string): void {
+  let st;
+  try {
+    st = lstatSync(out);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
   }
-  return auditCode;
+  const mode = 0o777 & ~process.umask();
+  if (st === undefined || (st.isDirectory() && readdirSync(out).length === 0)) {
+    if (st !== undefined) rmdirSync(out);
+    renameSync(stage, out);
+    chmodSync(out, mode);
+    return;
+  }
+  if (!st.isDirectory() && !st.isSymbolicLink()) throw new Error("it exists and is not a directory");
+  const walk = (dir: string, rel: string[]): void => {
+    for (const name of readdirSync(dir)) {
+      const abs = join(dir, name);
+      const segs = [...rel, name];
+      if (lstatSync(abs).isDirectory()) {
+        walk(abs, segs);
+        continue;
+      }
+      // Never write through a symbolic link already inside <out>.
+      for (let k = 1; k < segs.length + 1; k++) {
+        try {
+          if (lstatSync(join(out, ...segs.slice(0, k))).isSymbolicLink()) throw new Error(`${segs.slice(0, k).join("/")} is a symbolic link; blind never writes through one`);
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code === "ENOENT") break;
+          throw e;
+        }
+      }
+      const dest = join(out, ...segs);
+      mkdirSync(dirname(dest), { recursive: true });
+      try {
+        renameSync(abs, dest);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "EXDEV") throw e;
+        copyFileSync(abs, dest);
+        unlinkSync(abs);
+      }
+    }
+  };
+  walk(stage, []);
+  rmSync(stage, { recursive: true, force: true });
 }
 
 /** At most this many apply-and-audit rounds under --accept-leaks: the first, and two more. */

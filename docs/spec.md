@@ -555,11 +555,23 @@ the same code as the commands themselves.
   before anything is applied. Review the spec, then run again: the spec is saved, so the next run
   goes on. `--yes` applies without stopping. A plan that adds nothing does not stop, so a second
   run on the same corpus is zero-touch.
-- **Apply, then audit** over `<out>` with the same map (`--map-out <path>`, default
-  `.blind/map.json`).
+- **Apply, then audit** with the same map (`--map-out <path>`, default `.blind/map.json`). Each
+  round writes into a fresh private staging directory beside `<out>` (`.<out>.blind-stage-*`,
+  mode 0700; the report names it `<out>`), and the audit reads that. Only the final round's tree
+  reaches `<out>`, so a file an earlier round wrote under a name a later round changed (a value in
+  the name became an entity) cannot survive next to its renamed copy. Into a missing or empty
+  `<out>` that is one rename; into a directory that already holds files, each staged file replaces
+  the same path and nothing else is touched, as `blind apply` does. Files already in `<out>` from
+  an earlier run are never removed (the audit does not read them either); `run` warns when one sits
+  where an input was written before. A round whose apply refuses or fails writes nothing to `<out>`.
+- **The run record.** `.blind/run.json` (mode 0600) lists each input and the path it was written
+  under, for every input not written the reason, and the final audit's status per output file
+  (`clean`, `candidates` or `leak`), with the rounds run and the exit status. It holds paths and
+  statuses, no values, but the input paths are real: it stays in `.blind/` with the map, not in
+  `<out>`.
 - **`--accept-leaks`** closes the loop with no human and no model. While the audit finds a leak,
   its report goes to `blind plan --from-audit --accept-leaks` (see [above](#feeding-the-audit-back-into-the-spec)),
-  and apply and audit run again into `<out>` with the same map. At most 3 rounds in all; it stops
+  and apply and audit run again (into a new staging directory) with the same map. At most 3 rounds in all; it stops
   early when the audit finds no leak, or when accepting changed nothing (another round would find
   the same leaks). Only leaks are decided: candidates still need a human. The table printed for each
   round is the audit's own.

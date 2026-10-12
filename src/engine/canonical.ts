@@ -14,6 +14,8 @@
 // "j sample"). A title with a single name after it ("Dr. Sample") keeps the
 // title: it is a reference of its own, which identity.ts may resolve.
 
+import { isHonorificOrRole } from "./honorifics.ts";
+
 export const PSEUDO_CLASSES = ["person", "org", "host", "email", "id", "location", "value"] as const;
 /**
  * `redact` is not a pseudonym class: a span of it is written as REDACTED_VALUE, recorded nowhere
@@ -29,8 +31,6 @@ const ORG_SUFFIXES = new Set([
   "incorporated", "kk", "limited", "llc", "llp", "lp", "ltd", "nv", "oy", "plc",
   "pllc", "pte", "pty", "sa", "sarl", "sas", "srl",
 ]);
-
-import { isHonorificOrRole } from "./honorifics.ts";
 
 const GUID_CORE = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const GUID_RE = new RegExp(`^(?:\\{(${GUID_CORE})\\}|(${GUID_CORE}))$`, "i");

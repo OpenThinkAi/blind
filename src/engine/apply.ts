@@ -917,7 +917,9 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   // as written, and counted with that person's other spans (a removed column's person stays `removed`).
   // One that does not resolve keeps the lone name's pseudonym, as before.
   const identity = (v: string): string => aliases.get(canonicalize("person", v))?.key ?? canonicalize("person", v);
-  const sourceOf = (key: string): ExtraForm["source"] => [...forms, ...parts, ...voices].find((f) => f.cls === "person" && identity(f.value) === key)?.source ?? "map";
+  const sourceByPerson = new Map<string, ExtraForm["source"]>();
+  for (const f of [...forms, ...parts, ...voices]) if (f.cls === "person" && !sourceByPerson.has(identity(f.value))) sourceByPerson.set(identity(f.value), f.source);
+  const sourceOf = (key: string): ExtraForm["source"] => sourceByPerson.get(key) ?? "map";
   const titledForms: ExtraForm[] = titledSingles.map((form) => {
     const name = form.slice(form.lastIndexOf(" ") + 1);
     const alias = aliases.get(canonicalize("person", form));

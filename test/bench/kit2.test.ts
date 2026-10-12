@@ -8,7 +8,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type BenchReport, REPORT_FILE, runBench } from "../../src/bench/command.ts";
-import { ACCESS_XLSX, CALL_DOCX, CALL_VTT, CLOUD_DOMAIN, CONTAINER_LOG, CONTENTS_SHEET, SCOPES_JSON } from "../../src/bench/kit2.ts";
+import { ACCESS_XLSX, CALL_DOCX, CALL_VTT, CLOUD_DOMAIN, CONTAINER_LOG, CONTENTS_SHEET, SCOPES_JSON, SPOKEN_DECOY, SPOKEN_PHONE } from "../../src/bench/kit2.ts";
 import { COLUMNS, DEFAULT_SEED, generateKit, type Kit, type KitFile, kitFileBytes, writeKit } from "../../src/bench/synth.ts";
 import { applySpec } from "../../src/engine/apply.ts";
 import { readWorkbook, sheetRows } from "../../src/formats/xlsx.ts";
@@ -90,6 +90,11 @@ describe("synthetic kit v2", () => {
     expect(scoped("sheet name").map((v) => v.class)).toEqual(["org"]);
     expect(scoped("registry host label").map((v) => v.class)).toEqual(["id"]);
     expect(scoped("speaker", CALL_DOCX).map((v) => v.value)).toEqual(scoped("speaker", CALL_VTT).map((v) => v.value));
+    for (const f of [CALL_DOCX, CALL_VTT]) {
+      expect(scoped("spelled digits", f).map((v) => [v.value, v.class, v.canonical])).toEqual([[SPOKEN_PHONE, "id", "8015550142"]]);
+      expect(scoped("spoken email", f).map((v) => [v.class, /^[a-z]+(?: dot [a-z]+)* at [a-z]+ dot example$/.test(v.value), v.canonical.includes("@")])).toEqual([["email", true, true]]);
+    }
+    expect(kit.oracle.decoys.filter((d) => d.text === SPOKEN_DECOY).map((d) => d.files)).toEqual([[CALL_DOCX, CALL_VTT]]);
     for (const k of ["scope_id", "account_no", "org_name", "owner_email", "tenant_host"]) expect(scoped(`key path $.scopes[*].${k}`).length).toBeGreaterThan(0);
     expect(scoped("sheet Access, column Path").every((v) => v.class === "id" && /\/svc-[a-z]+-[a-z]+$/.test(v.value))).toBe(true);
     // Ground truth for every column and key path the v2 files have.

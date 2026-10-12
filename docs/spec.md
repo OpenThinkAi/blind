@@ -294,6 +294,28 @@ how the form is written:
   so `may` is left alone.
 - Anything else matches case-insensitively, with any run of whitespace between words.
 
+**Spoken values.** Values read aloud match no written shape, so free text is also searched for
+them, alongside the patterns:
+
+- A run of four or more digits spelled out one by one (`zero`/`oh` to `nine`, `double five` and
+  `triple oh` counted as two and three digits, any case), joined by spaces, a comma, a full stop, a
+  dash or one line break: `eight oh one, five five five, zero one four two` is the number
+  `8015550142`. It is classed by the first enabled pattern that matches the digits whole and is an
+  `id` otherwise, so it gets a numeric pseudonym of the same length. Fewer than four digits, or
+  number words with other words between them (`two dogs, one cat`), are left alone. This detector
+  has no switch; note that a counted-out sequence such as `five six seven eight` is also replaced.
+- An email address spoken word by word: a local part whose words are joined by `dot`,
+  `underscore` or `dash`, then `at`, then a domain whose labels are joined by `dot` and whose last
+  label is a known top-level domain (`avery dot quill at example dot com`). A written `.` works in
+  either half (`jane.doe at example.com`). A one-word local part that is ordinary prose before
+  "at" (`look`, `me`, `us`, `this`, ...) is not an address. On only when the `email` pattern is.
+
+Each spoken value is replaced whole, and its pseudonym is the one the written form gets
+(`avery.quill@example.com`, `8015550142`), so a value spoken in a transcript and written in a table
+share one pseudonym. Spoken values and pattern matches are taken leftmost first, the longest at the
+same start, so `jane at example.com` is one address, not a name and a host. The map records the written form,
+so `blind reveal` puts back `8015550142`, not the spoken words.
+
 `vocabulary` entities are kept as written and shield their words from other entity forms. A vocabulary form wins any length tie with another form, so a vocabulary acronym such as `SAM` is kept even when a person part `Sam` (which matches any capitalised text, including all-caps) has the same length.
 
 **Kept hosts.** A host name equal to, or under, a domain-shaped term of the `blind.toml` keep list

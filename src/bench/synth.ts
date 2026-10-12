@@ -300,6 +300,7 @@ export function generateKit(seed: number = DEFAULT_SEED, options: KitOptions = {
     files.push(...v2.files);
     columns = [...columns, ...v2.columns];
     spec = kitSpecV2(spec, v2);
+    decoys.push(...v2.decoys);
   }
   files.sort((x, y) => cmp(x.path, y.path));
 

@@ -92,7 +92,7 @@ documents ------------ engine (deterministic) ---------------+--> blinded docume
 | XLSX | Cells, sheet and defined names, formulas, comments (including their legacy VML drawing, scrubbed only inside `<x:ClientData>`), metadata, pivot caches |
 | DOCX | Text across runs, tables, headers, comments, tracked changes, metadata |
 | Text, Markdown, logs | `.txt`, `.md`, `.log` |
-| VTT, SRT transcripts | Also transcript-shaped text and DOCX files, found by content |
+| VTT, SRT transcripts | Also transcript-shaped text and DOCX files, found by content (a prose DOCX is profiled as a document) |
 
 File and folder names are blinded too. Files in any other format (PDF, images, PPTX, email, HTML,
 legacy `.doc` and `.xls`, ...) are listed and not written, and the command exits 1; blind does not

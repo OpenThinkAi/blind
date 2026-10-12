@@ -56,6 +56,7 @@ describe("profiling transcripts", () => {
     expect(validateProfile(profile).ok).toBe(true);
     expect(profile.files).toEqual([
       { path: "call.srt", format: "srt", size: expect.any(Number) },
+      { path: "memo.docx", format: "docx", size: expect.any(Number) },
       { path: "notes.txt", format: "text", size: expect.any(Number) },
       { path: "standup.vtt", format: "vtt", size: expect.any(Number) },
       { path: "sync.docx", format: "docx", size: expect.any(Number) },
@@ -70,15 +71,30 @@ describe("profiling transcripts", () => {
       },
       { file: "sync.docx", speakers: ["Teagan Marlow", "Avery Quill"], sampleLines: ["Teagan Marlow: Welcome all.", "Avery Quill: Thanks."] },
     ]);
-    // A transcript-shaped text file is a document too.
-    expect(profile.documents.map((d) => d.file)).toEqual(["notes.txt"]);
+    // A transcript-shaped text file is a document too, and a prose DOCX is a document (AGT-1833).
+    expect(profile.documents.map((d) => d.file)).toEqual(["memo.docx", "notes.txt"]);
+    expect(profile.documents[0]).toEqual({ file: "memo.docx", outline: ["Just a memo."], sampleSentences: ["Just a memo."] });
     expect(skipped).toEqual([
       { path: "fake.vtt", reason: "not a WebVTT transcript (no cue timing found)" },
-      { path: "memo.docx", reason: "docx is not profiled yet (only a transcript-shaped DOCX is)" },
     ]);
     const shown = renderProfile(profile, skipped, []);
     expect(shown).toContain('"standup.vtt"  vtt');
     expect(shown).toContain('speakers: "Avery Quill", "Teagan Marlow"');
+  });
+
+  test("a prose DOCX is profiled as a document with an outline and sample sentences", () => {
+    put("memo.docx", docx(["Quarterly Notes", "Reggie Hollis met Ines Varga on Monday. They agreed on the plan.", "", "Reggie Hollis will follow up."]));
+    const { profile, skipped } = buildProfile(["memo.docx"], 5, dir);
+    expect(validateProfile(profile).ok).toBe(true);
+    expect(skipped).toEqual([]);
+    expect(profile.transcripts).toEqual([]);
+    expect(profile.documents).toEqual([
+      {
+        file: "memo.docx",
+        outline: ["Quarterly Notes"],
+        sampleSentences: ["Quarterly Notes", "Reggie Hollis met Ines Varga on Monday.", "They agreed on the plan.", "Reggie Hollis will follow up."],
+      },
+    ]);
   });
 
   test("sample lines respect sampleCount", () => {

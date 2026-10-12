@@ -684,7 +684,7 @@ Every input file. Each entry:
 | Field | Type | Meaning |
 |---|---|---|
 | `path` | string, non-empty, unique | Path relative to the input root. Example: `"staff.csv"`. Every `file` elsewhere in the profile must be one of these. |
-| `format` | `csv` \| `tsv` \| `json` \| `jsonl` \| `xlsx` \| `docx` \| `text` \| `markdown` \| `log` \| `vtt` \| `srt` | The file's container format. `vtt` and `srt` are decided by content, so a `.txt` file holding WebVTT is `vtt`. A transcript-shaped DOCX or text file keeps `docx` or `text` here and also appears under `transcripts`. |
+| `format` | `csv` \| `tsv` \| `json` \| `jsonl` \| `xlsx` \| `docx` \| `text` \| `markdown` \| `log` \| `vtt` \| `srt` | The file's container format. `vtt` and `srt` are decided by content, so a `.txt` file holding WebVTT is `vtt`. A transcript-shaped DOCX or text file keeps `docx` or `text` here and also appears under `transcripts`; a DOCX that is not transcript-shaped appears under `documents`. |
 | `size` | integer, 0 or more | Size in bytes. Example: `2048`. |
 
 ### `tables`
@@ -771,7 +771,7 @@ Pairs of locations that share values, which suggests they hold the same kind of 
 `blind profile <inputs...>` (run it in the directory that holds `blind.toml`, which it needs for
 the sample count and the privacy mode) reads CSV (`.csv`), TSV (`.tsv`, `.tab`), JSON (`.json`), JSONL
 (`.jsonl`, `.ndjson`), XLSX workbooks (`.xlsx`), plain text (`.txt`, `.text`), Markdown (`.md`, `.markdown`), logs (`.log`),
-WebVTT (`.vtt`) and SRT (`.srt`) transcripts, and DOCX (`.docx`) files that are transcript-shaped, writes `.blind/profile.json` (mode
+WebVTT (`.vtt`) and SRT (`.srt`) transcripts, and DOCX (`.docx`) files, writes `.blind/profile.json` (mode
 0600) and prints it as a table; `--json` prints the JSON instead. `k` is `[profile] samples` in
 `blind.toml`, or `--samples N`. When `samples` is unset, `k` follows `[privacy] mode`: 5 under
 `local-only` and `none`, 0 (headers and statistics only) under `profile-only`.
@@ -804,8 +804,8 @@ WebVTT (`.vtt`) and SRT (`.srt`) transcripts, and DOCX (`.docx`) files that are 
 - **Transcripts.** Found by content, as `blind apply` finds them
   ([transcripts](#transcripts-in-apply)). A VTT, SRT or transcript-shaped text or DOCX file gets a
   `transcripts` entry; a transcript-shaped text file is also profiled as a document. A `.vtt` or
-  `.srt` file that is not a transcript, and a DOCX that is not transcript-shaped, are listed under
-  "not profiled". Under `profile-only` the speaker list is left out (an empty array) and a note
+  `.srt` file that is not a transcript is listed under "not profiled". A DOCX that is not
+  transcript-shaped is profiled as a document, from its paragraphs read as text. Under `profile-only` the speaker list is left out (an empty array) and a note
   says how many transcripts it was left out of.
 - **Co-occurrence.** Every pair of table columns or JSON key paths, in the same or different files, whose distinct
   values (compared case-insensitively, trimmed) overlap by more than half of the smaller column's

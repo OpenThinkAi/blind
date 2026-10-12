@@ -20,7 +20,7 @@ const PROFILE_HELP = [
   "Usage: blind profile <inputs...> [--samples N] [--json]",
   "",
   "Profiles CSV, TSV, JSON, JSONL, XLSX, plain text, Markdown and log files, VTT and SRT transcripts",
-  "and transcript-shaped DOCX files (directories are walked) and writes .blind/profile.json (mode",
+  "and DOCX files (directories are walked) and writes .blind/profile.json (mode",
   "0600). Every JSON key path is profiled like a table column, every worksheet as a table, and",
   "transcripts list their speakers.",
   "The profile is the only thing a model ever sees; this command prints it so you can check exactly",

@@ -30,7 +30,7 @@ const PROFILED: Record<string, "csv" | "tsv" | "json" | "jsonl" | "text" | "mark
   ".log": "log",
   ".vtt": "vtt",
   ".srt": "srt",
-  // Only a transcript-shaped DOCX is profiled (as a transcript); any other is reported.
+  // A transcript-shaped DOCX is profiled as a transcript, any other as a document.
   ".docx": "docx",
 };
 
@@ -164,7 +164,7 @@ function cooccurrence(cols: readonly ValueColumn[]): Cooccurrence[] {
 
 /**
  * Profiles CSV, TSV, JSON, JSONL, plain text, Markdown and log files, VTT and SRT transcripts and
- * transcript-shaped DOCX files under `inputs` (resolved against `cwd`), carrying at most `k` samples
+ * DOCX files (a transcript-shaped one as a transcript, any other as a document) under `inputs` (resolved against `cwd`), carrying at most `k` samples
  * per column, document or transcript. Files in formats this profiler cannot read,
  * and files that fail to decode or parse, are left out of the profile and listed in `skipped`.
  */
@@ -248,11 +248,12 @@ export function buildProfile(inputs: readonly string[], k: number, cwd: string):
         skipped.push({ path: f.path, reason: `cannot read: ${e.message}` });
         continue;
       }
-      if (!shapeParagraphs(paragraphs).shaped) {
-        skipped.push({ path: f.path, reason: "docx is not profiled yet (only a transcript-shaped DOCX is)" });
-        continue;
+      if (shapeParagraphs(paragraphs).shaped) {
+        addTranscript(f.path, shapeParagraphs(all).entries);
+      } else {
+        // A prose DOCX is profiled as a document: its paragraphs read like blank-line-separated text.
+        documents.push(profileText(f.path, all.filter((p) => p.trim() !== "").join("\n\n"), "text", k));
       }
-      addTranscript(f.path, shapeParagraphs(all).entries);
       files.push({ path: f.path, format, size: bytes.length });
       continue;
     }

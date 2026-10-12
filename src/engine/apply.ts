@@ -55,6 +55,7 @@ import type { BlindMap } from "./map.ts";
 import { type EntityEntry, Pseudonymizer } from "./pseudonym.ts";
 import { type ColumnOutcome, decide, outcomeOf } from "./columns.ts";
 import { DocxError, type DocxPlan, docxParagraphs, planDocx, renderDocx, scanDocx } from "./docx.ts";
+import { OfficeIds } from "./officeid.ts";
 import { NameRewriter, rewriteSpans } from "./names.ts";
 import { recurrenceForms, TextScanner } from "./recur.ts";
 import { EntityMatcher, type ExtraForm, keepDomains, type Span } from "./text.ts";
@@ -711,6 +712,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     if (cls !== "vocabulary" && list !== undefined) entities[cls as PseudoClass] = list;
   }
   const pz = new Pseudonymizer({ salt: opts.salt, map: opts.map, entities, avoid });
+  const officeIds = new OfficeIds(opts.salt);
 
   // Pass 1 ends here: derive every pseudonym in sorted order.
   const requests = new Set<string>();
@@ -750,6 +752,13 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     const cut = req.indexOf("\0");
     pz.pseudonym(req.slice(0, cut) as PseudoClass, req.slice(cut + 1));
   }
+  // Office's hex linking IDs, also in sorted order, so a collision is resolved the same way every run.
+  const hexIds = new Set<string>();
+  for (const p of plans) {
+    if (p.kind === "docx") for (const v of p.docx.hexIds) hexIds.add(v);
+    else if (p.kind === "xlsx") for (const v of p.plan.hexIds) hexIds.add(v);
+  }
+  for (const v of [...hexIds].sort(cmp)) officeIds.hex(v);
 
   // Pass 2: render.
   const outputs: InputFile[] = [];
@@ -758,7 +767,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     if (p.kind === "xlsx") {
       let r;
       try {
-        r = renderXlsx(p.input.path, p.input.bytes, p.plan, xlsxEnv, pz);
+        r = renderXlsx(p.input.path, p.input.bytes, p.plan, xlsxEnv, pz, officeIds);
       } catch (e) {
         if (e instanceof XlsxSpecError) throw new ApplyError(e.message);
         throw e;
@@ -789,7 +798,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       continue;
     }
     if (p.kind === "docx") {
-      const r = renderDocx(p.docx, pz);
+      const r = renderDocx(p.docx, pz, officeIds);
       const outputPath = names.renamePath(p.input.path, pz);
       files.push({
         path: p.input.path,

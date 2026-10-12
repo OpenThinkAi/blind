@@ -428,6 +428,10 @@ function revealXlsx(bytes: Uint8Array, rv: Revealer): RevealedFile {
       case "text":
       case "header":
         return text(value);
+      case "officeId":
+      case "documentId":
+        // Office's linking IDs stay as blinding wrote them: they are not reversed.
+        return value;
     }
   };
 
@@ -528,6 +532,8 @@ function revealDocx(bytes: Uint8Array, rv: Revealer): RevealedFile {
       const node = plan.nodes.get(ctx.member)?.[k];
       // The write pass sees the same values in the same order as the read, or it stops.
       if (node === undefined || node.value !== value) throw new Error(`docx reveal: ${ctx.member} changed between read and write`);
+      // Office's linking IDs stay as blinding wrote them: they are not reversed.
+      if (node.link !== undefined) return value;
       // Values replaced whole (authors, creator, company) are pseudonyms as a whole.
       if (node.whole !== undefined) {
         const r = rv.text(value);

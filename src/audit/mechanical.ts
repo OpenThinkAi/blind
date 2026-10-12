@@ -11,9 +11,11 @@
 // - every original value recorded in the map (surface form and canonical);
 // - every match of an enabled spec pattern that is not a pseudonym.
 //
-// In an OOXML package, namespace, content-type and relationship-type URIs are
-// format structure and are blanked before scanning, by their attribute position
-// in the parsed XML (see xml.ts ooxmlUriAttribute); everything else is read.
+// In an OOXML package, namespace, content-type and relationship-type URIs and
+// fixed template IDs are format structure and are blanked before scanning, by
+// their attribute position in the parsed XML (see xml.ts ooxmlUriAttribute and
+// officeIdAttribute); everything else is read, Office's per-document linking
+// IDs included (the engine replaces them, so one left in place still shows).
 //
 // Severity. A whole-word survivor of a spec value in the case the engine would
 // have replaced is a `leak`. Anything the audit finds but cannot call a leak
@@ -34,7 +36,7 @@ import { isPseudonym } from "../engine/pseudonym.ts";
 import { findPatternSpans, keepDomains, type Span } from "../engine/text.ts";
 import { detectHeaderRow } from "../profile/table.ts";
 import { fold, foldWithMap, stringView, type View, viewsOf, xmlBaseView } from "./views.ts";
-import { CONTENT_TYPES_PART, looksLikeXml, ooxmlUriAttribute, walkXml } from "./xml.ts";
+import { CONTENT_TYPES_PART, looksLikeXml, officeIdAttribute, ooxmlUriAttribute, walkXml } from "./xml.ts";
 import { looksLikeZip, readZip, ZipError } from "./zip.ts";
 
 export type Status = "clean" | "candidates" | "leak";
@@ -543,7 +545,7 @@ function scanBytes(sink: PartSink, part: string, bytes: Uint8Array, depth: numbe
 
 /**
  * An OOXML package member with its namespace, content-type and relationship-type URIs
- * (ooxmlUriAttribute) overwritten by spaces, same length, so offsets hold. Those values are format
+ * (ooxmlUriAttribute) and its fixed template IDs (officeIdAttribute "template") overwritten by spaces, same length, so offsets hold. Those values are format
  * structure: every package declares schemas.openxmlformats.org and the like, and they are never
  * document text. The positions come from parsing the member; the values themselves are never
  * consulted, so the same host anywhere else in the member is still found. A member that is not
@@ -556,7 +558,7 @@ export function blankOoxmlUris(member: string, bytes: Uint8Array): Uint8Array {
   const ranges: [number, number][] = [];
   walkXml(view.text, {
     attribute(element, attr, start, end) {
-      if (end > start && ooxmlUriAttribute(member, element, attr)) ranges.push([view.byteAt(start), view.byteAt(end)]);
+      if (end > start && (ooxmlUriAttribute(member, element, attr) || officeIdAttribute(member, element, attr) === "template")) ranges.push([view.byteAt(start), view.byteAt(end)]);
     },
   });
   if (ranges.length === 0) return bytes;

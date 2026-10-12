@@ -9,6 +9,7 @@
 // attribute is scanned, and a spec value found there stops the file instead of
 // passing through unseen.
 
+import { officeLinkAttribute, officeLinkText } from "./officeids.ts";
 import { type Frame, localName, type MemberResult, rewriteOoxml, type RewriteRules, ZipError } from "./ooxml.ts";
 
 /** The workbook cannot be read as a spreadsheet (as opposed to a malformed zip or XML member). */
@@ -45,7 +46,11 @@ export type Slot =
   /** A cached number (pivot caches): renumbered where its source was. */
   | "number"
   /** A chart cache point: a number or a string. */
-  | "cache";
+  | "cache"
+  /** One of Office's own linking IDs (src/formats/officeids.ts): `xr:uid`, threaded comment ids, `x14:id`. */
+  | "officeId"
+  /** `documentId` on `xr:revisionPtr`: a version prefix, then linking IDs. */
+  | "documentId";
 
 const CORE_TEXT = new Set(["title", "subject", "creator", "keywords", "description", "lastModifiedBy", "category", "contentStatus", "identifier", "version"]);
 const APP_TEXT = new Set(["Application", "Company", "Manager", "HyperlinkBase", "Template"]);
@@ -66,6 +71,11 @@ export function classify(member: string, el: Frame, parents: readonly Frame[], a
   const name = local(el);
   const parent = local(parents[parents.length - 1]);
   const attr = attribute === undefined ? undefined : localName(attribute);
+  // Office's linking IDs, in any part.
+  if (attribute !== undefined) {
+    const link = officeLinkAttribute(el.name, attribute);
+    if (link !== null) return link === "documentId" ? "documentId" : "officeId";
+  } else if (officeLinkText(el.name, parents[parents.length - 1]?.name)) return "officeId";
   switch (root) {
     case "workbook":
       if (attr === undefined) return name === "definedName" ? "formula" : null;

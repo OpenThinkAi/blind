@@ -276,6 +276,7 @@ rewritten at the XML level, so everything not blinded is copied byte for byte:
   `Person_`, `Id_` or `Org_` pseudonym even when the spec does not list them. Other document
   properties (core, app, custom), drawing names and alt text, form-field and content-control text,
   document variables, mail-merge strings and external hyperlink targets are free text.
+- Office's own linking IDs are rewritten wherever they are (see **Office structural IDs** below).
 - Images are copied unchanged and listed as a warning. A package that cannot be read, has a part
   this handler does not know that holds text, or embeds another file (an OLE object, a chart's
   workbook, macros) is listed and not written (exit 1).
@@ -358,11 +359,43 @@ is an error). The column table above applies to every cell, with these workbook 
   through the same corpus-wide scan as CSV and JSON text (patterns, spec entities and recurring
   values), and cells under `keep` get only recurring values replaced, as in a CSV file. Table column
   names and pivot field names are rewritten like the header cells they repeat.
+- Office's own linking IDs are rewritten wherever they are (see **Office structural IDs** below).
 - **Fail closed.** Every other text run and attribute is scanned for spec entities and recurring
   values; one found there stops the
   workbook (listed and not written, exit 1), naming the part and element but never the value. So
   does a member that cannot be parsed, a cell without a reference, and a zip that is not a workbook.
   Members that are not XML (images, printer settings) are copied unread and listed in the report.
+
+**Office structural IDs.** Word and Excel write IDs of their own into a package. They name no
+person, but two kinds are treated differently:
+
+- **Linking IDs** are random per document, so the same value in the original and the blinded file
+  would link the two. `blind apply` rewrites every one, by its position (element and attribute),
+  whatever the spec says: a GUID gets an `id` pseudonym (braces and case kept; it is in the map), a
+  hex value a same-length hex value derived with HMAC-SHA256 under the corpus salt (same case; an
+  8-digit value under `0x80000000` stays under it and non-zero, as Word requires of paragraph ids;
+  not in the map, so `blind reveal` does not restore it), and anything else at such a position is
+  replaced whole with an `Id_` pseudonym. The same value gets the same replacement everywhere, so
+  references between parts still resolve. The positions:
+  - `w:rsid*` attributes (`rsidR`, `rsidRPr`, `rsidRDefault`, `rsidP`, `rsidDel`, `rsidSect`,
+    `rsidTr`) and `val` on `w:rsid` and `w:rsidRoot` (settings.xml): edit-session ids;
+  - `w14:paraId`, `w14:textId` (paragraphs, table rows), `w15:paraId`, `w15:paraIdParent`,
+    `w16cid:paraId`, `w16cid:durableId`, `w16cex:durableId` (comments): paragraph and comment ids;
+  - `wp14:anchorId`, `wp14:editId` (drawing anchors), `id` on `a16:creationId` (drawing objects);
+  - `val` on `w14:docId` and `w15:docId` (the document's id), `w:nsid` (a list's id), `w:guid` (a
+    building block's id) and `c16:uniqueId` (a chart series' id);
+  - `ds:itemID` on `ds:datastoreItem` (customXml/itemProps*.xml) and `w:storeItemID` on
+    `w:dataBinding` (a content control bound to that store);
+  - any namespaced `uid` attribute (`xr:uid`, `xr2:uid`, `xr3:uid`, `xr10:uid`: worksheets,
+    tables, table columns, filters, data validations, pivot tables, slicers);
+  - `documentId` (its version prefix such as `8_` or `13_ncr:1_` is kept) and `xr10:uidLastSave`
+    on `xr:revisionPtr` (workbook.xml);
+  - `id`, `personId` and `parentId` on `threadedComment`, `id` on `person` (Excel threaded
+    comments), `id` on `x14:cfRule` and the `x14:id` text that points at it (conditional formats).
+- **Template IDs** are the same in every file made from the same template and are copied as they
+  are: `id` and `vid` on `thm15:themeFamily` in a theme part (the theme's family and variant
+  GUIDs), and `val` on `w:tmpl` (a list template's code).
+
 **Output.** Delimiter, quoting, line endings and encoding (UTF-8 with or without BOM, UTF-16 with
 BOM, otherwise 8-bit bytes) are preserved, and a file with nothing to replace is copied byte for
 byte. The reversal map goes to `.blind/map.json`, or to `--map-out <path>`, created with mode 0600.
@@ -419,8 +452,9 @@ the same code as the commands themselves.
   workbook or document is revealed whole or not at all: a member that cannot be read, a restored
   worksheet name the spreadsheet would refuse, two worksheet or defined names that would reveal to
   one name, or a pseudonym that reads differently with tracked changes accepted and rejected
-  refuses the file. Office's own structural IDs (`w:rsid*`, paragraph IDs, `xr:uid`) are not
-  identities and are not touched. Other formats have no reversal path: a single file is refused
+  refuses the file. Office's own linking IDs (`w:rsid*`, paragraph IDs, `xr:uid` and the rest under
+  **Office structural IDs**) are not identities: reveal leaves them as `blind apply` wrote them,
+  even the GUIDs the map records, and does not restore the originals. Other formats have no reversal path: a single file is refused
   (exit 2); in a tree it is listed and not revealed (exit 1). A file that does not parse, or is
   refused as above, is treated the same way. Two keys of one JSON object, or two files, that would
   reveal to the same name are refused (exit 2, nothing written).
@@ -456,9 +490,17 @@ up to three layers, mechanical, semantic, then model; the report lists the layer
   values in these attribute positions are format structure and are not read: namespace
   declarations (`xmlns`, `xmlns:*`), `ContentType` on `Default`/`Override` in `[Content_Types].xml`,
   `Type` on `Relationship` in a `.rels` member, `mc:Ignorable` prefix lists, and `uri` on `ext`,
-  `compatSetting` and `graphicData`, and `fmtid` on `property` in `docProps/custom.xml`. The exemption is by position in the parsed XML, never by value:
-  `schemas.openxmlformats.org` in document text or any other attribute is still reported, and so is
-  an external relationship's `Target`. The semantic layer skips the same positions.
+  `compatSetting` and `graphicData`, `fmtid` on `property` in `docProps/custom.xml`, and the
+  template IDs listed under **Office structural IDs** above (`id` and `vid` on `thm15:themeFamily`
+  in a theme part, `val` on `w:tmpl`). The exemption is by position in the parsed XML, never by
+  value: `schemas.openxmlformats.org`, or a theme's GUID, in document text or any other attribute
+  is still reported, and so is an external relationship's `Target`. The semantic layer skips the
+  same positions. Office's linking IDs are NOT exempt from the mechanical layer: `blind apply`
+  replaces the GUID-shaped ones with pseudonyms in the map, so one left in place is not a pseudonym
+  and is a `pattern:guid` leak, and an original put back is a map leak. The hex-shaped ones match
+  no mechanical pattern; the semantic layer skips every linking position (its hex finder would
+  otherwise report each rsid and paragraph id). The audit cannot tell a rewritten hex id from an
+  original one without the salt.
 - **Kept hosts.** A host name under a domain in the `blind.toml` keep list is not reported: the
   engine keeps it because the policy says to. An invalid `blind.toml` stops the audit (exit 3).
 - **`leak`**: a whole-word survivor in the case the engine would have replaced.

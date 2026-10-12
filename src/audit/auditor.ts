@@ -25,7 +25,7 @@
 // must not import it.
 
 import type { AskOptions, PolicyView } from "../model.ts";
-import { ask, MAX_DATA_STRING, ModelError, ModelRefusal, policyView, profilePayload } from "../model.ts";
+import { ask, MAX_DATA_STRING, ModelError, ModelRefusal, ModelRejected, policyView, profilePayload, resolveEndpoint } from "../model.ts";
 import type { Policy } from "../policy.ts";
 import { buildProfile, forPrivacyMode } from "../profile/profile.ts";
 import { tokeniseProfile } from "../profile/tokens.ts";
@@ -37,6 +37,8 @@ import {
   type Finding,
   maskValue,
   MAX_ZIP_DEPTH,
+  type ModelLayerStatus,
+  modelLayerName,
   type ModelLayerSummary,
   type TreeEntry,
 } from "./mechanical.ts";
@@ -357,15 +359,18 @@ function withoutExplained<W>(cands: readonly (W & { quote: string })[], opts: Mo
   return cands.filter((c) => !explained.has(fold(c.quote)));
 }
 
-type Outcome = { perFile: Map<string, Finding[]>; general: Finding[]; summary: ModelLayerSummary };
+/** What auditText and auditProfile return; `failed` is why a call gave no accepted answer, if one did not. */
+type Outcome = { perFile: Map<string, Finding[]>; general: Finding[]; failed?: ModelLayerStatus["status"]; why?: string };
 
-async function auditText(entries: readonly TreeEntry[], policy: Policy, opts: ModelLayerOptions, summary: ModelLayerSummary): Promise<Omit<Outcome, "summary">> {
+async function auditText(entries: readonly TreeEntry[], policy: Policy, opts: ModelLayerOptions, summary: ModelLayerSummary): Promise<Outcome> {
   const { lines, notSent } = extractLines(entries);
   summary.notSent = notSent;
   const chunks = chunkLines(lines);
   summary.chunks = chunks.length;
   const found: Finding[] = [];
   const general: Finding[] = [];
+  let failed: Outcome["failed"];
+  let why: string | undefined;
   const view: PolicyView = policyView(policy);
   for (const [i, chunk] of chunks.entries()) {
     const at = `chunk ${i + 1} of ${chunks.length}`;
@@ -384,21 +389,23 @@ async function auditText(entries: readonly TreeEntry[], policy: Policy, opts: Mo
     } catch (e) {
       if (e instanceof ModelRefusal || !(e instanceof ModelError)) throw e;
       general.push(failure(`model auditor failed at ${at}: ${firstLine(e)}; ${at} and every later chunk were not checked by a model`));
-      return { perFile: group(found), general };
+      return { perFile: group(found), general, failed: e instanceof ModelRejected ? "rejected" : "unreachable", why: firstLine(e) };
     }
     // Validate the whole reply (a bad line index rejects it) before dropping explained candidates.
     const bad = reply.candidates.find((c) => c.line >= chunk.length);
     if (bad !== undefined) {
       general.push(failure(`model auditor reply for ${at} rejected: it names line ${bad.line}, but ${chunk.length} lines were sent; ${at} was not checked by a model`));
+      failed ??= "rejected";
+      why ??= `reply for ${at} names line ${bad.line}, which was not sent`;
       continue;
     }
     summary.answered++;
     for (const c of withoutExplained(reply.candidates, opts)) found.push(finding(chunk[c.line] as Line, c.quote, c.reason));
   }
-  return { perFile: group(found), general };
+  return { perFile: group(found), general, failed, why };
 }
 
-async function auditProfile(entries: readonly TreeEntry[], policy: Policy, opts: ModelLayerOptions, summary: ModelLayerSummary): Promise<Omit<Outcome, "summary">> {
+async function auditProfile(entries: readonly TreeEntry[], policy: Policy, opts: ModelLayerOptions, summary: ModelLayerSummary): Promise<Outcome> {
   const result = forPrivacyMode(buildProfile([opts.root], policy.profile.samples, opts.cwd), "profile-only");
   summary.notSent = result.skipped.map((s) => ({ file: s.path, part: "", reason: `not in the profile: ${s.reason}` }));
   summary.chunks = 1;
@@ -418,11 +425,11 @@ async function auditProfile(entries: readonly TreeEntry[], policy: Policy, opts:
     );
   } catch (e) {
     if (e instanceof ModelRefusal || !(e instanceof ModelError)) throw e;
-    return { perFile: new Map(), general: [failure(`model auditor failed: ${firstLine(e)}; the profile was not checked by a model`)] };
+    return { perFile: new Map(), general: [failure(`model auditor failed: ${firstLine(e)}; the profile was not checked by a model`)], failed: e instanceof ModelRejected ? "rejected" : "unreachable", why: firstLine(e) };
   }
   const unknown = reply.candidates.filter((c) => !real.has(c.file));
   if (unknown.length > 0) {
-    return { perFile: new Map(), general: [failure(`model auditor reply rejected: it names ${unknown.length} file(s) that are not in the profile sent; the profile was not checked by a model`)] };
+    return { perFile: new Map(), general: [failure(`model auditor reply rejected: it names ${unknown.length} file(s) that are not in the profile sent; the profile was not checked by a model`)], failed: "rejected", why: `reply names ${unknown.length} file(s) not in the profile` };
   }
   summary.answered = 1;
   // Locate each quote in the file it names; a quote not found there is listed for the file, without a position.
@@ -460,7 +467,8 @@ function group(found: Finding[]): Map<string, Finding[]> {
 }
 
 /**
- * The report with the model layer added: "model" appended to the layers, the model's candidates
+ * The report with the model layer added: "model" appended to the layers (`model (unreachable)`,
+ * `model (rejected)` or `model (partial)` when a call gave no accepted answer; `modelLayer` says why), the model's candidates
  * merged in (source "model"), a candidate for every call that gave no accepted answer, and the
  * summary of what was sent. Nothing already in the report is removed or downgraded. Throws
  * ModelRefusal when the privacy mode, endpoint or key setting refuses the call.
@@ -478,6 +486,12 @@ export async function addModelLayer(report: AuditReport, entries: readonly TreeE
     answered: 0,
     notSent: [],
   };
-  const { perFile, general } = summary.sent === "profile" ? await auditProfile(entries, policy, opts, summary) : await auditText(entries, policy, opts, summary);
-  return { ...addLayer(report, "model", entries, perFile, general), model: summary };
+  const { perFile, general, failed, why } = summary.sent === "profile" ? await auditProfile(entries, policy, opts, summary) : await auditText(entries, policy, opts, summary);
+  let host: string | null = null;
+  try {
+    host = resolveEndpoint("auditor", cfg, policy.privacy.mode)?.host ?? null;
+  } catch {}
+  const modelLayer: ModelLayerStatus =
+    failed === undefined ? { status: "ran", host, reason: "" } : { status: summary.answered > 0 ? "partial" : failed, host, reason: why ?? "" };
+  return { ...addLayer(report, modelLayerName(modelLayer), entries, perFile, general), model: summary, modelLayer };
 }

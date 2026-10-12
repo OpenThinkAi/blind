@@ -16,8 +16,8 @@ import { Writable } from "node:stream";
 import { parseArgs } from "node:util";
 import { runPlan } from "../analyst/plan.ts";
 import { runApply, SPEC_FILE } from "../apply.ts";
-import { collectTree, EXIT_NOT_RUN, runAudit } from "../audit/command.ts";
-import type { AuditReport } from "../audit/mechanical.ts";
+import { collectTree, EXIT_NOT_RUN, layersLine, runAudit } from "../audit/command.ts";
+import type { AuditReport, ModelLayerStatus } from "../audit/mechanical.ts";
 import type { ApplyResult, SkippedFile } from "../engine/apply.ts";
 import { BLIND_DIR, writeSalt } from "../init.ts";
 import { defaultPolicy, POLICY_FILE, renderPolicy } from "../policy.ts";
@@ -89,7 +89,7 @@ export interface BenchReport {
   /** "kit": the kit's spec.json; "heuristic": planned with `--plan`. */
   spec: "kit" | "heuristic";
   apply: { exit: number; written: number; notWritten: SkippedFile[] };
-  audit: { exit: number; status: AuditReport["status"]; leaks: number; candidates: number; layers: string[] };
+  audit: { exit: number; status: AuditReport["status"]; leaks: number; candidates: number; layers: string[]; modelLayer?: ModelLayerStatus };
   leaks: { count: number; items: LeakItem[] };
   damage: { count: number; items: DamageItem[] };
   honesty: { count: number; items: HonestyItem[] };
@@ -162,7 +162,7 @@ export function renderBench(r: BenchReport): string {
     `${kit === "" ? "kit" : kit}: ${k.files} input file${k.files === 1 ? "" : "s"}, ${k.inputBytes} bytes, ${k.oracleValues} oracle values, ${k.decoys} decoys; spec: ${r.spec === "kit" ? "the kit's spec.json" : "planned by the heuristic analyst"}`,
     `leaks:   ${r.leaks.count}`,
     `damage:  ${r.damage.count}`,
-    `honesty: ${r.honesty.count} (audit: ${r.audit.status}, ${r.audit.leaks} leak${r.audit.leaks === 1 ? "" : "s"}, ${r.audit.candidates} candidate${r.audit.candidates === 1 ? "" : "s"})`,
+    `honesty: ${r.honesty.count} (audit: ${r.audit.status}, ${r.audit.leaks} leak${r.audit.leaks === 1 ? "" : "s"}, ${r.audit.candidates} candidate${r.audit.candidates === 1 ? "" : "s"}; ${layersLine({ layers: r.audit.layers, modelLayer: r.audit.modelLayer })})`,
     `not written: ${r.apply.notWritten.length}; not scored: ${r.unscored.length}`,
     `result: ${r.result}${r.result === "pass" ? " (scores only the values the oracle lists; it says nothing about anything the oracle misses)" : ""}`,
     `speed: apply ${(r.timing.applyMs / 1000).toFixed(2)} s, audit ${(r.timing.auditMs / 1000).toFixed(2)} s, total ${(r.timing.totalMs / 1000).toFixed(2)} s`,
@@ -266,7 +266,7 @@ export async function runBench(argv: string[], io: BenchIO): Promise<number> {
       kit: { version: oracle.version, seed: oracle.seed, rows: oracle.rows, files: scored.length + notWritten.length, inputBytes, oracleValues: oracle.values.length, decoys: oracle.decoys.length },
       spec: spec === undefined ? "heuristic" : "kit",
       apply: { exit: applyExit, written: engine.outputs.length, notWritten: [...notWritten] },
-      audit: { exit: auditExit, status: audit.status, leaks: audit.summary.leaks, candidates: audit.summary.candidates, layers: audit.layers },
+      audit: { exit: auditExit, status: audit.status, leaks: audit.summary.leaks, candidates: audit.summary.candidates, layers: audit.layers, modelLayer: audit.modelLayer },
       leaks: { count: leakScan.leaks.length, items: leakScan.leaks },
       damage: { count: damage.damage.length, items: damage.damage },
       honesty: { count: honesty.length, items: honesty },

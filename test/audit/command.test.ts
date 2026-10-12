@@ -57,7 +57,7 @@ describe("blind audit", () => {
   test("a clean output tree exits 0 and says what clean does and does not mean", async () => {
     const r = await audit("out");
     expect(r.code).toBe(0);
-    expect(r.out).toContain("status: clean (2 files; 0 leaks, 0 candidates; layers run: mechanical, semantic)");
+    expect(r.out).toContain("status: clean (2 files; 0 leaks, 0 candidates; layers run: mechanical, semantic; model: skipped (no blind.toml))");
     expect(r.out).toContain("not a guarantee");
     expect(r.err).toContain("mechanical and semantic layers only");
   });

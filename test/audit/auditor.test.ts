@@ -125,6 +125,7 @@ describe("what the model auditor is sent (local-only)", () => {
     expect(sent.join("\n")).toContain("lighthouse keeper");
     expect(sent.join("\n")).not.toContain("Avery Quill");
     expect(r.report?.layers).toEqual(["mechanical", "semantic", "model"]);
+    expect(r.report?.modelLayer).toEqual({ status: "ran", host: "127.0.0.1:9", reason: "" });
     expect(r.report?.model).toMatchObject({ config: "auditor", backend: "openai-compatible", model: "fake-auditor", mode: "local-only", sent: "text" });
     expect(r.report?.model?.answered).toBe(m.calls.length);
     // Every call is announced with its mode and size.
@@ -156,6 +157,7 @@ describe("what the model auditor is sent (local-only)", () => {
     const m = fakeModel(() => '{"candidates": []}');
     const quiet = await audit(m, "out", "--no-model", "--json");
     expect(quiet.report?.layers).toEqual(["mechanical", "semantic"]);
+    expect(quiet.report?.modelLayer).toEqual({ status: "skipped", host: null, reason: "--no-model" });
     expect(quiet.err).toBe("");
     writePolicy((p) => (p.privacy.mode = "none"));
     const none = await audit(m, "out", "--json");
@@ -250,6 +252,54 @@ describe("model candidates only add", () => {
     const f = r.report?.files.find((x) => x.path === "notes.txt")?.findings[0];
     expect(f).toMatchObject({ source: "model", class: "model:person", line: 2, offset: NOTES.indexOf(INJECTION) });
     expect(f?.reason).toContain("the quote is not on that line");
+  });
+});
+
+describe("the summary line says whether the model layer read anything", () => {
+  const down: ReturnType<typeof fakeModel> = {
+    calls: [],
+    fetch: async () => {
+      throw new Error("connect ECONNREFUSED");
+    },
+    spawn: async () => {
+      throw new Error("no claude in these tests");
+    },
+  };
+
+  test("an unreachable endpoint: not listed as run, named with its host, never clean", async () => {
+    const r = await audit(down, "out", "--json");
+    expect(r.code).toBe(1);
+    expect(r.report?.layers).toEqual(["mechanical", "semantic", "model (unreachable)"]);
+    expect(r.report?.modelLayer).toMatchObject({ status: "unreachable", host: "127.0.0.1:9" });
+    expect(r.report?.status).toBe("candidates");
+    const t = await audit(down, "out");
+    expect(t.out).toContain("layers run: mechanical, semantic; model: not reached (127.0.0.1:9))");
+    expect(t.out).not.toContain("layers run: mechanical, semantic, model");
+  });
+
+  test("a reply that fails the schema twice: replies rejected", async () => {
+    const m = fakeModel(() => "All clear.");
+    const r = await audit(m, "out", "--json");
+    expect(m.calls).toHaveLength(2);
+    expect(r.report?.layers).toEqual(["mechanical", "semantic", "model (rejected)"]);
+    expect(r.report?.modelLayer?.status).toBe("rejected");
+    const t = await audit(fakeModel(() => "All clear."), "out");
+    expect(t.out).toContain("model: replies rejected (127.0.0.1:9), nothing it said was accepted)");
+  });
+
+  test("--no-model says skipped; a successful run lists model as run with no model clause", async () => {
+    const off = await audit(down, "out", "--no-model");
+    expect(off.out).toContain("layers run: mechanical, semantic; model: skipped (--no-model))");
+    const ok = await audit(fakeModel(() => '{"candidates": []}'), "out");
+    expect(ok.out).toContain("; layers run: mechanical, semantic, model)");
+    expect(ok.out).not.toContain("model:");
+  });
+
+  test("the host is printed without credentials, path or query", async () => {
+    writePolicy((p) => (p.models.auditor = { ...LOCAL("x"), url: "http://127.0.0.1:9/v1?k=secret" }));
+    const r = await audit(down, "out");
+    expect(r.out).toContain("not reached (127.0.0.1:9))");
+    expect(r.out).not.toContain("secret");
   });
 });
 

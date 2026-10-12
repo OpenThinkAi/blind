@@ -89,9 +89,29 @@ export interface AuditReport {
   /** Findings not tied to one file (unanswered spec questions, a model layer that could not finish). */
   general: Finding[];
   summary: { files: number; leaks: number; candidates: number };
-  /** What the model layer was configured with and sent; present only when it ran. */
+  /** What the model layer was configured with and sent; present only when it was called. */
   model?: ModelLayerSummary;
+  /** Whether the model layer read anything. Set by `blind audit` whenever the layer was reached or deliberately skipped. */
+  modelLayer?: ModelLayerStatus;
 }
+
+/**
+ * `ran`: every call was answered. `partial`: some were, then one failed. `unreachable`: no answer
+ * was received (connection, timeout, HTTP or backend failure). `rejected`: the endpoint answered
+ * but no reply passed the schema. `skipped`: the layer was not called (`reason` says why).
+ * Only `ran` is listed in `layers` as plain "model"; the others read `model (<status>)`, and a
+ * skipped layer is not listed.
+ */
+export interface ModelLayerStatus {
+  status: "ran" | "partial" | "unreachable" | "rejected" | "skipped";
+  /** The endpoint's host and port only (never credentials, path or query); null for claude-cli or when skipped. */
+  host: string | null;
+  /** Why it was skipped, or the first line of the failure. */
+  reason: string;
+}
+
+/** The name `layers` gives a model layer in this state. */
+export const modelLayerName = (s: ModelLayerStatus): string => (s.status === "ran" ? "model" : `model (${s.status})`);
 
 export interface ModelLayerSummary {
   /** `auditor`, or `analyst` when blind.toml has no [models.auditor] and the analyst's backend was reused. */

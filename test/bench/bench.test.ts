@@ -73,6 +73,8 @@ describe("blind bench on synthetic kit v1", () => {
     expect(rep.kit).toMatchObject({ version: 1, seed: 1739, rows: 60, files: 4, decoys: 2 });
     // The audit is honest about the declared unknown column: candidates, never clean.
     expect(rep.audit).toMatchObject({ exit: 1, status: "candidates", leaks: 0, candidates: 1 });
+    expect(rep.audit.modelLayer).toEqual({ status: "skipped", host: null, reason: "--no-model" });
+    expect(r.out).toContain("layers run: mechanical, semantic; model: skipped (--no-model))");
     expect(r.out).toContain("result: pass");
     expect(r.out).toMatch(/^speed: apply \d+\.\d\d s, audit \d+\.\d\d s, total \d+\.\d\d s$/m);
   });

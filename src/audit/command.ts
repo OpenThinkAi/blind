@@ -170,18 +170,32 @@ export function renderTable(r: AuditReport): string {
     lines.push(`${f.status.padEnd(10)}  ${f.path}`);
   }
   if (r.model !== undefined) lines.push("", ...modelLines(r.model));
+  const layers = layersLine(r);
   const { files, leaks, candidates } = r.summary;
   const counts = `${files} file${files === 1 ? "" : "s"}; ${leaks} leak${leaks === 1 ? "" : "s"}, ${candidates} candidate${candidates === 1 ? "" : "s"}`;
   lines.push("");
   if (r.status === "clean") {
     lines.push(
-      `status: clean (${counts}; layers run: ${r.layers.join(", ")})`,
+      `status: clean (${counts}; ${layers})`,
       "No spec entity, map value or enabled pattern was found in any byte, name or archive member, no identifier-,",
       "name-, email- or host-shaped text was found that is not a pseudonym or kept, and nothing was left undecided.",
       "These checks find only what they look for; it is not a guarantee that nothing identifying remains.",
     );
-  } else lines.push(`status: ${r.status} (${counts}; layers run: ${r.layers.join(", ")})`);
+  } else lines.push(`status: ${r.status} (${counts}; ${layers})`);
   return `${lines.join("\n")}\n`;
+}
+
+/** `layers run: mechanical, semantic; model: not reached (127.0.0.1:11434)`: a model layer that read nothing is named, never listed as run. */
+export function layersLine(r: Pick<AuditReport, "layers" | "modelLayer">): string {
+  const m = r.modelLayer;
+  let line = `layers run: ${r.layers.filter((l) => !l.startsWith("model (")).join(", ")}`;
+  if (m === undefined || m.status === "ran") return line;
+  const at = m.host === null ? "" : ` (${m.host})`;
+  if (m.status === "skipped") line += `; model: skipped (${m.reason})`;
+  else if (m.status === "unreachable") line += `; model: not reached${at}`;
+  else if (m.status === "rejected") line += `; model: replies rejected${at}, nothing it said was accepted`;
+  else line += `; model: partial${at}, some chunks were not checked`;
+  return line;
 }
 
 function modelLines(m: NonNullable<AuditReport["model"]>): string[] {
@@ -238,7 +252,10 @@ export async function runAudit(argv: string[], io: AuditIO): Promise<number> {
     let report = addSemanticLayer(auditTree(entries, spec, map, keep), entries, spec, map, { keep });
     const skip = noModelReason(values["no-model"], policy);
     if (skip !== null) io.err.write(`blind audit: ${skip}\n`);
-    else if (policy !== null && !values["no-model"]) {
+    if (skip !== null || values["no-model"]) {
+      const reason = values["no-model"] ? "--no-model" : policy === null ? `no ${POLICY_FILE}` : 'privacy.mode is "none"';
+      report = { ...report, modelLayer: { status: "skipped", host: null, reason } };
+    } else if (policy !== null && !values["no-model"]) {
       if (!policy.models.auditorExplicit) {
         io.err.write("blind audit: [models.auditor] is not set; the auditor uses the analyst's backend with its own prompt\n");
       }

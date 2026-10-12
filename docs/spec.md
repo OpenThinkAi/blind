@@ -576,6 +576,17 @@ up to three layers, mechanical, semantic, then model; the report lists the layer
   call refused before sending (the privacy mode, endpoint or key setting) exits 3 and nothing is
   printed. The JSON report's `model` field gives the backend, model, mode, what was sent, the
   number of chunks and accepted answers, and what was not sent.
+- **The summary line says whether the model read anything.** `layers run:` lists only layers that
+  read the output. A model layer that did not is named after it, and the JSON report's `modelLayer`
+  field (`status`, `host`, `reason`; additive) says the same: `ran` (no clause); `partial` (some
+  chunks answered, then a call failed); `unreachable` (no usable reply: connection refused, timeout,
+  HTTP or backend failure), printed `layers run: mechanical, semantic; model: not reached
+  (127.0.0.1:11434)`; `rejected` (the endpoint answered but no reply passed the schema twice);
+  `skipped` (`--no-model`, no `blind.toml`, or `privacy.mode = "none"`), printed `model: skipped
+  (--no-model)`. Failed layers appear in `layers` as `model (unreachable)` and so on. Only the
+  endpoint's host and port are printed, never credentials, path or query. A failed layer still adds
+  its `model:unchecked` candidate, so the status is never `clean`. `blind run` prints the same line,
+  and a `blind bench` report carries `audit.modelLayer` and the same clause (the bench always skips).
 
 Status is `leak` if any leak, else `candidates` if any candidate, else `clean`. Exit status: 0
 clean, 1 candidates, 2 leak, 3 the audit could not run (a usage error, a missing or invalid spec or

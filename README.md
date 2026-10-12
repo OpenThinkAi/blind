@@ -23,7 +23,9 @@ Run the commands in the directory that holds `blind.toml`. `blind plan` asks the
 `blind.toml`, by default a server on your own machine; `blind plan --no-model` uses only the
 built-in detectors and leaves everything else for you to decide. `blind run` stops for review the
 first time (exit 3); once the spec is saved, the next run on the same kind of data needs no
-attention. `blind <command> --help` lists every option and exit status.
+attention. `blind run --accept-leaks` turns each leak the audit finds into a spec entity and runs
+apply and audit again, so the loop closes without you or a model; candidates are still yours to
+decide. `blind <command> --help` lists every option and exit status.
 
 ## What a model sees
 

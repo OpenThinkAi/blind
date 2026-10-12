@@ -11,6 +11,9 @@
 // Saved entries are never changed, as in merge.ts: the spec gains entities, vocabulary entries
 // and patterns turned on, all of them the human's decision (`source: "human"` on entities), and
 // everything already saved is written back as the same object. No model is called.
+//
+// `--accept-leaks` (leakDecisions) decides the mechanical layer's leaks without asking: each is
+// accepted at its suggested class. Candidates (semantic, model, variants) stay the human's.
 
 import { lstatSync, readFileSync, readlinkSync } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
@@ -397,6 +400,44 @@ export function parseDecisions(accept: readonly string[], reject: readonly strin
     out.push({ id, action: "reject" });
   }
   return out;
+}
+
+/**
+ * The class `--accept-leaks` gives a leak that suggests none: a value from the map that a column
+ * pass pseudonymised as `Value_`, or an account name in a path. Both identify a record or an
+ * account, which is what `id` is for.
+ */
+export const LEAK_FALLBACK_CLASS: AcceptClass = "id";
+
+/**
+ * `--accept-leaks`: an accept decision for every candidate the mechanical layer raised as a leak
+ * and `decided` does not already decide, at its suggested class (LEAK_FALLBACK_CLASS when it has
+ * none). Semantic and model findings are never leaks, so candidates stay the human's. Each one is
+ * tried on top of `decided` and the ones before it; a leak that cannot be accepted (a vocabulary
+ * form, say) is left out with why, and nothing else is affected.
+ */
+export function leakDecisions(
+  saved: Spec,
+  candidates: readonly Candidate[],
+  decided: readonly Decision[],
+  map: BlindMap,
+): { decisions: Decision[]; skipped: { id: string; value: string; why: string }[] } {
+  const ids = new Set(decided.map((d) => d.id));
+  const decisions = [...decided];
+  const skipped: { id: string; value: string; why: string }[] = [];
+  for (const c of candidates) {
+    if (c.severity !== "leak" || ids.has(c.id)) continue;
+    const d: Decision = { id: c.id, action: "accept", as: c.suggested ?? LEAK_FALLBACK_CLASS };
+    try {
+      applyDecisions(saved, candidates, [...decisions, d], map);
+    } catch (e) {
+      if (!(e instanceof FromAuditError)) throw e;
+      skipped.push({ id: c.id, value: c.value, why: e.message });
+      continue;
+    }
+    decisions.push(d);
+  }
+  return { decisions, skipped };
 }
 
 /** What one decision did to the spec. */

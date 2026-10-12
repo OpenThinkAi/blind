@@ -441,7 +441,7 @@ treatment = "keep"
     const p = defaultPolicy();
     p.privacy.mode = "none";
     writeFileSync(join(dir, "blind.toml"), `${renderPolicy(p)}\n${REPRO}${extra}`);
-    const r = blind(dir, "plan", "in");
+    const r = blind(dir, "plan", "in", "--show-values");
     expect(r.code).toBe(0);
     const spec = JSON.parse(readFileSync(join(dir, ".blind", "spec.json"), "utf8")) as Spec;
     return { out: r.out, at: (k: string) => spec.columns.find((c) => (c.header ?? c.jsonPath) === k) };

@@ -52,7 +52,7 @@ describe("blind run on synthetic kit v1", () => {
     const lines = readFileSync(csv, "utf8").split("\n");
     writeFileSync(csv, lines.map((l, i) => (l === "" ? l : `${l},${i === 0 ? "Desk Code" : `D-${1000 + i}`}`)).join("\n"));
 
-    const stopped = blind(dir, "run", "input", "-o", "out2", "--no-model");
+    const stopped = blind(dir, "run", "input", "-o", "out2", "--no-model", "--show-values");
     expect(stopped.code).toBe(3);
     expect(stopped.out).toContain("changes to the saved spec:");
     expect(stopped.out).toContain('added column "accounts.csv" "Desk Code"');
@@ -86,7 +86,7 @@ describe("blind run, in process", () => {
     let e = "";
     out.on("data", (d) => (o += d));
     err.on("data", (d) => (e += d));
-    const code = await runRun(argv, { out, err, cwd: dir, model });
+    const code = await runRun([...argv, "--show-values"], { out, err, cwd: dir, model });
     return { code, out: o, err: e };
   }
 

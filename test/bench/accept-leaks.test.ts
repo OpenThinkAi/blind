@@ -6,6 +6,7 @@ import { PassThrough } from "node:stream";
 import { collectTree } from "../../src/audit/command.ts";
 import { OracleMatcher, parseOracle, scanLeaks } from "../../src/bench/score.ts";
 import { DEFAULT_SEED, generateKit, writeKit } from "../../src/bench/synth.ts";
+import { maskValue } from "../../src/mask.ts";
 import { runRun } from "../../src/run.ts";
 import { parseSpec } from "../../src/validate.ts";
 
@@ -99,6 +100,40 @@ describe("blind run --accept-leaks on synthetic kit v2 (no model)", () => {
     expect(leaks).toEqual([]);
     expect(unscored).toEqual([]);
     expect(readFileSync(join(dir, "out", "sites", "visits.txt"), "utf8")).not.toMatch(/Quillhaven|Marrowdale|Orchard Point/);
+  });
+
+  test("AGT-1866: the run prints no original value unless --show-values; with it, the originals appear", async () => {
+    addLeakyFixture(join(dir, "input"));
+    const r = await runLeaky(dir, ["input", "-o", "out", "--yes", "--accept-leaks", "--no-model"]);
+    expect(r.out).toContain("--accept-leaks: round 1 left leaks");
+    const text = r.out + r.err;
+    for (const site of SITES) expect(text).not.toContain(site);
+    // The accepted leaks and the spec review are named by mask.
+    for (const site of SITES.slice(0, 3)) expect(text).toContain(`accepted ${maskValue(site)}: added id entity`);
+    // The column header "Site" is a value from the documents too.
+    expect(text).not.toMatch(/"Site"/);
+    // File paths are not values.
+    expect(text).toContain("sites.csv");
+
+    const shown = await runLeaky(dir, ["input", "-o", "out2", "--yes", "--accept-leaks", "--no-model", "--show-values"]);
+    expect(shown.out).toContain('"Site"');
+  });
+
+  test("AGT-1866: a run that stops for review prints the spec masked, and shown with --show-values", async () => {
+    addLeakyFixture(join(dir, "input"));
+    const quiet = async (argv: string[]) => {
+      const out = new PassThrough();
+      let o = "";
+      out.on("data", (d) => (o += d));
+      const code = await runRun(argv, { out, err: new PassThrough(), cwd: dir });
+      return { code, out: o };
+    };
+    const masked = await quiet(["input", "-o", "outm", "--no-model"]);
+    expect(masked.code).toBe(3);
+    expect(masked.out).not.toContain('"Site"');
+    expect(masked.out).toContain(maskValue("Site"));
+    const shown = await quiet(["input", "-o", "outs", "--no-model", "--show-values"]);
+    expect(shown.out).toContain('"Site"');
   });
 
   test("usage: --accept-leaks goes with --from-audit in plan", () => {

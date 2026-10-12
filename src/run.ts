@@ -23,6 +23,7 @@ import { type FileAuditStatus, type ManifestInput, readPreviousOutputs, type Run
 import { EXIT_NOT_RUN, renderTable, runAudit } from "./audit/command.ts";
 import type { AuditReport } from "./audit/mechanical.ts";
 import { BLIND_DIR } from "./init.ts";
+import { isTerminal, maskQuoted } from "./mask.ts";
 import { loadPolicyIfAny } from "./policy.ts";
 import { parseSpec } from "./validate.ts";
 import { oneLine, terminalStream } from "./terminal.ts";
@@ -37,7 +38,7 @@ export interface RunIO {
 }
 
 const RUN_HELP = [
-  "Usage: blind run <inputs...> -o <out> [--yes] [--accept-leaks] [--no-model] [--quiet] [--map-out <path>]",
+  "Usage: blind run <inputs...> -o <out> [--yes] [--accept-leaks] [--no-model] [--quiet] [--show-values] [--map-out <path>]",
   "",
   "Runs `blind plan` (reusing the saved .blind/spec.json: only columns, keys and excerpts it does",
   "not cover go to the analyst, and nothing does when it covers everything), then `blind apply`,",
@@ -63,12 +64,18 @@ const RUN_HELP = [
   "of an input. .blind/run.json (mode 0600) records each input's output path, why any input was not",
   "written, and the final audit status per output file.",
   "",
+  "Names from the documents (entities, sheet names, column headers, candidate values) are printed",
+  "masked, as `blind audit` does: the first two characters, ***, the length (Qu***12), so a CI log",
+  "keeps no real names. They are shown whole when the output is a terminal or with --show-values.",
+  "File paths are always shown.",
+  "",
   "Options:",
   "  -o, --out <dir>       Output directory (must not overlap an input)",
   "      --yes             Apply even when the plan changed the spec",
   "      --accept-leaks    Accept every audit leak into the spec and run apply and audit again (see above)",
   "      --no-model        Heuristic analyst only, and no model audit layer (see `blind plan --help`, `blind audit --help`)",
   "      --quiet           Do not print the per-call model line",
+  "      --show-values     Print original values instead of masked ones, even when the output is not a terminal",
   "      --map-out <path>  Where apply writes the map, and audit reads it (default .blind/map.json)",
   "  -h, --help            Show this help",
   "",
@@ -113,6 +120,7 @@ async function chain(argv: string[], io: RunIO): Promise<number> {
         "accept-leaks": { type: "boolean", default: false },
         "no-model": { type: "boolean", default: false },
         quiet: { type: "boolean", default: false },
+        "show-values": { type: "boolean", default: false },
         "map-out": { type: "string" },
         help: { type: "boolean", short: "h", default: false },
       },
@@ -131,9 +139,10 @@ async function chain(argv: string[], io: RunIO): Promise<number> {
     return EXIT_NOT_RUN;
   }
 
+  const show = values["show-values"] || isTerminal(io.out);
   // 1. Plan. Its --json report is what changed; its stderr (model lines, skipped files) passes through.
   const planOut = capture();
-  const planArgs = [...positionals, "--json", ...(values["no-model"] ? ["--no-model"] : []), ...(values.quiet ? ["--quiet"] : [])];
+  const planArgs = [...positionals, "--json", ...(values["no-model"] ? ["--no-model"] : []), ...(values.quiet ? ["--quiet"] : []), ...(show ? ["--show-values"] : [])];
   const planCode = await runPlan(planArgs, { out: planOut.stream, err: io.err, cwd: io.cwd, model: io.model });
   if (planCode === 2) {
     io.err.write("blind run: plan refused; nothing was applied or audited\n");
@@ -146,8 +155,8 @@ async function chain(argv: string[], io: RunIO): Promise<number> {
   for (const n of report.notes) io.out.write(`note: ${n}\n`);
 
   if (needsReview(report)) {
-    io.out.write(renderSpec(spec, loadPolicyIfAny(io.cwd)?.patterns ?? {}));
-    if (report.reused || report.dropped.length > 0) io.out.write(`\n${renderDiff(report)}`);
+    io.out.write(renderSpec(spec, loadPolicyIfAny(io.cwd)?.patterns ?? {}, show));
+    if (report.reused || report.dropped.length > 0) io.out.write(`\n${renderDiff(report, show)}`);
     if (!values.yes) {
       io.out.write(
         `\nstopped for review: ${report.reused ? "the plan changed" : "this is a new"} ${join(BLIND_DIR, SPEC_FILE)}. Nothing was applied.\n` +
@@ -158,7 +167,7 @@ async function chain(argv: string[], io: RunIO): Promise<number> {
     io.out.write("\n--yes: applying the changed spec without stopping for review\n");
   } else {
     io.out.write(`spec: ${join(BLIND_DIR, SPEC_FILE)} reused unchanged\n`);
-    if (report.dropped.length > 0) io.out.write(renderDiff(report));
+    if (report.dropped.length > 0) io.out.write(renderDiff(report, show));
   }
 
   // 2. Apply, into a staging directory beside <out>; only the final round's tree reaches <out>.
@@ -180,7 +189,7 @@ async function chain(argv: string[], io: RunIO): Promise<number> {
     let last: Applied | undefined;
     const round = async (): Promise<Applied> => {
       const fresh = newStage(outAbs);
-      const a = await applyInto(fresh, outAbs, outRel, positionals, mapOut, io);
+      const a = await applyInto(fresh, outAbs, outRel, positionals, mapOut, io, show);
       if (a.code === 2) {
         rmSync(fresh, { recursive: true, force: true });
         dropStage();
@@ -211,11 +220,11 @@ async function chain(argv: string[], io: RunIO): Promise<number> {
         let changed: boolean;
         try {
           const reportText = final.text;
-          const decided = await decideFromReport(() => reportText, `the round ${r} audit`, stage as string, { acceptLeaks: true, map: mapOut, json: false }, { out: io.out, err: io.err, cwd: io.cwd });
+          const decided = await decideFromReport(() => reportText, `the round ${r} audit`, stage as string, { acceptLeaks: true, map: mapOut, json: false, show }, { out: io.out, err: io.err, cwd: io.cwd });
           changed = decided.changed;
           worst = Math.max(worst, decided.code);
         } catch (e) {
-          io.err.write(`blind run: --accept-leaks: ${(e as Error).message}; the round ${r} audit stands\n`);
+          io.err.write(`blind run: --accept-leaks: ${maskQuoted((e as Error).message, show)}; the round ${r} audit stands\n`);
           break;
         }
         if (!changed) {
@@ -310,13 +319,14 @@ function rewriteIO(io: RunIO, stageAbs: string, outAbs: string, outRel: string):
   return { ...io, out: rewriting(io.out, stageAbs, outAbs, outRel, io.cwd), err: rewriting(io.err, stageAbs, outAbs, outRel, io.cwd) };
 }
 
-async function applyInto(stageAbs: string, outAbs: string, outRel: string, inputs: string[], mapOut: string, io: RunIO): Promise<Applied> {
+async function applyInto(stageAbs: string, outAbs: string, outRel: string, inputs: string[], mapOut: string, io: RunIO, show: boolean): Promise<Applied> {
   const r = rewriteIO(io, stageAbs, outAbs, outRel);
   const applied: Applied = { code: 0, result: undefined, notWritten: [] };
   applied.code = await runApply([...inputs, "-o", stageAbs, "--map-out", mapOut], {
     out: r.out,
     err: r.err,
     cwd: io.cwd,
+    showValues: show,
     onResult: (result, notWritten) => {
       applied.result = result;
       applied.notWritten = notWritten;

@@ -110,7 +110,7 @@ describe("XLSX: numeric cells are never renumbered by the fallback", () => {
     // 6 of 8 values read as decimals and the stats do not call the columns measures. Their numbers
     // are left as written all the same: that is what this rule is for.
     expect(r.files[0]?.columns.filter((c) => c.numbersLeft !== undefined).map((c) => c.header)).toEqual(["Weight", "Amount", "Count"]);
-    const report = renderReport(r);
+    const report = renderReport(r, true);
     expect(report).toContain('"Count": unknown → identifier-like, but kept (numbers) (no spec rule)');
     expect(report).toContain("warning: 8 number cells left as written");
   });

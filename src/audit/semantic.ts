@@ -42,12 +42,12 @@ import type { BlindMap } from "../engine/map.ts";
 import { isPseudonym } from "../engine/pseudonym.ts";
 import { keepDomains, underKeptDomain, validIpv6 } from "../engine/text.ts";
 import { DICTIONARY } from "../engine/words.ts";
+import { maskValue } from "../mask.ts";
 import type { Spec } from "../schema.ts";
 import {
   addLayer,
   type AuditReport,
   type Finding,
-  maskValue,
   MAX_ZIP_DEPTH,
   SHAPED_RE,
   type TreeEntry,

@@ -59,7 +59,7 @@ describe("scan treatment", () => {
     const notes = cols(r, "visits.csv")[1];
     expect([notes?.outcome, notes?.changed, notes?.flagged]).toEqual(["scanned", 1, 0]);
     // Reported as a scanned column, not as a kept one with a warning.
-    const report = renderReport(r);
+    const report = renderReport(r, true);
     expect(report).toContain('"notes": unknown/scan → scanned');
     expect(report).not.toContain("review this rule");
   });
@@ -68,7 +68,7 @@ describe("scan treatment", () => {
     const r = apply({ "visits.csv": VISITS }, [rule("visits.csv", { header: "pet" }, "keep"), rule("visits.csv", { header: "notes" }, "keep")]);
     expect(out(r, "visits.csv")).toBe(VISITS);
     expect(cols(r, "visits.csv")[1]?.flagged).toBe(1);
-    expect(renderReport(r)).toContain('give this column treatment "scan"');
+    expect(renderReport(r, true)).toContain('give this column treatment "scan"');
   });
 
   test("JSON: a scanned key's string values are scanned as free text; keys and layout stay", () => {
@@ -116,7 +116,7 @@ describe("[defaults] columns", () => {
     expect(text).toMatch(/^K-0141,Person_[0-9A-F]+,call user_/m);
     expect(text).toContain("K-0142,Bo Sample,ok\n");
     expect(text).not.toContain("avery.quill@example.com");
-    expect(renderReport(r)).toContain('"slot": unknown → scanned (the [defaults] columns setting)');
+    expect(renderReport(r, true)).toContain('"slot": unknown → scanned (the [defaults] columns setting)');
     // An explicit rule is not overridden by the default; an unknown/value rule is unruled.
     const ruled = apply({ "k.csv": KENNELS }, [rule("k.csv", { header: "owner" }, "blind", "person"), rule("k.csv", { header: "slot" }, "value")], { columns: "scan" });
     expect(cols(ruled, "k.csv").map((c) => c.outcome)).toEqual(["unknown-scanned", "blinded", "unknown-scanned"]);
@@ -153,7 +153,7 @@ describe("a value held whole in a keep or scan cell", () => {
     const caller = cols(r, "calls.csv")[0];
     expect(caller?.outcome).toBe("unknown-pseudonymised");
     expect(caller?.heldWhole).toBe(3);
-    expect(renderReport(r)).toContain('3 cells not pseudonymised whole: the same value is kept in a "keep" or "scan" cell elsewhere');
+    expect(renderReport(r, true)).toContain('3 cells not pseudonymised whole: the same value is kept in a "keep" or "scan" cell elsewhere');
   });
 
   test("an explicit rule still blinds it", () => {

@@ -11,6 +11,7 @@ import { type BlindMap, MapError, readMap, writeMap } from "./engine/map.ts";
 import { NameError } from "./engine/names.ts";
 import { MIN_SALT_BYTES, PseudonymError } from "./engine/pseudonym.ts";
 import { BLIND_DIR, SALT_FILE } from "./init.ts";
+import { isTerminal, shownValue } from "./mask.ts";
 import { loadPolicyIfAny, POLICY_FILE, PolicyError, withPolicyPatterns } from "./policy.ts";
 import type { Spec } from "./schema.ts";
 import { parseSpec, SchemaError } from "./validate.ts";
@@ -25,12 +26,14 @@ export interface ApplyIO {
   err: NodeJS.WritableStream;
   /** The corpus workspace: where blind.toml and .blind/ live. */
   cwd: string;
+  /** Print sheet names and headers whole, not masked (`blind run` passes what --show-values and its own terminal say). */
+  showValues?: boolean;
   /** Called once the outputs are written, with the engine's result and every input not written. `blind bench` scores from it. */
   onResult?: (result: ApplyResult, notWritten: readonly SkippedFile[]) => void;
 }
 
 const APPLY_HELP = [
-  "Usage: blind apply <inputs...> -o <out> [--map-out <path>]",
+  "Usage: blind apply <inputs...> -o <out> [--map-out <path>] [--show-values]",
   "",
   "Applies the saved spec (.blind/spec.json) to the inputs and writes blinded copies under <out>.",
   "Inputs are files or directories; spec rules name files by their path relative to the input",
@@ -45,8 +48,13 @@ const APPLY_HELP = [
   "no rule gets the fail-closed identifier test, or with [defaults] columns = \"scan\" in blind.toml",
   "is kept and scanned like free text.",
   "",
+  "The report names sheets, column headers and JSON keys from the documents masked, as `blind audit`",
+  "does: the first two characters, ***, the length (Qu***12). They are shown whole when the output is a",
+  "terminal or with --show-values. File paths are always shown.",
+  "",
   "Options:",
   "  -o, --out <dir>       Output directory (must not overlap an input)",
+  "      --show-values     Print sheet names and headers whole instead of masked, even when not a terminal",
   "      --map-out <path>  Where to write the reversal map (default .blind/map.json, mode 0600).",
   "                        An existing map there is reused, so earlier pseudonyms stay the same.",
   "  -h, --help            Show this help",
@@ -145,7 +153,8 @@ const OUTCOME_TEXT: Record<FileReport["columns"][number]["outcome"], string> = {
 
 const DELIMITER_NAMES: Record<string, string> = { ",": "comma", ";": "semicolon", "\t": "tab", "|": "pipe" };
 
-export function renderReport(result: ApplyResult): string {
+export function renderReport(result: ApplyResult, show = false): string {
+  const v = (s: string): string => (s === "" ? '""' : shownValue(s, show));
   const lines: string[] = [];
   for (const f of result.files) {
     const head: string[] = f.encoding === undefined ? [f.format] : [f.format, f.encoding];
@@ -155,15 +164,15 @@ export function renderReport(result: ApplyResult): string {
     if (f.outputPath !== f.path) lines.push(`  written as ${oneLine(f.outputPath)}`);
     let sheet: string | undefined;
     for (const s of f.sheets ?? []) {
-      if (s.outputName !== s.name) lines.push(`  sheet ${JSON.stringify(s.name)} renamed ${JSON.stringify(s.outputName)}`);
+      if (s.outputName !== s.name) lines.push(`  sheet ${v(s.name)} renamed ${JSON.stringify(s.outputName)}`);
     }
     for (const c of f.columns) {
       if (c.sheet !== undefined && c.sheet !== sheet) {
         sheet = c.sheet;
         const s = f.sheets?.find((x) => x.name === sheet);
-        lines.push(`  sheet ${JSON.stringify(sheet)}${s === undefined ? "" : s.noHeader ? " (no header row found, row 1 used)" : ` (header row ${s.headerRow})`}`);
+        lines.push(`  sheet ${v(sheet)}${s === undefined ? "" : s.noHeader ? " (no header row found, row 1 used)" : ` (header row ${s.headerRow})`}`);
       }
-      const label = c.jsonPath !== undefined ? `key ${JSON.stringify(c.jsonPath)}` : c.header === "" ? `column ${c.index + 1} (blank header)` : JSON.stringify(c.header);
+      const label = c.jsonPath !== undefined ? `key ${v(c.jsonPath)}` : c.header === "" ? `column ${c.index + 1} (blank header)` : v(c.header);
       const unit = c.jsonPath !== undefined ? "value" : "cell";
       const unknown = c.outcome.startsWith("unknown-");
       // A fail-closed worksheet column whose every filled cell is a number: nothing was pseudonymised.
@@ -244,7 +253,7 @@ export function renderReport(result: ApplyResult): string {
   const shared = result.sharedNameParts;
   if (shared.length > 0) {
     lines.push(
-      `${shared.length} name part${shared.length === 1 ? "" : "s"} shared by two or more people (a common given name or surname) replaced with ${shared.length === 1 ? "its" : "their"} own pseudonym${shared.length === 1 ? "" : "s"}, not any one person's: ${shared.join(", ")}`,
+      `${shared.length} name part${shared.length === 1 ? "" : "s"} shared by two or more people (a common given name or surname) replaced with ${shared.length === 1 ? "its" : "their"} own pseudonym${shared.length === 1 ? "" : "s"}, not any one person's: ${shared.map((x) => shownValue(x, show)).join(", ")}`,
     );
   }
   return lines.length > 0 ? `${lines.join("\n")}\n` : "";
@@ -259,6 +268,7 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
       options: {
         out: { type: "string", short: "o" },
         "map-out": { type: "string" },
+        "show-values": { type: "boolean", default: false },
         help: { type: "boolean", short: "h", default: false },
       },
     });
@@ -352,7 +362,7 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
       return 2;
     }
 
-    io.out.write(renderReport(result));
+    io.out.write(renderReport(result, values["show-values"] || io.showValues === true || isTerminal(io.out)));
     // Files already in <out> that this apply did not write, where an input's earlier blinded name would be.
     const outRel = toPosix(relative(io.cwd, outDir)) || ".";
     for (const s of staleOutputs(outDir, result.files, readPreviousOutputs(io.cwd, outRel))) {

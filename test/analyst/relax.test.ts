@@ -75,7 +75,7 @@ async function plan(argv: string[], fetch: AskOptions["fetch"]) {
   const out = sink();
   const err = sink();
   const io: PlanIO = { out: out.s, err: err.s, cwd: dir, model: { fetch, env: {} } };
-  const code = await runPlan(argv, io);
+  const code = await runPlan([...argv, "--show-values"], io);
   return { code, out: out.text(), err: err.text() };
 }
 

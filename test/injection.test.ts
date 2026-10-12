@@ -152,7 +152,7 @@ const sink = () => {
 async function plan(argv: string[], model: PlanIO["model"]) {
   const out = sink();
   const err = sink();
-  const code = await runPlan(argv, { out: out.s, err: err.s, cwd: dir, model: { env: {}, ...model } });
+  const code = await runPlan([...argv, "--show-values"], { out: out.s, err: err.s, cwd: dir, model: { env: {}, ...model } });
   return { code, out: out.text(), err: err.text() };
 }
 
@@ -436,7 +436,7 @@ describe("analyst vocabulary that would shield a blinded value is dropped and re
   test("blind run --yes then blinds the name everywhere, including free text", async () => {
     const out = sink();
     const err = sink();
-    const code = await runRun(["in", "-o", "out", "--yes"], { out: out.s, err: err.s, cwd: dir, model: { env: {}, fetch: analystOnly(withVocabulary()) } });
+    const code = await runRun(["in", "-o", "out", "--yes", "--show-values"], { out: out.s, err: err.s, cwd: dir, model: { env: {}, fetch: analystOnly(withVocabulary()) } });
     expect(code).toBeLessThan(3);
     expect(out.text()).toContain("analyst vocabulary \"Robin Example\"");
     for (const f of ["staff.csv", "notes.txt"]) {

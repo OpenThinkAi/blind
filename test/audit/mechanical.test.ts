@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { auditTree, type AuditReport, maskValue, type TreeEntry } from "../../src/audit/mechanical.ts";
+import { auditTree, type AuditReport, type TreeEntry } from "../../src/audit/mechanical.ts";
+import { maskValue } from "../../src/mask.ts";
 import { MAX_INFLATE_BYTES, readZip } from "../../src/audit/zip.ts";
 import { applySpec } from "../../src/engine/apply.ts";
 import type { BlindMap } from "../../src/engine/map.ts";

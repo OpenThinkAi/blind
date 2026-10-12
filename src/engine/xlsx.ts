@@ -198,6 +198,7 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
         // text: renumbering an amount gives a different, plausible number, which is silent
         // corruption (AGT-1822). A whole-value spec match is still renumbered (prepareXlsx).
         const cellAction: ColumnAction = c.type === "n" && stats !== undefined && action.kind === "pseudo" ? { kind: "free" } : action;
+        if (cellAction !== action) column.numbersLeft = (column.numbersLeft ?? 0) + 1;
         const plan: CellPlan = { action: cellAction, renumber: cellAction.kind === "pseudo" && c.type === "n" };
         plans.set(c.ref, plan);
         if (c.type === "s") (uses[Number(c.v)] as Action[]).push(action);

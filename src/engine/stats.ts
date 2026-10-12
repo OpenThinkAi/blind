@@ -159,6 +159,8 @@ export function isCategoricalColumn(s: ColumnStats): boolean {
     s.distinctCount <= THRESHOLDS.categoricalDistinct &&
     s.repeatedRatio >= THRESHOLDS.categoricalRepeated &&
     s.digitRatio < THRESHOLDS.digit &&
+    // Every value has a letter, strictly: one all-digit value sends the column back to the
+    // fail-closed test, which is the safe direction.
     s.letterRatio === 1 &&
     s.titleCaseRatio < THRESHOLDS.titleCase
   );

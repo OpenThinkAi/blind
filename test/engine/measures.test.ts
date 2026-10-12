@@ -5,6 +5,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { type ApplyResult, applySpec, type InputFile } from "../../src/engine/apply.ts";
+import { renderReport } from "../../src/apply.ts";
 import { buildWorkbook } from "../../src/bench/office.ts";
 import { readZip } from "../formats/zipfixture.ts";
 import type { ColumnRule, Spec } from "../../src/schema.ts";
@@ -101,8 +102,17 @@ describe("XLSX: numeric cells are never renumbered by the fallback", () => {
     const r = run([{ path: "visits.xlsx", bytes }], spec([chip("visits.xlsx", "keep", SHEET)]));
     const before = values(sheetXml(bytes));
     expect(values(sheetXml(out(r, "visits.xlsx")))).toEqual(before);
-    // The integer count column is identifier-like (distinct, all digits), yet its number cells stay.
-    expect(outcomes(r, "visits.xlsx").Count).toBe("unknown-pseudonymised");
+    // The integer count column is identifier-like (distinct, all digits): it fails closed, but its
+    // number cells are left as written, and the report says so rather than claiming a change.
+    const count = r.files[0]?.columns.find((c) => c.header === "Count");
+    expect(count).toMatchObject({ outcome: "unknown-pseudonymised", changed: 0, numbersLeft: 8 });
+    // Weight and amount too: written as numbers, 41.0 and $85.00 are the integers 41 and 85, so only
+    // 6 of 8 values read as decimals and the stats do not call the columns measures. Their numbers
+    // are left as written all the same: that is what this rule is for.
+    expect(r.files[0]?.columns.filter((c) => c.numbersLeft !== undefined).map((c) => c.header)).toEqual(["Weight", "Amount", "Count"]);
+    const report = renderReport(r);
+    expect(report).toContain('"Count": unknown → identifier-like, but kept (numbers) (no spec rule)');
+    expect(report).toContain("warning: 8 number cells left as written");
   });
 
   test("a rule that blinds the chip renumbers it, and only it", () => {

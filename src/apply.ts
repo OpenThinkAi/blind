@@ -151,10 +151,18 @@ export function renderReport(result: ApplyResult): string {
       const label = c.jsonPath !== undefined ? `key ${JSON.stringify(c.jsonPath)}` : c.header === "" ? `column ${c.index + 1} (blank header)` : JSON.stringify(c.header);
       const unit = c.jsonPath !== undefined ? "value" : "cell";
       const unknown = c.outcome.startsWith("unknown-");
-      let line = `  ${label}: ${unknown ? "unknown" : `${c.class}/${c.treatment}`} → ${OUTCOME_TEXT[c.outcome]}`;
+      // A fail-closed worksheet column whose every filled cell is a number: nothing was pseudonymised.
+      const numbersOnly = c.outcome === "unknown-pseudonymised" && c.changed === 0 && (c.numbersLeft ?? 0) > 0;
+      let line = `  ${label}: ${unknown ? "unknown" : `${c.class}/${c.treatment}`} → ${numbersOnly ? "identifier-like, but kept (numbers)" : OUTCOME_TEXT[c.outcome]}`;
       if (c.changed > 0) line += `, ${c.changed} ${unit}${c.changed === 1 ? "" : "s"} changed`;
       if (unknown) line += c.treatment === null ? " (no spec rule)" : ` (spec: ${c.class}/${c.treatment})`;
       lines.push(line);
+      if ((c.numbersLeft ?? 0) > 0) {
+        const n = c.numbersLeft as number;
+        lines.push(
+          `    warning: ${n} number cell${n === 1 ? "" : "s"} left as written: a column with no rule is never renumbered (a new number would be silent corruption); give it a rule to blind or keep it`,
+        );
+      }
       if (c.flagged > 0) {
         lines.push(
           `    warning: ${c.flagged} kept ${unit}${c.flagged === 1 ? "" : "s"} contain a spec entity or a pattern match and were left unchanged as the spec says; review this rule`,

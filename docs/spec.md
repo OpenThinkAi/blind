@@ -389,7 +389,10 @@ is an error). The column table above applies to every cell, with these workbook 
   pseudonym (`4417` → `8203`; a decimal keeps its point), whatever the column's class. A column
   with no rule (or `unknown`/`value`) that fails closed still pseudonymises its text cells, but its
   number cells are left as written: a renumbered amount is a different, plausible number, which is
-  silent corruption. A number cell whose whole value is a spec value is renumbered wherever it is.
+  silent corruption. Apply's report says so for that column (`N number cells left as written`),
+  and a column of only numbers reads `identifier-like, but kept (numbers)` rather than
+  pseudonymised; give it a rule to blind or keep it. A number cell whose whole value is a spec
+  value is renumbered wherever it is.
   Booleans, errors and dates are never changed.
 - **Sheet and defined names.** Worksheet names, defined names and table names are rewritten through
   the same name hook as file names. Blinded worksheet names must stay distinct ignoring case, and

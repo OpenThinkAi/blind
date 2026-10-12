@@ -35,6 +35,7 @@ import {
   quoteSheet,
   readWorkbook,
   sheetRows,
+  isDateCell,
   slotRules,
   tokenizeFormula,
   wholeClass,
@@ -72,6 +73,8 @@ interface CellPlan {
   action: Action;
   /** A number cell rewritten as a number (a pseudonymised column, or a whole-value spec match). */
   renumber: boolean;
+  /** A number cell whose number format is a date or time: a serial that only a rule may change. */
+  date?: boolean;
 }
 
 interface Pending {
@@ -184,7 +187,7 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
       const rule = sheetRules.find((r) => (r.header as string).trim() === header.trim());
       const data = byCol.get(col) ?? [];
       const texts = data.map((c) => cellText(c, wb.sharedStrings));
-      const { action, stats } = decide(rule, texts);
+      const { action, stats } = decide(rule, texts, { dates: data.map((c) => isDateCell(wb, c)) });
       const column: ColumnReport = {
         index: col,
         header,
@@ -216,7 +219,7 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
         // corruption (AGT-1822). A whole-value spec match is still renumbered (prepareXlsx).
         const cellAction: ColumnAction = c.type === "n" && stats !== undefined && action.kind === "pseudo" ? { kind: "free" } : action;
         if (cellAction !== action) column.numbersLeft = (column.numbersLeft ?? 0) + 1;
-        const plan: CellPlan = { action: cellAction, renumber: cellAction.kind === "pseudo" && c.type === "n" };
+        const plan: CellPlan = { action: cellAction, renumber: cellAction.kind === "pseudo" && c.type === "n", date: isDateCell(wb, c) };
         plans.set(c.ref, plan);
         if (c.type === "s") (uses[Number(c.v)] as Action[]).push(action);
         if (plan.renumber && !NUMBER.test(text)) {
@@ -356,7 +359,7 @@ export function prepareXlsx(path: string, bytes: Uint8Array, p: XlsxPlan, env: E
       continue;
     }
     const spans = env.scanner.free(c.text);
-    if (c.number) c.cell.renumber = whole(spans, c.text) && NUMBER.test(c.text);
+    if (c.number) c.cell.renumber = c.cell.date !== true && whole(spans, c.text) && NUMBER.test(c.text);
     if (c.number ? c.cell.renumber : hasSensitive(spans)) c.column.changed++;
   }
   for (const s of p.wb.sheets) env.names.plan("sheet", s.name);

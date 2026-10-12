@@ -6,6 +6,7 @@
 // the data a reader needs, and pseudonymising them corrupts it without protecting anyone.
 
 // The shared word list (also the profiler's), so the engine and the profile agree on what a dictionary word is.
+import { isEpochColumn, isEpochTimestamp } from "./epoch.ts";
 import { DICTIONARY } from "./words.ts";
 import { isDateWord } from "./datecontext.ts";
 
@@ -52,6 +53,8 @@ const TIME = String.raw`\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:\s?[AaPp]\.?[Mm]\.?
 const MEASURE_RES: readonly RegExp[] = [
   // A decimal or a grouped number: 38.6, -0.25, 1,250, 1,250.75.
   /^[-+−]?(?:\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d*\.\d+)$/,
+  // A decimal comma: 136,1, 4,25, and a dotted grouping before it: 1.250,75.
+  /^[-+−]?\d+,\d{1,2}$|^[-+−]?\d{1,3}(?:\.\d{3})+,\d+$/,
   // ISO dates and date-times: 2026-03-14, 2026-03-14T09:30:00Z, 2026/03/14.
   new RegExp(String.raw`^\d{4}[-/]\d{1,2}[-/]\d{1,2}(?:[T ]${TIME})?$`),
   // Day-month-year in either order: 03/14/2026, 14.03.26, 14-03-2026 09:30.
@@ -82,7 +85,9 @@ function isWordDate(v: string): boolean {
 }
 
 /** Whether a (trimmed) value is a date, time, decimal, currency amount or quantity with a unit. */
-export function isMeasure(value: string): boolean {
+export function isMeasure(value: string, delimiter?: string): boolean {
+  // In a semicolon-delimited file a comma is not a field separator, so 4,250 is a decimal comma.
+  if (delimiter === ";" && /^[-+−]?\d+,\d{3}$/.test(value)) return true;
   return MEASURE_RES.some((re) => re.test(value)) || isWordDate(value);
 }
 
@@ -102,8 +107,23 @@ export function isTitleCaseMultiWord(value: string): boolean {
   return capitalised >= 2;
 }
 
-export function columnStats(values: readonly string[]): ColumnStats {
-  const filled = values.map((v) => v.trim()).filter((v) => v !== "");
+export interface ColumnContext {
+  /** The file's field delimiter, for tables; it decides whether `4,250` is a decimal comma. */
+  delimiter?: string;
+  /** Per value (aligned with `values`): the cell is a date or time, by its number format (XLSX). */
+  dates?: readonly boolean[];
+}
+
+export function columnStats(values: readonly string[], ctx: ColumnContext = {}): ColumnStats {
+  const epochs = isEpochColumn(values);
+  const filled: string[] = [];
+  const dated: boolean[] = [];
+  values.forEach((raw, i) => {
+    const v = raw.trim();
+    if (v === "") return;
+    filled.push(v);
+    dated.push(ctx.dates?.[i] === true);
+  });
   const count = filled.length;
   if (count === 0) return { count: 0, distinctRatio: 0, digitRatio: 0, dictionaryRatio: 0, titleCaseRatio: 0, measureRatio: 0, distinctCount: 0, repeatedRatio: 0, letterRatio: 0 };
   let chars = 0;
@@ -114,9 +134,9 @@ export function columnStats(values: readonly string[]): ColumnStats {
   let measures = 0;
   let lettered = 0;
   const seen = new Map<string, number>();
-  for (const v of filled) {
+  filled.forEach((v, i) => {
     seen.set(v, (seen.get(v) ?? 0) + 1);
-    if (isMeasure(v)) measures++;
+    if (dated[i] || (epochs && isEpochTimestamp(v)) || isMeasure(v, ctx.delimiter)) measures++;
     if (/\p{L}/u.test(v)) lettered++;
     for (const ch of v) {
       chars++;
@@ -127,7 +147,7 @@ export function columnStats(values: readonly string[]): ColumnStats {
       if (DICTIONARY.has(w.toLowerCase())) known++;
     }
     if (isTitleCaseMultiWord(v)) title++;
-  }
+  });
   let repeated = 0;
   for (const n of seen.values()) if (n > 1) repeated += n;
   return {

@@ -67,7 +67,7 @@ export const fold = (v: string): string => v.normalize("NFKC").trim().toLowerCas
  * With `foldOverflow` (CSV/TSV), a data row's cells past the header's width count in the last column,
  * as `blind apply` treats them, and the rows are tallied in `overflowRows`.
  */
-export function profileTable(file: string, rows: readonly string[][], k: number, foldOverflow = false): TableResult {
+export function profileTable(file: string, rows: readonly string[][], k: number, foldOverflow = false, dates: readonly (readonly boolean[])[] = []): TableResult {
   const detected = detectHeaderRow(rows);
   const headerRow = detected ?? 1;
   const header = rows[headerRow - 1] ?? [];
@@ -78,12 +78,15 @@ export function profileTable(file: string, rows: readonly string[][], k: number,
   const cells = Array.from({ length: width }, (_, c) =>
     fold_ && c === width - 1 ? data.flatMap((r) => (r.length > c ? r.slice(c) : [""])) : data.map((r) => r[c] ?? ""),
   );
+  // Date flags per data row (XLSX only, where rows are not folded), aligned with `cells`.
+  const dataIndex = rows.slice(headerRow).flatMap((r, i) => (filled(r).length > 0 ? [headerRow + i] : []));
+  const flags = (c: number): boolean[] => (fold_ && c === width - 1 ? [] : dataIndex.map((ri) => dates[ri]?.[c] === true));
   return {
     table: {
       file,
       headerRow,
       ...(overflowRows > 0 ? { overflowRows } : {}),
-      columns: cells.map((values, c) => ({ header: excerpt(header[c] ?? ""), stats: valueStats(values, k) })),
+      columns: cells.map((values, c) => ({ header: excerpt(header[c] ?? ""), stats: valueStats(values, k, flags(c)) })),
     },
     noHeader: detected === null && rows.length > 0,
     valueSets: cells.map((values) => new Set(values.map(fold).filter((v) => v !== ""))),

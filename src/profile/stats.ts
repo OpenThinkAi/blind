@@ -2,6 +2,7 @@
 // Everything here is a pure function of its input: no clock, no randomness, no locale.
 
 import { type DetectorName, MAX_EXCERPT, type ValueStats } from "../schema.ts";
+import { isEpochColumn, isEpochTimestamp } from "../engine/epoch.ts";
 import { DICTIONARY } from "../engine/words.ts";
 
 const OCTET = "(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)";
@@ -48,8 +49,13 @@ function words(value: string): string[] {
 }
 
 /** Statistics over one column's (or key's) values. Empty and whitespace-only values are not counted. */
-export function valueStats(raw: readonly string[], k: number): ValueStats {
+export function valueStats(raw: readonly string[], k: number, dates: readonly boolean[] = []): ValueStats {
   const values = raw.map((v) => v.trim()).filter((v) => v !== "");
+  // Dates and Unix times are measurements, not IDs: numericId skips XLSX date-formatted cells and,
+  // in a column that is mostly Unix times, those times.
+  const dated = new Set(raw.flatMap((v, i) => (dates[i] === true && v.trim() !== "" ? [v.trim()] : [])));
+  const epochs = isEpochColumn(values);
+  const skips = (name: DetectorName, v: string): boolean => name === "numericId" && (dated.has(v) || (epochs && isEpochTimestamp(v)));
   const uniques = distinct(values);
   let chars = 0;
   let digits = 0;
@@ -67,7 +73,7 @@ export function valueStats(raw: readonly string[], k: number): ValueStats {
   const detectorRates = {} as Record<DetectorName, number>;
   for (const name of DETECTOR_NAMES) {
     const re = DETECTORS[name];
-    detectorRates[name] = ratio(values.filter((v) => re.test(v)).length, values.length);
+    detectorRates[name] = ratio(values.filter((v) => !skips(name, v) && re.test(v)).length, values.length);
   }
   return {
     count: values.length,

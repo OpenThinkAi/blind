@@ -386,7 +386,7 @@ function planTable(
     // The cells of this column in a row, with their positions: the last column also owns the overflow.
     const owned = (row: Row): { cell: Cell; at: number }[] =>
       (col === lastCol ? row.cells.slice(col) : row.cells.slice(col, col + 1)).map((cell, i) => ({ cell, at: col + i }));
-    const { action, stats } = decide(rule, data.flatMap((r) => (col === lastCol ? owned(r).map((o) => o.cell.value) : [r.cells[col]?.value ?? ""])));
+    const { action, stats } = decide(rule, data.flatMap((r) => (col === lastCol ? owned(r).map((o) => o.cell.value) : [r.cells[col]?.value ?? ""])), { delimiter: delim });
     const column: ColumnReport = {
       index: col,
       header,

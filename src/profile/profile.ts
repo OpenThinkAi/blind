@@ -14,7 +14,7 @@ import { ParseError, parseTable, profileTable } from "./table.ts";
 import { profileText } from "./text.ts";
 import { tokeniseProfile } from "./tokens.ts";
 import { ZipError } from "../formats/ooxml.ts";
-import { readWorkbook, sheetRows, XlsxError } from "../formats/xlsx.ts";
+import { isDateCell, readWorkbook, sheetRows, XlsxError } from "../formats/xlsx.ts";
 
 /** Formats this profiler reads, by lower-cased extension. */
 const PROFILED: Record<string, "csv" | "tsv" | "json" | "jsonl" | "text" | "markdown" | "log" | "vtt" | "srt" | "docx"> = {
@@ -215,7 +215,9 @@ export function buildProfile(inputs: readonly string[], k: number, cwd: string):
       }
       for (const sheet of wb.sheets) {
         if (sheet.member === null) continue;
-        const result = profileTable(f.path, sheetRows(sheet, wb.sharedStrings), k);
+        const dates: boolean[][] = [];
+        for (const c of sheet.cells) (dates[c.row] ??= [])[c.col] = isDateCell(wb, c);
+        const result = profileTable(f.path, sheetRows(sheet, wb.sharedStrings), k, false, dates);
         result.table = { file: result.table.file, sheet: excerpt(sheet.name), headerRow: result.table.headerRow, columns: result.table.columns };
         if (result.noHeader) notes.push(`${f.path} sheet ${JSON.stringify(sheet.name)}: no header row detected; row 1 used as the header`);
         tables.push(result);

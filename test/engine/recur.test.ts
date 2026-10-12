@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { MIN_LEAK_LENGTH } from "../../src/audit/mechanical.ts";
+import { auditTree, MIN_LEAK_LENGTH, type TreeEntry } from "../../src/audit/mechanical.ts";
 import { type ApplyResult, applySpec, type InputFile } from "../../src/engine/apply.ts";
 import type { BlindMap } from "../../src/engine/map.ts";
-import { MIN_RECUR_LENGTH, recurrenceExclusion, recurrenceForms, TextScanner } from "../../src/engine/recur.ts";
+import { MIN_RECUR_LENGTH, nameParts, partExclusion, recurrenceExclusion, recurrenceForms, TextScanner } from "../../src/engine/recur.ts";
 import type { ColumnRule, Spec } from "../../src/schema.ts";
 
 // Synthetic salt and data only: invented names and codes, example.com, RFC 5737 addresses.
@@ -97,6 +97,9 @@ describe("recurrence rules", () => {
       { cls: "org", value: "Copperleaf Ltd", form: "Copperleaf" },
       { cls: "org", value: "Copperleaf Ltd", form: "Copperleaf Ltd" },
       { cls: "org", value: "Brightwater Mills, Inc.", form: "brightwater mills" },
+      // A person's name parts recur on their own, with the person's value (AGT-1803).
+      { cls: "person", value: "Quill, Avery", form: "Avery" },
+      { cls: "person", value: "Quill, Avery", form: "Quill" },
       { cls: "person", value: "Quill, Avery", form: "Quill, Avery" },
       { cls: "person", value: "Quill, Avery", form: "avery quill" },
     ]);
@@ -221,5 +224,109 @@ describe("applySpec: values blinded in a column are replaced where they recur", 
       r.outputs.map((o) => [o.path, Buffer.from(o.bytes).toString("hex")]),
     );
     expect(again.map).toEqual(r.map);
+  });
+});
+
+describe("name parts of people blinded in a column (AGT-1803)", () => {
+  const people = "Owner,Ticket\nAvery Quill,T-1\nBea Quill,T-2\nRowan Tamsin-Vale,T-3\nWill Price,T-4\n";
+  const peopleSpec = spec({ columns: [rule("people.csv", "Owner", "person", "blind"), rule("people.csv", "Ticket", "id", "keep")] });
+  const audited = (r: ApplyResult, keep: string[] = []) =>
+    auditTree(r.outputs.map((o): TreeEntry => ({ path: o.path, kind: "file", bytes: o.bytes })), peopleSpec, r.map, keep);
+
+  test("a lone given name or surname gets the person's pseudonym, and apply then audit has no leak", () => {
+    const res = applySpec([file("people.csv", "Owner\nAvery Quill\n"), file("notes.txt", "Quill approved it; Avery agreed.\n")], spec({ columns: [rule("people.csv", "Owner", "person", "blind")] }), { salt: SALT });
+    const avery = pseudonymOf(res, "Avery Quill");
+    expect(out(res, "notes.txt")).toBe(`${avery} approved it; ${avery} agreed.\n`);
+    expect(res.files.find((f) => f.path === "notes.txt")?.mappedReplacements).toBe(2);
+    const report = auditTree(res.outputs.map((o): TreeEntry => ({ path: o.path, kind: "file", bytes: o.bytes })), spec({ columns: [rule("people.csv", "Owner", "person", "blind")] }), res.map);
+    expect(report.summary.leaks).toBe(0);
+    expect(report.status).toBe("clean");
+    expect(res.sharedNameParts).toEqual([]);
+  });
+
+  test("a part two people share gets its own pseudonym, never either person's, and is reported", () => {
+    const notes = "Quill signed; Avery and Bea agreed. Rowan, Tamsin-Vale and Vale too.\n";
+    const res = applySpec([file("people.csv", people), file("notes.txt", notes)], peopleSpec, { salt: SALT });
+    const [avery, bea, rowan] = [pseudonymOf(res, "Avery Quill"), pseudonymOf(res, "Bea Quill"), pseudonymOf(res, "Rowan Tamsin-Vale")];
+    const quill = pseudonymOf(res, "Quill");
+    expect(new Set([avery, bea, quill]).size).toBe(3);
+    expect(out(res, "notes.txt")).toBe(`${quill} signed; ${avery} and ${bea} agreed. ${rowan}, ${rowan} and ${rowan} too.\n`);
+    expect(res.sharedNameParts).toEqual([quill]);
+    expect(audited(res).summary.leaks).toBe(0);
+  });
+
+  test("left alone: dictionary-word parts, short parts, keep terms, vocabulary forms, and a lowercase part", () => {
+    const s = spec({ ...peopleSpec, entities: { vocabulary: [{ canonical: "Tamsin", aliases: [], parts: [] }] } });
+    const notes = "Price and Will left; Al stayed; quill pens; Tamsin site; Vale road.\n";
+    const res = applySpec([file("people.csv", `${people}Al Ostrander,T-5\n`), file("notes.txt", notes)], s, { salt: SALT, keep: ["Vale"] });
+    expect(out(res, "notes.txt")).toBe(notes);
+    expect(partExclusion("Will", new Set(), new Set())).toBe("a dictionary word");
+    expect(partExclusion("Al", new Set(), new Set())).toContain("fewer than 3");
+    expect(partExclusion("Vale", new Set(), new Set(["vale"]))).toBe("a keep term");
+    expect(partExclusion("Tamsin", new Set(["tamsin"]), new Set())).toBe("a spec vocabulary form");
+    // Whole-word dictionary check, as the audit makes it: a hyphenated name of two words is a name.
+    expect(partExclusion("Rose-May", new Set(), new Set())).toBeNull();
+  });
+
+  test("nameParts: written and canonical words, hyphen pieces, capitalised; independent of input order", () => {
+    const parts = nameParts(["QUILL, AVERY", "Bea Quill", "Rowan Tamsin-Vale", "Mary-Kate"], [], new Set(), new Set());
+    const by = Object.fromEntries(parts.map((p) => [p.form, [p.value, p.shared]]));
+    expect(by).toEqual({
+      Avery: ["QUILL, AVERY", false],
+      Bea: ["Bea Quill", false],
+      Kate: ["Mary-Kate", false],
+      Mary: ["Mary-Kate", false],
+      Quill: ["Quill", true],
+      Rowan: ["Rowan Tamsin-Vale", false],
+      Tamsin: ["Rowan Tamsin-Vale", false],
+      "Tamsin-Vale": ["Rowan Tamsin-Vale", false],
+      Vale: ["Rowan Tamsin-Vale", false],
+    });
+    expect(nameParts(["Mary-Kate", "Rowan Tamsin-Vale", "Bea Quill", "QUILL, AVERY"], [], new Set(), new Set())).toEqual(parts);
+    // A part equal to someone's whole one-word name, or to a part of one of `others`, is shared.
+    expect(nameParts(["Avery Quill"], ["Quill"], new Set(), new Set()).find((p) => p.form === "Quill")?.shared).toBe(true);
+    expect(nameParts(["Avery Quill"], ["Avery Stone"], new Set(), new Set()).find((p) => p.form === "Avery")?.shared).toBe(true);
+    // The same person written two ways is one person.
+    expect(nameParts(["Avery Quill", "Quill, Avery"], [], new Set(), new Set()).every((p) => !p.shared)).toBe(true);
+  });
+
+  test("person entries of an earlier map give their parts too", () => {
+    const first = applySpec([file("people.csv", "Owner\nAvery Quill\n")], spec({ columns: [rule("people.csv", "Owner", "person", "blind")] }), { salt: SALT });
+    const second = applySpec([file("later.txt", "Avery called Quill.\n")], spec(), { salt: SALT, map: first.map });
+    const avery = pseudonymOf(first, "Avery Quill");
+    expect(out(second, "later.txt")).toBe(`${avery} called ${avery}.\n`);
+  });
+
+  test("a part a column person shares with a transcript speaker is ambiguous on both sides", () => {
+    const vtt = "WEBVTT\n\n00:01.000 --> 00:02.000\n<v Avery Stone>Hello.</v>\n";
+    const res = applySpec(
+      [file("people.csv", "Owner\nAvery Quill\n"), file("call.vtt", vtt), file("notes.txt", "Avery wrote, Quill and Stone read.\n")],
+      spec({ columns: [rule("people.csv", "Owner", "person", "blind")] }),
+      { salt: SALT },
+    );
+    const avery = pseudonymOf(res, "Avery");
+    expect(out(res, "notes.txt")).toBe(`${avery} wrote, ${pseudonymOf(res, "Avery Quill")} and ${pseudonymOf(res, "Avery Stone")} read.\n`);
+    expect(new Set([avery, pseudonymOf(res, "Avery Quill"), pseudonymOf(res, "Avery Stone")]).size).toBe(3);
+    expect(res.sharedNameParts).toEqual([avery]);
+  });
+
+  test("in JSON strings, kept cells and file names, through the same scan", () => {
+    const res = applySpec(
+      [file("people.csv", people), file("Quill review.txt", "ok\n"), file("t.json", '{"note":"Avery says hi"}\n')],
+      spec({ columns: [...peopleSpec.columns, jrule("t.json", "$.note", "vocabulary", "keep")] }),
+      { salt: SALT },
+    );
+    const avery = pseudonymOf(res, "Avery Quill");
+    expect(out(res, "t.json")).toBe(`{"note":"${avery} says hi"}\n`);
+    expect(res.files.find((f) => f.path === "Quill review.txt")?.outputPath).toBe(`${pseudonymOf(res, "Quill")} review.txt`);
+  });
+
+  test("deterministic on shuffled inputs", () => {
+    const inputs = [file("people.csv", people), file("notes.txt", "Quill and Avery and Rowan.\n")];
+    const a = applySpec(inputs, peopleSpec, { salt: SALT });
+    const b = applySpec([...inputs].reverse(), peopleSpec, { salt: SALT });
+    expect(b.outputs).toEqual(a.outputs);
+    expect(b.map).toEqual(a.map);
+    expect(b.sharedNameParts).toEqual(a.sharedNameParts);
   });
 });

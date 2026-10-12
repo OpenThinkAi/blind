@@ -187,6 +187,12 @@ export function renderReport(result: ApplyResult): string {
       lines.push(`  copied without reading (not XML; the audit still reads them): ${f.unread.join(", ")}`);
     }
   }
+  const shared = result.sharedNameParts;
+  if (shared.length > 0) {
+    lines.push(
+      `${shared.length} name part${shared.length === 1 ? "" : "s"} shared by two or more people (a common given name or surname) replaced with ${shared.length === 1 ? "its" : "their"} own pseudonym${shared.length === 1 ? "" : "s"}, not any one person's: ${shared.join(", ")}`,
+    );
+  }
   return lines.length > 0 ? `${lines.join("\n")}\n` : "";
 }
 

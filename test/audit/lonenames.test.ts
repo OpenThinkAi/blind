@@ -53,18 +53,20 @@ describe("lone names on synthetic kit v1", () => {
     expect(report.summary.leaks).toBe(0);
   });
 
-  test("a spec that leaves out a person's given name audits as a leak, naming the word masked", () => {
+  test("a spec that leaves out a person's given name: the engine still replaces it, and the audit agrees", () => {
     const spec = kitSpec();
     spec.entities.person = spec.entities.person?.map((p) => (p.canonical === "Marisol Penhallow" ? { ...p, parts: p.parts.filter((x) => x !== "Marisol") } : p));
     const { report, text } = kitAudit(spec);
-    // The given name really does survive on its own.
-    expect(text).toMatch(/\bMarisol\b/);
-    expect(report.status).toBe("leak");
-    const marisol = all(report).filter((f) => f.masked === "Ma***7");
-    expect(marisol).toContainEqual(expect.objectContaining({ file: "notes/review.md", class: "person", source: "map", severity: "leak" }));
-    // Kit v1 writes the name only where any word is capitalised (a list item's first word, after a
-    // speaker's colon), so the semantic layer leaves it to the mechanical one here.
-    expect(JSON.stringify(report)).not.toContain("Marisol");
+    // The person is blinded in the Owner column, so their given name alone gets their pseudonym too (AGT-1803).
+    expect(text).not.toMatch(/\bMarisol\b/);
+    expect(report.summary.leaks).toBe(0);
+    // Had it survived, the audit would call it a leak.
+    const kit = generateKit();
+    const r = applySpec(kit.files.map((f) => ({ path: f.path, bytes: Buffer.from(f.text) })), spec, { salt: SALT });
+    const entries = r.outputs.map((o) => file(o.path, o.path === "notes/review.md" ? `${Buffer.from(o.bytes).toString("utf8")}\nAsk Marisol.\n` : o.bytes));
+    const leaked = audit(entries, spec, r.map);
+    expect(leaked.status).toBe("leak");
+    expect(all(leaked)).toContainEqual(expect.objectContaining({ file: "notes/review.md", class: "person", source: "map", severity: "leak", masked: "Ma***7" }));
   });
 
   test("a forgotten nickname is a semantic:name candidate: the file is not clean", () => {

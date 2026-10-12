@@ -222,6 +222,16 @@ columns classed `vocabulary`, and the host labels and email local parts of a bli
 `blind audit` still reports any of these that survive, and spellings the case rules leave, so add
 them to the spec as entities if they must go.
 
+**Name parts.** Each person a column rule pseudonymised (or an earlier map holds) also has each part
+of their name replaced on its own, with that person's pseudonym: `Quill approved it; Avery agreed`
+after `Avery Quill` was blinded in an Owner column. A part is each word of the name as written and of
+its canonical form, and each piece of a hyphenated word, matched like a single capitalised word (so
+`quill` in lowercase is left alone). Left out, as the audit leaves them out: parts with fewer than 3
+letters, dictionary words (`Will`, `Price`), keep-list terms and vocabulary forms. A part two
+different people share (`Quill` for `Avery Quill` and `Bea Quill`, or a column person and a
+transcript speaker) gets its own pseudonym, never either person's, and the apply report lists those
+pseudonyms. Spec entities are not split this way: their parts are the ones the spec lists.
+
 **JSON and JSONL.** Rules name a key path with `jsonPath` (see [key paths](#key-paths)); a `header`
 or `sheet` rule on a JSON file is an error, as is a rule for a key path the file does not have. The
 table above applies to each key path's values as it does to a column's cells:
@@ -305,9 +315,9 @@ DOCX that is not transcript-shaped is blinded as ordinary text or DOCX. In a tra
   and every capitalised spoken word within one edit of a part of four or more letters (`Avary` for
   `Avery`) are matched like recurring values, in every file of the corpus (a speaker named in a CSV
   cell or another document gets the same pseudonym there). A part or misspelling that fits two
-  speakers gets its own pseudonym. Parts and misspellings the recurring-value rules leave out (fewer
-  than 3 letters, dictionary words such as `May`, vocabulary forms) are not matched; the tag is
-  still replaced.
+  people (two speakers, or a speaker and a person blinded in a column) gets its own pseudonym. Parts
+  and misspellings the name-part rules leave out (fewer than 3 letters, dictionary words such as
+  `May`, keep-list terms, vocabulary forms) are not matched; the tag is still replaced.
 - GUIDs in VTT cue identifiers (Teams writes `<guid>/12-0`) are replaced with GUID-shaped
   pseudonyms even when the spec's `guid` pattern is off.
 - Cue timing lines (with their settings), SRT cue numbers, inline VTT timestamps (`<00:00:02.000>`)

@@ -20,7 +20,7 @@
 //   scanned, so they stay byte-identical.
 
 import { DICTIONARY } from "../profile/words.ts";
-import { recurrenceExclusion } from "./recur.ts";
+import { nameParts, recurrenceExclusion } from "./recur.ts";
 import type { ExtraForm, Span } from "./text.ts";
 
 export type TranscriptKind = "vtt" | "srt" | "text";
@@ -385,44 +385,44 @@ export function oneEdit(a: string, b: string): boolean {
 }
 
 /**
- * Person forms for the corpus-wide TextScanner: each speaker's name, its capitalised parts, and the
- * capitalised spoken words within one edit of a part, each with the speaker's name as the value
- * (so all of them share the speaker's pseudonym). A part or misspelling that fits two speakers is
- * its own value instead. Forms recurrenceExclusion leaves out (short, dictionary-only, vocabulary)
- * are not added; a speaker's tag is still replaced. Sorted by form, then value.
+ * Person forms for the corpus-wide TextScanner: each speaker's name, its parts (nameParts in
+ * recur.ts), and the capitalised spoken words within one edit of a part, each with the speaker's
+ * name as the value (so all of them share the speaker's pseudonym). A part or misspelling that fits
+ * two people (speakers, or `others`: the people blinded in a column or held by the map) is its own
+ * value instead. Names recurrenceExclusion leaves out (short, dictionary-only, vocabulary), and parts
+ * partExclusion leaves out (also keep terms), are not added; a speaker's tag is still replaced.
+ * Sorted by form, then value.
  */
-export function speakerForms(speakers: Iterable<string>, spoken: Iterable<string>, vocabulary: ReadonlySet<string>): ExtraForm[] {
+export function speakerForms(
+  speakers: Iterable<string>,
+  spoken: Iterable<string>,
+  vocabulary: ReadonlySet<string>,
+  others: Iterable<string> = [],
+  keep: ReadonlySet<string> = new Set(),
+): ExtraForm[] {
   const names = [...new Set([...speakers].map(normName))].filter((n) => n !== "").sort(cmp);
   const out = new Map<string, ExtraForm>();
   const add = (form: string, value: string) => {
-    if (recurrenceExclusion(form, vocabulary) !== null || out.has(form)) return;
-    out.set(form, { cls: "person", value, form, source: "speaker" });
+    if (!out.has(form)) out.set(form, { cls: "person", value, form, source: "speaker" });
   };
-  // Parts, by folded form, with the speakers they belong to.
-  const parts = new Map<string, { form: string; owners: Set<string> }>();
-  for (const name of names) {
-    if (/\p{N}/u.test(name)) continue;
-    const words = name.split(/[\s,]+/).flatMap((w) => [w, ...(w.includes("-") ? w.split("-") : [])]);
-    for (const w of words.map((x) => x.replace(/\.$/, ""))) {
-      if (!/^\p{Lu}/u.test(w) || fold(w) === fold(name)) continue;
-      const entry = parts.get(fold(w)) ?? { form: w, owners: new Set<string>() };
-      entry.owners.add(name);
-      parts.set(fold(w), entry);
-    }
-  }
-  const owner = (owners: ReadonlySet<string>, self: string) => (owners.size === 1 ? ([...owners][0] as string) : self);
-  for (const name of names) add(name, name);
-  for (const { form, owners } of [...parts.values()].sort((a, b) => cmp(a.form, b.form))) add(form, owner(owners, form));
-  // Misspellings: capitalised spoken words one edit from a part.
-  const fuzzy = [...parts.entries()].filter(([k]) => [...k].length >= MIN_FUZZY_LENGTH);
+  for (const name of names) if (recurrenceExclusion(name, vocabulary) === null) add(name, name);
+  // "Speaker 2" has only the dictionary word "Speaker" as a part, which is excluded.
+  const parts = nameParts(names, others, vocabulary, keep);
+  for (const p of parts) if (p.exclusion === null) add(p.form, p.value);
+  // Misspellings: capitalised spoken words one edit from a part (an excluded part too: "Rosy" for "Rose").
+  const byFold = new Map(parts.map((p) => [fold(p.form), p]));
+  const fuzzy = parts.filter((p) => [...fold(p.form)].length >= MIN_FUZZY_LENGTH);
   const words = new Set<string>();
   for (const s of spoken) for (const w of s.match(/\p{Lu}[\p{L}\p{M}'’]*/gu) ?? []) words.add(w);
   for (const w of [...words].sort(cmp)) {
     const k = fold(w);
-    if ([...k].length < MIN_FUZZY_LENGTH || parts.has(k) || DICTIONARY.has(k)) continue;
-    const owners = new Set<string>();
-    for (const [pk, p] of fuzzy) if (oneEdit(k, pk)) for (const o of p.owners) owners.add(o);
-    if (owners.size > 0) add(w, owner(owners, w));
+    if ([...k].length < MIN_FUZZY_LENGTH || byFold.has(k) || DICTIONARY.has(k)) continue;
+    if (recurrenceExclusion(w, vocabulary) !== null) continue;
+    // null stands for a shared part, which no one person owns.
+    const owners = new Set(fuzzy.filter((p) => oneEdit(k, fold(p.form))).map((p) => (p.shared ? null : p.value)));
+    if (owners.size === 0) continue;
+    const [sole] = owners;
+    add(w, owners.size === 1 && typeof sole === "string" ? sole : w);
   }
   return [...out.values()].sort((a, b) => cmp(a.form as string, b.form as string) || cmp(a.value, b.value));
 }

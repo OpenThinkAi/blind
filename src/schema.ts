@@ -3,8 +3,11 @@
 // truth at runtime: src/validate.ts checks documents against those files, and
 // test/schema.test.ts checks the fixtures satisfy both the JSON schema and these types.
 
+/**
+ * `secret` is a column class only (a credential column: `blind` redacts it); no entity list holds it.
+ */
 export type EntityClassName =
-  | "person" | "org" | "host" | "email" | "id" | "location" | "vocabulary" | "unknown";
+  | "person" | "org" | "host" | "email" | "id" | "location" | "vocabulary" | "secret" | "unknown";
 
 /**
  * `drop` removes the column (or JSON key) from the output; `redact` writes REDACTED_VALUE in every
@@ -19,10 +22,14 @@ export type ColumnSource = Source | "policy";
 
 /** What a `redact` treatment writes in place of each non-empty value. */
 export const REDACTED_VALUE = "REDACTED";
-export type PatternName = "ip" | "email" | "host" | "guid" | "mac" | "phone";
-export type Patterns = Record<Exclude<PatternName, "phone">, boolean> & { phone?: boolean };
+export type PatternName = "ip" | "email" | "host" | "guid" | "mac" | "phone" | "secret";
+export type Patterns = Record<Exclude<PatternName, "phone" | "secret">, boolean> & { phone?: boolean; secret?: boolean };
 
-/** Whether a pattern is on. `phone` is absent from specs written before it existed, and absent means on (fail closed). */
+/**
+ * Whether a pattern is on. `phone` and `secret` are absent from specs written before they existed:
+ * absent `phone` means on (fail closed); absent `secret` means off, so an older spec keeps its output
+ * (blind init's `[patterns] secret = true` turns it on whatever the spec says).
+ */
 export const patternOn = (patterns: Patterns, name: PatternName): boolean => patterns[name] ?? name === "phone";
 
 /** Where a value lives: a table column (`header`, optionally on a `sheet`) or a JSON key path. */
@@ -46,7 +53,7 @@ export interface Entity {
   source?: Source;
 }
 
-export type Entities = Partial<Record<Exclude<EntityClassName, "unknown">, Entity[]>>;
+export type Entities = Partial<Record<Exclude<EntityClassName, "unknown" | "secret">, Entity[]>>;
 
 export interface Question {
   id: string;
@@ -62,7 +69,7 @@ export interface Spec {
   version: 1;
   columns: ColumnRule[];
   entities: Entities;
-  /** `phone` may be absent in a spec written before it existed: absent means on (patternOn). */
+  /** `phone` and `secret` may be absent in a spec written before they existed (patternOn says what absent means). */
   patterns: Patterns;
   questions: Question[];
   /** Fingerprints of the document and transcript excerpts the analyst has read (see docs/spec.md). */
@@ -80,7 +87,7 @@ export interface ProfileFile {
 }
 
 /** Profile detectors: the spec's shape patterns plus `numericId`, which has no free-text pattern. */
-export type DetectorName = Exclude<PatternName, "phone"> | "numericId";
+export type DetectorName = Exclude<PatternName, "phone" | "secret"> | "numericId";
 
 export interface ValueStats {
   count: number;

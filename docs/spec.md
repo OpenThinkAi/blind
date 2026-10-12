@@ -35,7 +35,7 @@ Field names are camelCase. All examples below are synthetic.
     "person": [{ "canonical": "Avery Quill", "aliases": ["A. Quill", "Quill, Avery", "Aves"], "parts": ["Avery", "Quill"] }],
     "org": [{ "canonical": "Example Widgets", "aliases": ["Example Widgets Ltd", "EXW"], "parts": [] }]
   },
-  "patterns": { "ip": true, "email": true, "host": true, "guid": true, "mac": false, "phone": true },
+  "patterns": { "ip": true, "email": true, "host": true, "guid": true, "mac": false, "phone": true, "secret": true },
   "questions": [
     { "id": "q1", "text": "Values under ref_code look like internal project IDs. Hide them?", "options": ["blind", "keep"], "answer": null,
       "about": { "file": "tickets.json", "jsonPath": "$.items[*].ref_code" } }
@@ -59,7 +59,7 @@ One rule per table column or JSON key path. An array, possibly empty. Each rule:
 | `sheet` | string, non-empty | no | Worksheet name, for workbooks. Example: `"Servers"`. |
 | `header` | string | one of `header` / `jsonPath` | Column header text. May be `""` for a blank header. Example: `"Owner"`. |
 | `jsonPath` | string, non-empty | one of `header` / `jsonPath` | Key path, for JSON and JSONL. Example: `"$.items[*].ref_code"`. |
-| `class` | `person` \| `org` \| `host` \| `email` \| `id` \| `location` \| `vocabulary` \| `unknown` | yes | What the values are. `vocabulary` means ordinary words that identify no one. `unknown` means nobody could decide. |
+| `class` | `person` \| `org` \| `host` \| `email` \| `id` \| `location` \| `vocabulary` \| `secret` \| `unknown` | yes | What the values are. `vocabulary` means ordinary words that identify no one. `secret` means passwords, keys or tokens: under `blind` every non-empty value is written as `REDACTED`, as `redact` does, and the model analyst may not propose it with `blind`. `unknown` means nobody could decide. |
 | `treatment` | `blind` \| `keep` \| `value` \| `drop` \| `redact` \| `scan` | yes | `blind`: replace with a class-prefixed pseudonym (`Person_A7F3`). `keep`: leave unchanged. `value`: replace with a neutral `Value_` pseudonym. `scan`: keep the cell as written except for what the free-text scanner finds in it. `drop`: remove the column or key from the output. `redact`: write `REDACTED` in place of every non-empty value. Neither `drop` nor `redact` is recorded in the map, so neither can be revealed. The model analyst may not use `drop`, `redact` or `scan`: they come from `blind.toml` ([policy.md](policy.md#columns)) or from you. |
 | `confidence` | number, 0 to 1 | yes | How sure the author of the rule was. Example: `0.95`. |
 | `source` | `analyst` \| `human` \| `heuristic` \| `policy` | yes | Who wrote the rule: the model analyst, you, the built-in heuristics, or `blind plan` from a `[[columns]]` rule or `[keep]` term in `blind.toml`. |
@@ -84,7 +84,7 @@ optional and `{}` is valid. Each value is an array of entities:
 
 ### `patterns`
 
-Shape detectors for free text. All five keys are required, so turning a detector off is always an
+Shape detectors for free text. The first five keys are required, so turning a detector off is always an
 explicit, visible choice. `true` means values of that shape are found and replaced. A key set in
 the `[patterns]` table of `blind.toml` wins over the spec's value at apply and audit time (see
 [policy.md](policy.md#patterns)); the spec file is not changed.
@@ -97,6 +97,7 @@ the `[patterns]` table of `blind.toml` wins over the spec's value at apply and a
 | `guid` | boolean | GUIDs, e.g. `123e4567-e89b-12d3-a456-426614174000`. |
 | `mac` | boolean | MAC addresses, e.g. `00:00:5e:00:53:01`. |
 | `phone` | boolean, optional | Phone numbers written with separators: North American (`(801) 555-0100`, `801-555-0100`, `801.555.0100`, `801 555 0100`, with an optional `+1` or `1`) and international with a leading `+` (`+44 20 7946 0958`). Replaced as an `Id_` pseudonym, and every way of writing one number (and the same number in a table column) shares one pseudonym. A run of bare digits, a date, an amount or an id that merely contains digits is not a phone. A spec without this field has it on. `blind plan` turns it on when the policy calls `id` sensitive, which the default policy does. |
+| `secret` | boolean, optional | Passwords, keys and tokens by their shape, and by a `password`, `key` or `token` in the same or the two sentences or turns before: `Tr0ub4dor&3`, an API key, `Example2031!` read out a turn after the password was mentioned. Written as `REDACTED`, never a pseudonym, and not recorded in the map. Product codes, versions, CamelCase words, doses, pseudonyms, hex hashes and ids are not matched; the rules are in [policy.md](policy.md#the-secret-pattern). A spec without this field has it off (`blind init` writes `secret = true` in `[patterns]`, which wins). `blind plan` turns it on when the policy calls `secret` sensitive, which the default policy does. |
 
 ### `questions`
 
@@ -195,7 +196,7 @@ same blinded output tree. No model is called.
 |---|---|
 | `--accept c1` | an entity of the suggested class, `{ "canonical": <value>, "aliases": [], "parts": [], "source": "human" }` |
 | `--accept c1=<class>` | the same, of `person`, `org`, `host`, `email`, `id` or `location` |
-| `--accept c1=pattern` | the shape pattern the whole value matches (`email`, `ip`, `mac`, `guid`, `phone`, `host`) is turned on |
+| `--accept c1=pattern` | the shape pattern the whole value matches (`email`, `ip`, `mac`, `guid`, `phone`, `host`, `secret`) is turned on |
 | `--reject c1` | a `vocabulary` entity with `source: "human"`, so the mechanical and semantic layers do not raise it again |
 | neither | nothing; the next audit raises it again |
 
@@ -717,11 +718,17 @@ up to three layers, mechanical, semantic, then model; the report lists the layer
   no mechanical pattern; the semantic layer skips every linking position (its hex finder would
   otherwise report each rsid and paragraph id). The audit cannot tell a rewritten hex id from an
   original one without the salt.
+- **Secrets.** With the `secret` pattern on, a match that survives in document text is a
+  `pattern:secret` leak: the whole text of a plain file (read with the keyword reach, except
+  CSV/TSV and JSON, where each value stands alone as the engine reads it) and the text of an XML
+  member's elements (runs of a paragraph joined, entities undone). Markup, attribute values, file
+  names, images and other binary content are not read for secrets: they are not document text, and
+  random bytes look like keys. `--accept-leaks` accepts one as an `id` entity.
 - **Kept hosts.** A host name under a domain in the `blind.toml` keep list is not reported: the
   engine keeps it because the policy says to. An invalid `blind.toml` stops the audit (exit 3).
 - **`leak`**: a whole-word survivor in the case the engine would have replaced; in a CSV/TSV
-  output, a column the spec drops that is still there, or a column the spec redacts with a cell
-  that is neither empty nor `REDACTED`.
+  output, a column the spec drops that is still there, or a column the spec redacts (treatment
+  `redact`, or class `secret` under `blind`) with a cell that is neither empty nor `REDACTED`.
 - **`candidate`**: a case, accent or width variant; a value inside a longer word (4 characters or
   more); a value under 3 characters; a host label or email local part of a blinded value; a column
   the spec declares `unknown` (unless it is dropped, redacted or scanned, which is a decision; a `scan` column is audited as free text, never explained away as vocabulary); a CSV/TSV column with no spec rule; an unanswered spec question; and

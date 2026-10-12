@@ -55,6 +55,7 @@
 // values replaced above), planned with the cells and rendered after them.
 
 import { type ColumnRule, type EntityClassName, REDACTED_VALUE, type Spec, type Treatment } from "../schema.ts";
+import { newSecretCarry } from "./secret.ts";
 import type { PseudoClass } from "./canonical.ts";
 // The profiler's header rule: spec rules name columns by the headers the profile reported.
 import { detectHeaderRow } from "../profile/table.ts";
@@ -940,9 +941,11 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     (a, b) => cmp(a.cls, b.cls) || cmp(a.form ?? a.value, b.form ?? b.value) || cmp(a.value, b.value),
   );
   const scanner = new TextScanner(spec.entities, spec.patterns, keep, scanForms, contextOf(opts));
-  const free = (t: string) => scanner.free(t);
   for (const p of plans) {
-    if (p.kind === "text") p.spans = p.transcript !== undefined ? transcriptSpans(p.text, p.transcript, free, kept) : scanner.free(p.text);
+    // One secret-boost carry per document: its turns and paragraphs are scanned in order (secret.ts).
+    const carry = newSecretCarry();
+    const free = (t: string) => scanner.free(t, carry);
+    if (p.kind === "text") p.spans = p.transcript !== undefined ? transcriptSpans(p.text, p.transcript, free, kept) : free(p.text);
     else if (p.kind === "docx") scanDocx(p.docx, p.transcript !== undefined ? (t) => entrySpans(t, free, kept) : free, contextOf(opts));
     else if (p.kind === "json") scanPending(p.pending, p.edits, scanner);
     else if (p.kind === "table") scanPending(p.pending, p.edits, scanner);

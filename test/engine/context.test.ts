@@ -8,7 +8,7 @@ import { EntityMatcher, findSpans } from "../../src/engine/text.ts";
 import { parsePolicy, defaultPolicy, renderPolicy, PolicyError } from "../../src/policy.ts";
 import { REDACTED_VALUE, type PatternName, type Spec } from "../../src/schema.ts";
 
-const NONE: Record<PatternName, boolean> = { ip: false, email: false, host: false, guid: false, mac: false, phone: false };
+const NONE: Record<PatternName, boolean> = { ip: false, email: false, host: false, guid: false, mac: false, phone: false, secret: false };
 const found = (text: string, triggers: string[] = []) => findContextSpans(text, { triggers }).map((s) => text.slice(s.start, s.end));
 
 describe("context keywords", () => {
@@ -36,6 +36,9 @@ describe("context keywords", () => {
     ["policy #AB-77123", ["AB-77123"]],
     ["policy number: 99120344", ["99120344"]],
     ["alarm code 9981", ["9981"]],
+    ["password hunter2 for now", ["hunter2"]],
+    ["password: dragon", ["dragon"]],
+    ["pw XKCD", ["XKCD"]],
   ])("%j", (text, expected) => {
     expect(found(text)).toEqual(expected);
   });
@@ -53,6 +56,10 @@ describe("context keywords", () => {
     ["dobson and plates"],
     ["password"],
     ["5 dl of water"],
+    ["Backup box hasn't had its password rotated yet."],
+    ["Has the backup box password been rotated?"],
+    ["Was the password rotated?"],
+    ["the combo lock stuck"],
   ])("%j finds nothing", (text) => {
     expect(found(text)).toEqual([]);
   });
@@ -85,9 +92,9 @@ describe("findSpans with context", () => {
   });
   test("a redaction wins over a phone match of the same text, and a phone elsewhere is still a phone", () => {
     const text = "gate code 801-555-0142, call 801-555-0100";
-    const spans = findSpans(text, m, { ...NONE, phone: true }, [], { triggers: [] });
+    const spans = findSpans(text, m, { ...NONE, phone: true, secret: false }, [], { triggers: [] });
     expect(spans.map((s) => [text.slice(s.start, s.end), s.cls])).toEqual([["801-555-0142", "redact"], ["801-555-0100", "id"]]);
-    expect(findSpans(text, m, { ...NONE, phone: true }).map((s) => s.cls)).toEqual(["id", "id"]);
+    expect(findSpans(text, m, { ...NONE, phone: true, secret: false }).map((s) => s.cls)).toEqual(["id", "id"]);
   });
   test("a redaction wins over a pattern match of the same text", () => {
     const text = "pw: avery@example.com";

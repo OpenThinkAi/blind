@@ -45,7 +45,7 @@ describe("heuristic analyst", () => {
     const p = defaultPolicy();
     p.sensitive.classes = ["person", "host"];
     expect(heuristicRule(loc, stats({ email: 1 }), p)).toMatchObject({ class: "email", treatment: "keep" });
-    expect(heuristicPatterns(p)).toEqual({ ip: true, email: false, host: true, guid: false, mac: true, phone: false });
+    expect(heuristicPatterns(p)).toEqual({ ip: true, email: false, host: true, guid: false, mac: true, phone: false, secret: false });
   });
 });
 
@@ -198,5 +198,10 @@ describe("checkProposal", () => {
     expect(checkProposal(with_("blind", "id"), profile)).toEqual([]);
     expect(checkProposal(with_("keep", "vocabulary"), profile)).toEqual([]);
     expect(checkProposal(with_("value", "unknown"), profile)).toEqual([]);
+    // A secret column under blind is redacted (AGT-1844): the same call, so the analyst may not make it.
+    expect(checkProposal(with_("blind", "secret"), profile)).toEqual([
+      { path: "$.columns[0].class", message: 'a "secret" column under "blind" is redacted; only blind.toml or a human may redact a column (ask a question instead)' },
+    ]);
+    expect(checkProposal(with_("keep", "secret"), profile)).toEqual([]);
   });
 });

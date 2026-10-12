@@ -10,8 +10,10 @@ import { findPatternSpans, type Span } from "./text.ts";
 /**
  * Every pattern shape, enabled in the spec or not: the audit flags ip, guid and mac whatever the
  * spec says, and email and host when enabled, and a part nothing rewrites cannot honour a switch.
+ * `secret` is left out: it reads document text, and in markup, attributes and embedded data it
+ * would refuse files over format structure (the audit reads it in document text only).
  */
-export const ALL_PATTERNS: Patterns = { email: true, ip: true, mac: true, guid: true, host: true, phone: true };
+export const ALL_PATTERNS: Patterns = { email: true, ip: true, mac: true, guid: true, host: true, phone: true, secret: false };
 
 /**
  * Spans in text that nothing rewrites: spec entities, recurring values and speakers (`entities`),

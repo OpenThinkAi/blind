@@ -21,7 +21,7 @@ const DETECTOR_CLASS: [DetectorName, SensitiveClass][] = [
   ["numericId", "id"],
 ];
 
-const PATTERN_CLASS: Record<PatternName, SensitiveClass> = { ip: "host", email: "email", host: "host", guid: "id", mac: "host", phone: "id" };
+const PATTERN_CLASS: Record<PatternName, SensitiveClass> = { ip: "host", email: "email", host: "host", guid: "id", mac: "host", phone: "id", secret: "secret" };
 
 /** Every column and JSON key the profile describes, with its stats, in profile order. */
 export function profileLocations(profile: Profile): { loc: Location; stats: ValueStats }[] {
@@ -78,7 +78,7 @@ export function heuristicRule(loc: Location, stats: ValueStats, policy: Heuristi
 /** Patterns on for every shape whose class the policy calls sensitive. */
 export function heuristicPatterns(policy: Pick<Policy, "sensitive">): Spec["patterns"] {
   const on = (p: PatternName) => policy.sensitive.classes.includes(PATTERN_CLASS[p]);
-  return { ip: on("ip"), email: on("email"), host: on("host"), guid: on("guid"), mac: on("mac"), phone: on("phone") };
+  return { ip: on("ip"), email: on("email"), host: on("host"), guid: on("guid"), mac: on("mac"), phone: on("phone"), secret: on("secret") };
 }
 
 const fold = (s: string): string => s.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();

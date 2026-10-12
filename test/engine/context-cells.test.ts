@@ -82,7 +82,7 @@ describe("label and value in neighbouring cells", () => {
   });
 });
 
-const NONE: Record<PatternName, boolean> = { ip: false, email: false, host: false, guid: false, mac: false, phone: false };
+const NONE: Record<PatternName, boolean> = { ip: false, email: false, host: false, guid: false, mac: false, phone: false, secret: false };
 const spec = (): Spec => ({ version: 1, columns: [], entities: {}, patterns: NONE, questions: [] });
 const SALT = new Uint8Array(32).fill(5);
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -182,7 +182,9 @@ describe("blind.toml triggers with a kind", () => {
   test("a number trigger takes a number, not the next word", () => {
     expect(found("her license photo is old", [license])).toEqual([]);
     expect(found("license 4417-22 expires", [license])).toEqual(["4417-22"]);
-    expect(found("her license photo is old", ["license"])).toEqual(["photo"]);
+    // A secret trigger takes the next word after a separator; a plain word straight after it is the sentence going on (AGT-1844).
+    expect(found("her license: photo is old", ["license"])).toEqual(["photo"]);
+    expect(found("her license photo is old", ["license"])).toEqual([]);
   });
 
   test("a date trigger", () => {

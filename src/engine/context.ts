@@ -6,7 +6,8 @@
 // A trigger is a word or short phrase, matched whole-word and case-insensitively. After it come
 // optional separators and filler ("is", "#", ":", "number", "ending in"), then the value:
 // - `secret` triggers (password, gate code, combo): the next token, whatever it is, unless it is an
-//   ordinary word ("the password is reset" redacts nothing);
+//   ordinary word ("the password is reset" redacts nothing), or a plain lowercase or capitalised word
+//   straight after the trigger with no separator or filler ("its password rotated yet");
 // - `number` triggers (account, plate, card, license): the next token only when it holds a digit
 //   and is at least three characters, so "account manager" and "plate 2" stay;
 // - `date` (DOB): a date written numerically, "April 12, 1980" or "12 April 1980".
@@ -146,16 +147,20 @@ export interface ContextSpan {
 }
 
 /** Spaces, one separator, filler words, matched repeatedly from `i`; returns the new offset and whether a number marker was seen. */
-function skipFiller(text: string, from: number): { at: number; marked: boolean } {
+function skipFiller(text: string, from: number): { at: number; marked: boolean; filled: boolean } {
   let i = from;
   let marked = false;
+  // Anything but spaces between the trigger and the value: ":", "=", "is", "#" ...
+  let filled = false;
   for (let guard = 0; guard < 6; guard++) {
     const m = FILLER_RE.exec(text.slice(i, i + 12));
     if (m === null) break;
-    if (MARKER_RE.test(m[0].toLowerCase())) marked = true;
+    const piece = m[0].toLowerCase();
+    if (MARKER_RE.test(piece)) marked = true;
+    if (!/^[ \t]+$/.test(piece)) filled = true;
     i += m[0].length;
   }
-  return { at: i, marked };
+  return { at: i, marked, filled };
 }
 
 /** The value after `pos` for trigger `t`, as [start, end), or null. */
@@ -201,8 +206,13 @@ function valueAfter(text: string, pos: number, t: Trigger): [number, number] | n
   const hasDigit = /\d/.test(word);
   if (t.kind === "secret") {
     if (!hasDigit && (PROSE.has(word.toLowerCase()) || word.length < 2)) return null;
+    // A plain word ends a sentence with "!" or "?" too ("has the password been rotated?").
+    const plain = word.replace(/[!?]+$/u, "");
     // Past skipped words a plain word is prose unless it follows "to": "reset to swordfish".
-    if (skipped > 0 && /^[\p{L}'’]+$/u.test(word) && last !== "to") return null;
+    if (skipped > 0 && /^[\p{L}'’]+$/u.test(plain) && last !== "to") return null;
+    // "its password rotated yet": a plain word straight after the trigger, with nothing between
+    // ("password: dragon", "password is dragon" still count), is the sentence going on.
+    if (skipped === 0 && !first.filled && /^(?:\p{Lu}?\p{Ll}+)$/u.test(plain)) return null;
   } else if (!hasDigit || word.length < 3) return null;
   let end = i + word.length;
   if (t.groups !== undefined && /^[\d*xX•-]+$/.test(word)) {

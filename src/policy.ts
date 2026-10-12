@@ -7,7 +7,7 @@ import type { EntityClassName, PatternName, Spec, Treatment } from "./schema.ts"
 /** The policy file `blind init` writes and every later command reads. */
 export const POLICY_FILE = "blind.toml";
 
-export const SENSITIVE_CLASSES = ["person", "org", "host", "email", "id", "location"] as const;
+export const SENSITIVE_CLASSES = ["person", "org", "host", "email", "id", "location", "secret"] as const;
 export type SensitiveClass = (typeof SENSITIVE_CLASSES)[number];
 
 /** `claude -p` (subscription), the Anthropic API, or any OpenAI-compatible server. */
@@ -38,6 +38,7 @@ const PATTERN_HELP: Record<PatternName, string> = {
   guid: "GUIDs",
   mac: "MAC addresses",
   phone: "phone numbers",
+  secret: "passwords, keys and tokens (credential-shaped words), written as REDACTED",
 };
 export const POLICY_PATTERNS = Object.keys(PATTERN_HELP) as PatternName[];
 
@@ -45,7 +46,7 @@ export const POLICY_PATTERNS = Object.keys(PATTERN_HELP) as PatternName[];
 export type PolicyPatterns = Partial<Record<PatternName, boolean>>;
 
 /** Every spec class, for a `[[columns]]` rule's `class`. */
-export const COLUMN_CLASSES: readonly EntityClassName[] = ["person", "org", "host", "email", "id", "location", "vocabulary", "unknown"];
+export const COLUMN_CLASSES: readonly EntityClassName[] = ["person", "org", "host", "email", "id", "location", "vocabulary", "secret", "unknown"];
 export const COLUMN_TREATMENTS: readonly Treatment[] = ["keep", "scan", "drop", "blind", "value", "redact"];
 
 /**
@@ -123,8 +124,8 @@ export function defaultPolicy(): Policy {
     models: { analyst: local(), auditor: local(), auditorExplicit: true },
     profile: { samples: defaultSamples("local-only"), samplesExplicit: false },
     privacy: { mode: "local-only" },
-    // IPs and host names are found in free text even when "host" is not a listed class.
-    patterns: { ip: true, host: true },
+    // IPs, host names and secrets are found in free text even when their class is not listed.
+    patterns: { ip: true, host: true, secret: true },
     columns: [],
     context: { enabled: true, triggers: [] },
     defaults: { columns: "fallback" },

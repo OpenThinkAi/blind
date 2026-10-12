@@ -26,7 +26,7 @@ describe("defaults", () => {
 
   test("defaults blind every class, show 5 samples and stay local", () => {
     const p = defaultPolicy();
-    expect(p.sensitive.classes).toEqual(["person", "org", "host", "email", "id", "location"]);
+    expect(p.sensitive.classes).toEqual(["person", "org", "host", "email", "id", "location", "secret"]);
     expect(p.profile.samples).toBe(5);
     expect(p.privacy.mode).toBe("local-only");
     expect(new URL(p.models.analyst.url).hostname).toBe("127.0.0.1");
@@ -114,23 +114,24 @@ describe("[patterns]", () => {
   // Synthetic: the spec's own switches, all off, so every blind.toml switch shows.
   const spec = (): Spec => ({ version: 1, columns: [], entities: {}, patterns: { ip: false, email: false, host: false, guid: false, mac: false }, questions: [] });
 
-  test("the init template turns ip and host on and leaves the rest to the spec", () => {
-    expect(defaultPolicy().patterns).toEqual({ ip: true, host: true });
+  test("the init template turns ip, host and secret on and leaves the rest to the spec", () => {
+    expect(defaultPolicy().patterns).toEqual({ ip: true, host: true, secret: true });
     const text = valid();
     expect(text).toMatch(/^\[patterns\]$/m);
     expect(text).toMatch(/^ip = true /m);
     expect(text).toMatch(/^host = true /m);
+    expect(text).toMatch(/^secret = true /m);
     for (const name of ["email", "guid", "mac", "phone"]) expect(text).toMatch(new RegExp(`^# ${name} = true `, "m"));
   });
 
   test("each pattern can be set on or off; an unset one is left out", () => {
     const text = valid().replace(/^# email = true .*$/m, "email = false").replace(/^ip = true .*$/m, "ip = false").replace(/^# mac = true .*$/m, "mac = true");
-    expect(parsePolicy(text).patterns).toEqual({ ip: false, host: true, email: false, mac: true });
+    expect(parsePolicy(text).patterns).toEqual({ ip: false, host: true, email: false, mac: true, secret: true });
   });
 
   test("phone can be switched in blind.toml and wins over the spec", () => {
     const text = valid().replace(/^# phone = true .*$/m, "phone = false");
-    expect(parsePolicy(text).patterns).toEqual({ ip: true, host: true, phone: false });
+    expect(parsePolicy(text).patterns).toEqual({ ip: true, host: true, phone: false, secret: true });
     expect(withPolicyPatterns(spec(), { phone: true }).patterns.phone).toBe(true);
     expect(withPolicyPatterns({ ...spec(), patterns: { ...spec().patterns, phone: true } }, { phone: false }).patterns.phone).toBe(false);
   });
@@ -144,7 +145,7 @@ describe("[patterns]", () => {
   test("a non-boolean or unknown key is rejected, naming it", () => {
     expect(errorOf(valid().replace(/^ip = true .*$/m, 'ip = "yes"'))).toBe("blind.toml: patterns.ip must be true or false (got string)");
     expect(errorOf(valid().replace(/^ip = true .*$/m, "ipv4 = true"))).toBe(
-      "blind.toml: unknown key patterns.ipv4 (expected one of: ip, email, host, guid, mac, phone)",
+      "blind.toml: unknown key patterns.ipv4 (expected one of: ip, email, host, guid, mac, phone, secret)",
     );
     expect(errorOf(`patterns = 1\n${valid().replace(/\[patterns\][\s\S]*$/, "")}`)).toBe("blind.toml: patterns must be a table (got 1)");
   });

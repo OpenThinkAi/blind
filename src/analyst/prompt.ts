@@ -16,6 +16,8 @@ const CLASS_TEXT: Record<string, string> = {
   email: "an email address",
   id: "an account, record, ticket, asset, employee or other identifier",
   location: "a place: site, office, address, city, region or room",
+  // Class secret under blind redacts the column, which only the owner may decide (checkProposal).
+  secret: "passwords, keys or tokens: give the column treatment \"value\" and ask a question whose options include \"secret\"; never \"blind\"",
   vocabulary: "ordinary words that identify no one: statuses, categories, product terms, dates, amounts",
   unknown: "you cannot tell from the profile",
 };
@@ -58,7 +60,7 @@ export function systemPrompt(policy: Pick<Policy, "sensitive" | "privacy">): str
       "see or can expect as aliases (initials, \"Last, First\", nicknames, acronyms, legal suffixes), and the pieces that identify it " +
       "on their own as parts (a given name, a surname). Every speaker in data.profile.transcripts[].speakers is a person: " +
       "list each one as a person entity. Do not list keep terms.",
-    "5. patterns: turn on the shape finders (ip, email, host, guid, mac, phone) for every shape that is sensitive under the policy.",
+    "5. patterns: turn on the shape finders (ip, email, host, guid, mac, phone, secret) for every shape that is sensitive under the policy.",
     "6. Ask rather than guess. When you cannot decide a column, give it class \"unknown\" with treatment \"value\" and add a question " +
       "whose about names that column (file, sheet if present, and header or jsonPath) and whose options are drawn from " +
       `"blind", "keep", "value" and the class names. Questions without about may ask anything, with two or more options.`,

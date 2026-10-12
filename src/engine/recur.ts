@@ -36,6 +36,7 @@ import type { Entities, PatternName, Patterns } from "../schema.ts";
 import { DICTIONARY } from "./words.ts";
 import { canonicalize, PSEUDO_CLASSES, type PseudoClass } from "./canonical.ts";
 import { isHonorificOrRole } from "./honorifics.ts";
+import type { SecretCarry } from "./secret.ts";
 import { isDateWord } from "./datecontext.ts";
 import { identityOf, type PersonAliases } from "./identity.ts";
 import { looksLikePersonName } from "./prose.ts";
@@ -278,9 +279,13 @@ export class TextScanner {
     this.all = new EntityMatcher(entities, forms);
   }
 
-  /** Free text (and cells kept as text): patterns first, then spec entities and recurring values in the gaps, longest first. */
-  free(text: string): Span[] {
-    return findSpans(text, this.all, this.patterns, this.keep, this.context);
+  /**
+   * Free text (and cells kept as text): patterns first, then spec entities and recurring values in the gaps, longest first.
+   * Pass one `carry` to every call over one document (its turns or paragraphs, in order), so a
+   * password named in one turn boosts the secret pattern in the next two (secret.ts).
+   */
+  free(text: string, carry?: SecretCarry): Span[] {
+    return findSpans(text, this.all, this.patterns, this.keep, this.context, carry);
   }
 
   /**

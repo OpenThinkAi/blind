@@ -124,7 +124,12 @@ two`, oracle class `id`, scope `spelled digits`) and an email address spoken wor
 words in ordinary prose, `two dogs, one cat`, a decoy that must survive. Three more turns say a
 secret after a keyword (`The gate code is 58214`, `pw: Quill-Harbor-9`, `acct ending 70419`; oracle
 class `id`, scope `context secret`), and one turn has the same keywords in prose with nothing after
-them (`the account manager said the password was reset`), a decoy that must survive.
+them (`the account manager said the password was reset`), a decoy that must survive. Four more
+turns carry secrets no keyword introduces: a password named in one turn (`Has the backup box
+password been rotated?`) and read out two turns later (`Harbor2031!`), and one in a list
+(`Guest wifi: ExampleNet / Tr0ub4dor&3`; oracle class `id`, scope `secret pattern`). The last turn,
+`Invoice AB-2026-0001 covers v2.10.3 of HelloWorld and the Amoxi500mg order`, is a decoy that must
+survive: a product code, a version, a CamelCase word and a dose.
 
 **`exports/scopes.json`**: a scope list with snake_case keys, `scope_id` hex IDs (8 characters),
 `account_no` 4-digit IDs written as strings, organisation names, emails, tenant hosts, an access

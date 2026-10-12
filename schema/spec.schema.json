@@ -35,7 +35,8 @@
         "host": { "type": "boolean" },
         "guid": { "type": "boolean" },
         "mac": { "type": "boolean" },
-        "phone": { "type": "boolean" }
+        "phone": { "type": "boolean" },
+        "secret": { "type": "boolean" }
       }
     },
     "questions": {
@@ -74,7 +75,7 @@
         "header": { "type": "string" },
         "jsonPath": { "$ref": "#/$defs/nonEmpty" },
         "class": {
-          "enum": ["person", "org", "host", "email", "id", "location", "vocabulary", "unknown"]
+          "enum": ["person", "org", "host", "email", "id", "location", "vocabulary", "secret", "unknown"]
         },
         "treatment": { "enum": ["blind", "keep", "value", "drop", "redact", "scan"] },
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 },

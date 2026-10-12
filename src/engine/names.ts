@@ -152,11 +152,17 @@ export class NameRewriter {
    */
   constructor(
     private readonly matcher: EntityMatcher,
-    private readonly patterns: Patterns,
+    patterns: Patterns,
     private readonly keep: readonly string[] = [],
     /** Spec vocabulary forms and policy keep terms, folded (recur.ts vocabularyForms, keepForms): a lone word among them is never replaced in another case. */
     private readonly terms: { vocabulary: ReadonlySet<string>; keep: ReadonlySet<string> } = { vocabulary: new Set(), keep: new Set() },
-  ) {}
+  ) {
+    // Names are never searched for secrets: every match would become the same REDACTED, and two
+    // files could end up with one name. The audit does not read names for secrets either.
+    this.patterns = { ...patterns, secret: false };
+  }
+
+  private readonly patterns: Patterns;
 
   /**
    * The spans in one name. Names join words with "_" ("backup_db01.example.com", "Robin

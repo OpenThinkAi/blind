@@ -111,7 +111,7 @@ const PLAN_HELP = [
 const q = (s: string): string => JSON.stringify(s);
 const where = (l: Location): string => `${q(l.file)}${l.sheet === undefined ? "" : ` [${q(l.sheet)}]`} ${q(l.header ?? l.jsonPath ?? "")}`;
 
-const CLASS_ORDER: EntityClassName[] = ["unknown", "person", "org", "host", "email", "id", "location", "vocabulary"];
+const CLASS_ORDER: EntityClassName[] = ["unknown", "person", "org", "host", "email", "id", "location", "secret", "vocabulary"];
 
 /** The spec as a review table: questions first, then columns grouped by class, entities, patterns. */
 export function renderSpec(spec: Spec, policyPatterns: PolicyPatterns = {}): string {
@@ -127,7 +127,8 @@ export function renderSpec(spec: Spec, policyPatterns: PolicyPatterns = {}): str
   out.push("");
 
   out.push(`columns (${spec.columns.length}):`);
-  const removes = (c: ColumnRule) => c.treatment === "drop" || c.treatment === "redact";
+  // A secret column under blind is redacted (columns.ts).
+  const removes = (c: ColumnRule) => c.treatment === "drop" || c.treatment === "redact" || (c.class === "secret" && c.treatment === "blind");
   const sections: [string, ColumnRule[]][] = [
     [`removed (drop: taken out of the output; redact: every value written as ${REDACTED_VALUE})`, spec.columns.filter(removes)],
     ...CLASS_ORDER.map((cls): [string, ColumnRule[]] => [
@@ -156,7 +157,7 @@ export function renderSpec(spec: Spec, policyPatterns: PolicyPatterns = {}): str
   out.push("");
   // blind.toml's [patterns] wins at apply time, so the review shows what will be used.
   const onOff = (on: boolean): string => (on ? "on" : "off");
-  const shown = (["ip", "email", "host", "guid", "mac", "phone"] as const).map((name) => {
+  const shown = (["ip", "email", "host", "guid", "mac", "phone", "secret"] as const).map((name) => {
     const on = patternOn(spec.patterns, name);
     const set = policyPatterns[name as keyof PolicyPatterns];
     return set === undefined || set === on ? `${name} ${onOff(on)}` : `${name} ${onOff(set)} (blind.toml; spec: ${onOff(on)})`;

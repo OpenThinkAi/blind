@@ -20,7 +20,7 @@ This is what `blind init --defaults` writes, minus the comments. Every key shown
 
 ```toml
 [sensitive]
-classes = ["person", "org", "host", "email", "id", "location"]
+classes = ["person", "org", "host", "email", "id", "location", "secret"]
 description = "Anything that tells a reader who these documents are about: people, the organisations they work for, their machines and hosts, email addresses, account or record IDs, and where they are."
 examples = ["Ada Example", "Example Widgets Ltd", "build01.corp.example.com", "ada@example.com", "ACCT-000123", "Springfield office"]
 
@@ -48,6 +48,7 @@ mode = "local-only"
 [patterns]
 ip = true
 host = true
+secret = true
 
 [context]
 # enabled = true
@@ -63,7 +64,7 @@ What the analyst should treat as sensitive, in your words.
 
 | Key | Type | Required | Meaning |
 |---|---|---|---|
-| `classes` | array of strings | yes | Which classes to blind: any of `person`, `org`, `host`, `email`, `id`, `location`. Anything else is an error. `[]` is valid and blinds nothing by class. |
+| `classes` | array of strings | yes | Which classes to blind: any of `person`, `org`, `host`, `email`, `id`, `location`, `secret`. Anything else is an error. `[]` is valid and blinds nothing by class. `secret` (passwords, keys, tokens) turns the [`secret` pattern](#patterns) on in a spec `blind plan` writes without a model. |
 | `description` | string | yes | In plain language: what must a reader of the blinded output not learn? |
 | `examples` | array of strings | yes | Invented examples of the kind of value you mean. |
 
@@ -142,7 +143,7 @@ class = "person"
 | `header` | string or array of strings | yes | Header globs: `*` any run of characters, `?` one. Case and runs of spaces do not matter. A JSON key path matches by its last key name (`$.visits[*].weight` by `weight`); the root and record-ID keys (`.*~`) never match. |
 | `file` | string | no | A glob on the input-relative path (`/`-separated): `*` and `?` within one folder, `**` across folders. Absent: every file. |
 | `treatment` | `"keep"`, `"scan"`, `"drop"`, `"blind"`, `"value"` or `"redact"` | yes | What the matching columns get (the spec's treatments, [spec.md](spec.md#columns)). `keep` leaves every cell byte-identical, whatever it holds. `scan` keeps the cell as written except for what the free-text scanner finds in it: pattern matches (phone, email, IP), spec entities, values blinded elsewhere, people named only in prose and the value after a [context](#context) keyword; use it for notes, remarks and diagnoses. `drop` removes the column or key from the output; `redact` writes `REDACTED` in each non-empty value. The column itself is not in the map, so it cannot be revealed; but every non-empty value still recurs: the same text in another file or column is replaced, and so are a person's name parts, as if the column had been blinded. The class is the rule's `class` when it is sensitive, else `person` for a column of names, `id` for phones, emails and codes, else `value`. |
-| `class` | a spec class (`person`, `org`, `host`, `email`, `id`, `location`, `vocabulary`, `unknown`) | no | Default: `vocabulary` for `keep`, `unknown` otherwise. `keep` with `unknown` is an error; `scan` needs no class (the audit reads a `scan` column as free text whatever its class). `blind` with a sensitive class gives that class's pseudonyms; with `unknown`, `Value_` ones. `value` with `unknown` leaves the column to the engine's identifier-like test. |
+| `class` | a spec class (`person`, `org`, `host`, `email`, `id`, `location`, `vocabulary`, `secret`, `unknown`) | no | Default: `vocabulary` for `keep`, `unknown` otherwise. `keep` with `unknown` is an error; `scan` needs no class (the audit reads a `scan` column as free text whatever its class). `blind` with a sensitive class gives that class's pseudonyms; with `unknown`, `Value_` ones; with `secret` (a password or key column), `REDACTED` in every non-empty cell, as `redact` does. `value` with `unknown` leaves the column to the engine's identifier-like test. |
 
 How they apply:
 
@@ -266,10 +267,11 @@ wins over the spec's `patterns` in both directions, every run, without editing
 | `guid` | `true` or `false` | GUIDs |
 | `mac` | `true` or `false` | MAC addresses |
 | `phone` | `true` or `false` | phone numbers (on when the spec says nothing: a spec written before `phone` existed has it on) |
+| `secret` | `true` or `false` | passwords, keys and tokens, written as `REDACTED` (off when the spec says nothing: a spec written before `secret` existed has it off) |
 
-`blind init` writes `ip = true` and `host = true`, so addresses and host names in free text are
-replaced even when `host` is not one of `[sensitive] classes`, and leaves the other four
-commented out (the spec decides). A `blind.toml` without the table behaves as before: the spec
+`blind init` writes `ip = true`, `host = true` and `secret = true`, so addresses, host names and
+credential-shaped tokens in free text are replaced even when their class is not one of
+`[sensitive] classes`, and leaves the other four commented out (the spec decides). A `blind.toml` without the table behaves as before: the spec
 decides every pattern. `blind plan` and `blind run` show the patterns in force, marking one that
 blind.toml changed: `ip on (blind.toml; spec: off)`. The spec file itself is never changed. A
 pattern turned off finds nothing new, but a value an earlier run already replaced is still in the
@@ -277,6 +279,43 @@ map and is replaced again wherever it recurs.
 
 Turning a pattern off here also turns it off for `blind plan --from-audit`: a candidate accepted
 as a pattern sets it in the spec, but a `false` here still wins.
+
+### The `secret` pattern
+
+A password, key or token written with no keyword in front of it (`wifi: ExampleNet /
+Tr0ub4dor&3`), or said a turn after the keyword (one speaker mentions the password, the next reads
+it out), is found by its shape. Each match is written as `REDACTED`, like a [`[context]`](#context)
+value: no pseudonym, nothing in the map, nothing `blind reveal` can restore. In free text only (text
+files, transcripts, DOCX, cells and JSON strings kept as text); file and folder names are never
+searched for secrets. A word is a token between spaces and the characters `" ' ( ) [ ] { } < > | , ; =`,
+with surrounding punctuation trimmed (a trailing `!` or `?` stays); `pw:Tr0ub4dor&3` is read as its
+value.
+
+- **Anywhere:** 8 to 64 characters mixing at least three of lowercase, uppercase, digit and symbol
+  (`! @ # $ % ^ & * ~ ? |` inside the word; `-`, `_`, `.`, `/`, `:` and `+` are separators, not
+  symbols, and a trailing `!` or `?` does not count), unless the word reads as words and numbers
+  (`Windows11`, `FY2026Budget`, `iPhone15Pro`, `i18n`); or 20 characters or more of base64 / base64url
+  that mix two of lowercase, uppercase and digit with high entropy (an API key, a JWT).
+- **Near a keyword:** in the sentence or turn of `password` (`passwd`, `pwd`, `pw`, `passcode`,
+  `passphrase`, `combo`, `combination`) and in the next two, 6 characters or more mixing two
+  classes, one of them a digit or a symbol inside the word: `Example2031!`, `Summer2024`,
+  `hunter22`; never `Thanks!` or `rotating`. After the commoner `key`, `api key` and `token` the
+  same, but a word that reads as words and numbers (`Windows11`) is left. A sentence ends at a line
+  break or at `.`, `!` or `?` followed by a capital or a digit; each transcript turn and DOCX
+  paragraph is one too, and the reach carries from one to the next.
+- **Never:** a URL, email, `user@host`, `@handle`, `#tag`, `Issue#42` or `policy.md#columns`, a
+  path or file name, a dotted name (`config.$defs.entity`), a regex range (`A-Za-z0-9`), a date or
+  time, a version (`v2.10.3`), a spreadsheet reference (`$B$2:$B$5`), a pseudonym or `REDACTED`, an amount or
+  measure (`$1,250.00`, `38.6lb`, `Amoxi500mg`), hex of any length (hashes, commit ids, request ids),
+  a GUID, a code of one case joined by separators (`AB-2026-0001`, `web-7d4b9c8f6-x2k9p`), letters
+  then digits (`INC0012345`), a phone, IP, MAC or host, or a short technical term (`sha256`,
+  `base64`).
+
+It is a shape heuristic: a mixed-case id with no separators (`aB3xY9qL`) reads as a secret, and a
+password that is an ordinary word (`dragon`) is only found after a keyword (`[context]`). The
+audit reports every match that survives in document text as a `pattern:secret` leak (see
+[spec.md](spec.md#how-blind-audit-checks-the-output)). A `Password` column is a column rule:
+`[[columns]]` with `class = "secret"` and `treatment = "blind"` (or `treatment = "redact"`).
 
 ## `[context]`
 
@@ -301,7 +340,9 @@ What counts as the value, after the keyword and any separators or filler (`:`, `
 `number`, `no.`, `ending in`):
 
 - `password`, `pw`, `combo`, `gate code` and every extra `triggers` word take the next token,
-  whatever it is, unless it is an ordinary word (`the password was reset` redacts nothing). A
+  whatever it is, unless it is an ordinary word (`the password was reset` redacts nothing), or a
+  plain lowercase or capitalised word straight after the keyword with nothing between
+  (`its password rotated yet` redacts nothing; `password: dragon` and `password is dragon` do). A
   quoted value is taken to its closing quote.
 - The others (`account`, `card`, `routing`, `plate`, `DL`, `CVV`) take the next token only if it
   holds a digit and is at least three characters, so `account manager` and `plate 2` stay.

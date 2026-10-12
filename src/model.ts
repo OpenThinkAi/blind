@@ -81,6 +81,11 @@ export class ModelError extends Error {
   override name = "ModelError";
 }
 
+/** A reply that failed the schema twice: the endpoint answered, but nothing it said was accepted. */
+export class ModelRejected extends ModelError {
+  override name = "ModelRejected";
+}
+
 /**
  * A call refused before anything was sent: the privacy mode, the endpoint, the key setting,
  * or the data forbids it. Commands report it with exit 2 (refused), never as a partial result.
@@ -525,5 +530,5 @@ export async function ask<T>(role: Role, system: string, prompt: Prompt, schema:
     if (parsed.ok) return parsed.value as T;
     feedback = parsed.reason;
   }
-  throw new ModelError(`${role} (${cfg.backend}): reply rejected after one retry; it does not match the schema:\n${feedback}`);
+  throw new ModelRejected(`${role} (${cfg.backend}): reply rejected after one retry; it does not match the schema:\n${feedback}`);
 }

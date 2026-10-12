@@ -397,7 +397,7 @@ describe("the mechanical audit does not depend on a model", () => {
     expect(calls).toBeGreaterThan(0);
     expect(withModels.code).toBe(2);
     expect(withModels.report.status).toBe("leak");
-    expect(withModels.report.layers).toEqual(["mechanical", "semantic", "model"]);
+    expect(withModels.report.layers).toEqual(["mechanical", "semantic", "model (unreachable)"]);
     const planted = withModels.report.files.find((f) => f.path === "planted.txt");
     expect(planted?.findings).toEqual([
       expect.objectContaining({ severity: "leak", source: "map", class: "email" }),

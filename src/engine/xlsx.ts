@@ -56,6 +56,7 @@ import type { ExtraForm, Span } from "./text.ts";
 import { customDataPart, customPartRefusal } from "./customxml.ts";
 import { isLabelCell, isLabelColumn } from "./labels.ts";
 import { refuseUnrewritten } from "./unrewritten.ts";
+import { pseudoCell, pseudoWrite } from "./shapes.ts";
 
 /** The spec does not fit the workbook; the caller turns this into its ApplyError (exit 2). */
 export class XlsxSpecError extends Error {
@@ -247,7 +248,7 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
         else if (cellAction.kind === "pseudo") {
           column.changed++;
           // A number is pseudonymised as an id; only a whole number is found again as written.
-          const form: ExtraForm | null = c.type !== "n" ? { cls: cellAction.cls, value: text } : /^\d+$/.test(text) ? { cls: "id", value: text } : null;
+          const form: ExtraForm | null = c.type !== "n" ? { cls: cellAction.cls, value: pseudoCell(cellAction.cls, text).core } : /^\d+$/.test(text) ? { cls: "id", value: text } : null;
           if (form !== null) {
             columnValues.push(form);
             if (recur) mapped.push(form);
@@ -626,7 +627,7 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
     const eq = sheetEq(full);
     if (eq !== undefined) return eq === full ? [...runs] : merged(eq);
     if (action.kind === "drop" || action.kind === "redact") return full.trim() === "" ? [...runs] : merged(action.kind === "drop" ? "" : REDACTED_VALUE);
-    if (action.kind === "pseudo") return full.trim() === "" ? [...runs] : merged(pz.pseudonym(action.cls, full));
+    if (action.kind === "pseudo") return full.trim() === "" ? [...runs] : merged(pseudoWrite(pz, action.cls, full));
     const spans = action.kind === "keep" ? env.scanner.kept(full) : env.scanner.free(full);
     if (spans.length === 0) return [...runs];
     const bounds: number[] = [];
@@ -668,7 +669,7 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
           if (type !== "str") return value;
           const eq = sheetEq(value);
           if (eq !== undefined) return eq;
-          if (plan.action.kind === "pseudo") return pz.pseudonym(plan.action.cls, value);
+          if (plan.action.kind === "pseudo") return pseudoWrite(pz, plan.action.cls, value);
           if (plan.action.kind === "drop") return "";
           if (plan.action.kind === "redact") return REDACTED_VALUE;
           return plan.action.kind === "keep" ? kept(value) : free(value);

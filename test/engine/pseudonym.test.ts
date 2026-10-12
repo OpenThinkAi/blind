@@ -106,7 +106,8 @@ describe("determinism", () => {
     "../formats/paths.ts": [],
     "../formats/officeids.ts": ["./ooxml.ts"],
     "../profile/table.ts": ["../schema.ts", "./stats.ts", "../engine/csv.ts"],
-    "../profile/stats.ts": ["../schema.ts", "../engine/words.ts", "../engine/epoch.ts", "../engine/address.ts"],
+    // The column shapes and the host rule are the engine's own, so profile, heuristic and engine agree (AGT-1846).
+    "../profile/stats.ts": ["../schema.ts", "../engine/words.ts", "../engine/epoch.ts", "../engine/address.ts", "../engine/shapes.ts", "../engine/text.ts"],
   };
 
   test("engine modules import only node:crypto, node:fs, each other and shared deterministic leaves", () => {

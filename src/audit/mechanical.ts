@@ -18,6 +18,8 @@
 //   ordinary word (src/engine/words.ts) or a keep term is never a leak: in its
 //   rule's case it is a candidate, otherwise not reported;
 // - every match of an enabled spec pattern that is not a pseudonym;
+// - in a CSV/TSV table, a column written as licence plates or usernames/handles (the column shapes
+//   the heuristic classifies by, src/engine/shapes.ts), unless the spec keeps, drops or redacts it;
 // - in an OOXML package, an account name in a path (`C:\Users\avery\`, `/Users/avery/`:
 //   src/formats/paths.ts) that is not a pseudonym, in any attribute and in the
 //   app.xml Template and HyperlinkBase text: the engine replaces every one.
@@ -53,6 +55,8 @@ import { isLabelWord } from "../engine/labels.ts";
 import { keptCells } from "./keptcells.ts";
 import { Shield } from "../engine/shield.ts";
 import { detectHeaderRow } from "../profile/table.ts";
+import { valueStats } from "../profile/stats.ts";
+import { isHandle, isPlate, shapeHolds } from "../engine/shapes.ts";
 import { DICTIONARY } from "../engine/words.ts";
 import { fold, foldWithMap, stringView, type View, viewsOf, xmlBaseView } from "./views.ts";
 import { accountSegments } from "../formats/paths.ts";
@@ -899,6 +903,7 @@ function columnFindings(sink: PartSink, bytes: Uint8Array, rules: readonly Colum
     }).length;
     if (left > 0) breach(r, `the spec redacts ${columnLabel(r)}, but ${left} cell(s) in it are not ${REDACTED_VALUE}`);
   }
+  shapedColumns(sink, rows, headerRow, headers, rules);
   for (let col = 0; col < width; col++) {
     const h = headers[col] ?? "";
     if (named.has(h.trim())) continue;
@@ -906,6 +911,34 @@ function columnFindings(sink: PartSink, bytes: Uint8Array, rules: readonly Colum
       `column ${col + 1} (${h.trim() === "" ? "blank header" : `header ${maskValue(h)}`}) has no spec rule; the engine decided it at apply time`,
       h.trim() === "" ? "" : maskValue(h),
     );
+  }
+}
+
+/**
+ * A CSV/TSV column written as licence plates or usernames/handles (src/engine/shapes.ts, the test the
+ * heuristic classifies columns by) is a leak: no free-text pattern replaces those, so a column of them
+ * left in clear (unruled under `[defaults] columns = "scan"`, or ruled `scan`) is the whole column
+ * leaking. A column the spec keeps, drops or redacts, or classes vocabulary, is not checked.
+ */
+function shapedColumns(sink: PartSink, rows: readonly { cells: { value: string }[] }[], headerRow: number, headers: readonly string[], rules: readonly ColumnRule[]) {
+  const width = headers.length;
+  for (let col = 0; col < width; col++) {
+    const h = headers[col] ?? "";
+    const rule = rules.find((r) => r.header !== undefined && r.header.trim() === h.trim());
+    if (rule !== undefined && (rule.treatment === "keep" || rule.treatment === "drop" || rule.treatment === "redact" || rule.class === "vocabulary")) continue;
+    const values = rows.slice(headerRow + 1).flatMap((row) => (col === width - 1 ? row.cells.slice(col) : row.cells.slice(col, col + 1)).map((c) => c.value));
+    const stats = valueStats(values, 0);
+    for (const shape of ["plate", "handle"] as const) {
+      if (!shapeHolds(shape, stats, h)) continue;
+      const first = values.find((v) => (shape === "plate" ? isPlate(v) : isHandle(v))) ?? "";
+      const what = shape === "plate" ? "licence plates" : "usernames or handles";
+      sink.findings.push({
+        file: sink.file, part: "", in: "content", offset: null, line: null, class: "id", source: "scan", severity: "leak", masked: maskValue(first),
+        reason: `column ${col + 1} (${h.trim() === "" ? "blank header" : `header ${maskValue(h)}`}) is written as ${what} in clear (shape: ${shape}, ${Math.round((stats.detectorRates[shape] ?? 0) * 100)}%)`,
+        encoding: null,
+      });
+      break;
+    }
   }
 }
 

@@ -184,14 +184,30 @@ function barePhoneSpans(text: string): { start: number; end: number; value: stri
   return out;
 }
 
+/**
+ * Whether a dotted name counts as a host: three or more labels, or two under a known suffix. Shared
+ * with the profile's `host` detector, so a column of event names ("msg.reply") is no host column.
+ */
+export function hostShaped(name: string): boolean {
+  const labels = name.split(".");
+  return labels.length >= 3 || HOST_TLDS.has((labels[labels.length - 1] as string).toLowerCase());
+}
+
+/**
+ * Whether a value is a phone or holds one, as the free-text phone pattern finds it. The profile's
+ * `phone` detector, so a phone column is classified by the same formats the engine replaces.
+ */
+export function holdsPhone(value: string): boolean {
+  if (phoneDigits(value) !== undefined) return true;
+  for (const m of value.matchAll(PATTERN_RES.phone)) if (accept("phone", m[0])) return true;
+  return false;
+}
+
 function accept(name: PatternName, m: string): boolean {
   if (name === "card") return cardDigits(m) !== undefined;
   if (name === "ip" && m.includes(":")) return validIpv6(m);
   if (name === "phone") return phoneDigits(m) !== undefined;
-  if (name === "host") {
-    const labels = m.split(".");
-    return labels.length >= 3 || HOST_TLDS.has((labels[labels.length - 1] as string).toLowerCase());
-  }
+  if (name === "host") return hostShaped(m);
   return true;
 }
 

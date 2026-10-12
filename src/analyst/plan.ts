@@ -17,7 +17,7 @@ import { buildProfile, forPrivacyMode, InputError } from "../profile/profile.ts"
 import { type ColumnRule, type EntityClassName, type Location, patternOn, REDACTED_VALUE, type Spec } from "../schema.ts";
 import { parseSpec, SchemaError, validateProfile, validateSpec } from "../validate.ts";
 import { AnalystError, answerQuestion, locationKey, proposeSpec, runAnalyst } from "./analyst.ts";
-import { heuristicReason, heuristicSpec, profileLocations } from "./heuristic.ts";
+import { heuristicReason, heuristicShape, heuristicSpec, profileLocations } from "./heuristic.ts";
 import { applyColumnPolicy, describeMatch, type RuleMatch } from "./policycolumns.ts";
 import {
   ACCEPT_CLASSES,
@@ -396,9 +396,16 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
 
     // A heuristic rule is blind with its class unlisted only because the policy turned that shape's pattern on.
     const heuristic = new Set(spec.columns.filter((c) => c.source === "heuristic" && c.treatment === "blind").map(locationKey));
+    // A heuristic rule from a column shape (plate, handle, phone) says which, and how much of the column matched.
+    const shaped = new Map(spec.columns.filter((c) => c.source === "heuristic" && c.class !== "unknown").map((c) => [locationKey(c), c]));
     for (const { loc, stats } of profileLocations(profile)) {
-      const pattern = heuristic.has(locationKey(loc)) ? heuristicReason(stats, policy) : undefined;
+      const pattern = heuristic.has(locationKey(loc)) ? heuristicReason(stats, policy, loc) : undefined;
       if (pattern !== undefined) remarks.push(`${where(loc)}: blind, because policy pattern ${pattern} on (its class is not in [sensitive].classes)`);
+      const rule = shaped.get(locationKey(loc));
+      const shape = rule === undefined ? undefined : heuristicShape(loc, stats, policy);
+      if (rule !== undefined && shape !== undefined) {
+        remarks.push(`${where(loc)}: ${rule.class} ${rule.treatment}, shape: ${shape.shape}, ${Math.round(shape.rate * 100)}%${shape.named ? " (its header names the shape)" : ""}`);
+      }
     }
 
     const written = writeSpec(io.cwd, checked(spec));

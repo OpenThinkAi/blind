@@ -1,11 +1,14 @@
 // The heuristic analyst (`blind plan --no-model`, and privacy.mode "none"). It classifies a
-// column only when one shape detector matches at least HEURISTIC_RATE of its values; every
+// column only when one shape detector matches at least HEURISTIC_RATE of its values (a column
+// shape — plate, handle, phone — by its own test in src/engine/shapes.ts, where a header naming
+// the shape lowers the rate needed); every
 // other column is `unknown`, which the engine decides at apply time (fail closed). Transcript
 // speakers are proposed as people (one person entity per speaker, with its name parts) when the
 // policy calls people sensitive. No model, no other entities, no questions.
 
 import type { Policy, SensitiveClass } from "../policy.ts";
 import { isHonorificOrRole, isOnlyHonorificsOrRoles } from "../engine/honorifics.ts";
+import { headerNames, type ShapeName, shapeHolds } from "../engine/shapes.ts";
 import { DICTIONARY } from "../engine/words.ts";
 import type { ColumnRule, DetectorName, Entity, Location, PatternName, Profile, Spec, ValueStats } from "../schema.ts";
 
@@ -19,8 +22,17 @@ const DETECTOR_CLASS: [DetectorName, SensitiveClass][] = [
   ["guid", "id"],
   ["host", "host"],
   ["address", "location"],
+  // Column shapes (src/engine/shapes.ts), ahead of numericId so a plate column says it is one.
+  ["phone", "id"],
+  ["plate", "id"],
+  ["handle", "id"],
   ["numericId", "id"],
 ];
+
+const isShape = (d: DetectorName): d is ShapeName => d === "plate" || d === "handle" || d === "phone";
+
+/** The header a location's values sit under: a table header, or a JSON key path's last segment (shapes.ts reads it). */
+const headerOf = (loc: Location): string | undefined => loc.header ?? loc.jsonPath;
 
 const PATTERN_CLASS: Record<PatternName, SensitiveClass> = { ip: "host", email: "email", host: "host", guid: "id", mac: "host", phone: "id", card: "secret", address: "location", secret: "secret" };
 
@@ -39,9 +51,9 @@ export function profileLocations(profile: Profile): { loc: Location; stats: Valu
 type HeuristicPolicy = Pick<Policy, "sensitive"> & Partial<Pick<Policy, "patterns">>;
 
 /** The free-text pattern for each column shape; numericId has none. */
-const SHAPE_PATTERN: Partial<Record<DetectorName, PatternName>> = { email: "email", ip: "ip", guid: "guid", host: "host", mac: "mac", address: "address" };
+const SHAPE_PATTERN: Partial<Record<DetectorName, PatternName>> = { email: "email", ip: "ip", guid: "guid", host: "host", mac: "mac", address: "address", phone: "phone" };
 
-type Shape = { cls: SensitiveClass; rate: number; blind: boolean; pattern: PatternName | undefined };
+type Shape = { detector: DetectorName; cls: SensitiveClass; rate: number; blind: boolean; pattern: PatternName | undefined; named: boolean };
 
 /**
  * The first shape that at least HEURISTIC_RATE of the column's values match, and whether it is blinded.
@@ -50,28 +62,39 @@ type Shape = { cls: SensitiveClass; rate: number; blind: boolean; pattern: Patte
  * same values in prose are replaced. `pattern` is set only when the pattern alone made it blind.
  * A mac column is only classified when its pattern is on.
  */
-function shapeOf(stats: ValueStats, policy: HeuristicPolicy): Shape | undefined {
+function shapeOf(stats: ValueStats, policy: HeuristicPolicy, header: string | undefined): Shape | undefined {
   const defaults = heuristicPatterns(policy);
   for (const [detector, cls] of DETECTOR_CLASS) {
     const rate = stats.detectorRates[detector] ?? 0;
-    if (rate < HEURISTIC_RATE) continue;
+    // A column shape has its own test (a naming header lowers the rate it needs); the rest need HEURISTIC_RATE.
+    if (isShape(detector) ? !shapeHolds(detector, stats, header) : rate < HEURISTIC_RATE) continue;
     const name = SHAPE_PATTERN[detector];
     const patternOn = name !== undefined && (policy.patterns?.[name] ?? defaults[name]) === true;
     if (detector === "mac" && !patternOn) continue;
     const listed = policy.sensitive.classes.includes(cls);
-    return { cls, rate, blind: listed || patternOn, pattern: !listed && patternOn ? name : undefined };
+    const named = isShape(detector) && headerNames(detector, header);
+    return { detector, cls, rate, blind: listed || patternOn, pattern: !listed && patternOn ? name : undefined, named };
   }
   return undefined;
 }
 
 /** The pattern that made the column blind although its class is not listed as sensitive: the reason `blind plan` reports. */
-export function heuristicReason(stats: ValueStats, policy: HeuristicPolicy): PatternName | undefined {
-  return shapeOf(stats, policy)?.pattern;
+export function heuristicReason(stats: ValueStats, policy: HeuristicPolicy, loc?: Location): PatternName | undefined {
+  return shapeOf(stats, policy, loc === undefined ? undefined : headerOf(loc))?.pattern;
+}
+
+/**
+ * The column shape (plate, handle, phone) that classified a column, its rate, and whether its header
+ * named the shape: what `blind plan` reports ("shape: plate, 100%"). Undefined for any other column.
+ */
+export function heuristicShape(loc: Location, stats: ValueStats, policy: HeuristicPolicy): { shape: ShapeName; rate: number; named: boolean } | undefined {
+  const s = shapeOf(stats, policy, headerOf(loc));
+  return s !== undefined && isShape(s.detector) ? { shape: s.detector, rate: s.rate, named: s.named } : undefined;
 }
 
 /** The heuristic rule for one column. */
 export function heuristicRule(loc: Location, stats: ValueStats, policy: HeuristicPolicy): ColumnRule {
-  const shape = shapeOf(stats, policy);
+  const shape = shapeOf(stats, policy, headerOf(loc));
   if (shape === undefined) return { ...loc, class: "unknown", treatment: "value", confidence: 0, source: "heuristic" };
   return { ...loc, class: shape.cls, treatment: shape.blind ? "blind" : "keep", confidence: shape.rate, source: "heuristic" };
 }

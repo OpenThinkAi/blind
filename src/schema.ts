@@ -89,10 +89,13 @@ export interface ProfileFile {
 }
 
 /** Profile detectors: the spec's shape patterns plus `numericId`, which has no free-text pattern. */
-export type DetectorName = Exclude<PatternName, "phone" | "card" | "secret"> | "numericId";
+export type BaseDetectorName = Exclude<PatternName, "phone" | "card" | "secret"> | "numericId";
+/** Column shapes (src/engine/shapes.ts): licence plate, username/handle, phone. */
+export type ShapeDetectorName = "plate" | "handle" | "phone";
+export type DetectorName = BaseDetectorName | ShapeDetectorName;
 
-/** `address` is absent from profiles written before it existed. */
-export type DetectorRates = Record<Exclude<DetectorName, "address">, number> & { address?: number };
+/** `address` and the column shapes are absent from profiles written before they existed (read as 0). */
+export type DetectorRates = Record<Exclude<BaseDetectorName, "address">, number> & Partial<Record<"address" | ShapeDetectorName, number>>;
 
 export interface ValueStats {
   count: number;

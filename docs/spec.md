@@ -169,6 +169,32 @@ plan (exit 2) before anything is profiled or sent.
   stay clear while the same values in prose are replaced. A MAC column is classified only when the
   `mac` pattern is on. When the pattern alone made a column blind, the plan notes
   `blind, because policy pattern ip on`. A `[[columns]]` rule still wins.
+- **Plates, handles and phones.** Three column shapes have no free-text pattern of their own (or,
+  for phones, are better replaced whole), so the heuristic classes them `id` (blinded when `id` is
+  listed; a phone column also when the `phone` pattern is on), and the plan notes
+  `id blind, shape: plate, 100%`. This holds under `[defaults] columns = "scan"` too: that default
+  applies only to columns no rule and no shape decides.
+  - **licence plate:** 4–8 capitals and digits with both letters and digits, at most one inner
+    space or dash, an optional two-letter region code before it (`7ABC123`, `ST 12-3456`), and up
+    to three words before it (`blue Civic 7ABC123`). When every word before the plate is a colour,
+    make, model or body style, `blind apply` replaces only the plate and keeps the words
+    (`blue Civic Id_…`); any other word before it (a name, say) and the whole cell is replaced.
+  - **username / login handle:** one lowercase token of letters, digits, `.`, `_`, `-`, 3–32
+    characters with at least three letters (`dana42`, `lee.sample7`, `rspec`), not a dictionary word.
+    A handle column also needs digits in its values and mostly distinct values, so a lowercase
+    categorical (`cash`/`card`, species names, event names) is not one.
+  - **phone:** a value the phone pattern finds ([`patterns`](#patterns)).
+
+  A column is of a shape when at least 80% of its values are; 50% when its header names the shape
+  (`plate`, `licence plate`/`license plate`, `vehicle`, `tag`; `login`, `username`, `user name`,
+  `handle`, `screen name`, `user id`, `account name`; `phone`, `mobile`, `cell`, `tel`, `fax`;
+  whole words, any case, `snake_case` and `camelCase` split, a JSON key path by its last segment).
+  A header alone never classifies a column. Not plates or handles: codes whose letter prefix most
+  values share (`SKU-10442`, `PRJ-7A3F`, `user1`), a one- or two-letter prefix and a dash
+  (`RX-2231`, `B-04`), short codes (`K12`), digits with a unit (`250 MG`), measures, dates and
+  numbers without letters (microchips). The mechanical audit runs the same test on every CSV/TSV
+  column the spec does not keep, drop or redact, and reports a plate or handle column written in
+  clear as a leak.
 - **Vocabulary that would shield.** A vocabulary entry the analyst proposes (first plan or re-plan) is
   dropped and listed (`kind: "vocabulary"`) when one of its forms equals a value blinded in a profile
   column (its samples), a map value or canonical form, or a person or org entity form or part. A
@@ -779,7 +805,10 @@ up to three layers, mechanical, semantic, then model; the report lists the layer
   engine keeps it because the policy says to. An invalid `blind.toml` stops the audit (exit 3).
 - **`leak`**: a whole-word survivor in the case the engine would have replaced; in a CSV/TSV
   output, a column the spec drops that is still there, or a column the spec redacts (treatment
-  `redact`, or class `secret` under `blind`) with a cell that is neither empty nor `REDACTED`.
+  `redact`, or class `secret` under `blind`) with a cell that is neither empty nor `REDACTED`; and a
+  CSV/TSV column the spec does not keep, drop or redact whose written values are licence plates or
+  usernames/handles by the heuristic's column test ([Plates, handles and phones](#re-planning-with-a-saved-spec)),
+  class `id`, reason `... is written as licence plates in clear (shape: plate, 100%)`.
 - **`candidate`**: a case, accent or width variant; a value inside a longer word (4 characters or
   more); a value under 3 characters; a whole value from the map that blind never recurs (the
   engine's own rule: only dictionary or field-label words, under 3 letters and digits, or a spec vocabulary form);
@@ -980,7 +1009,7 @@ Shared by table columns and JSON keys. All fields required.
 | `digitRatio` | number, 0 to 1 | Share of characters that are digits. Example: `0.8`. |
 | `dictionaryRatio` | number, 0 to 1 | Share of words found in the dictionary. Example: `0.05`. |
 | `meanLength` | number, 0 or more | Mean value length in characters. Example: `11.2`. |
-| `detectorRates` | object `{ ip, email, host, guid, mac, address, numericId }`, each 0 to 1 | Share of values each shape detector matched. All keys required but `address` (absent from profiles written before it existed). `ip` (IPv4), `email`, `host`, `guid`, `mac` and `address` (a street line such as `12 Sample Lane`, with or without a unit and `City ST ZIP`) count values that contain the shape; a column where at least 80% of values hold an address is classed `location` without a model, and blinded when `location` is sensitive; `numericId` counts values that are wholly an optional short letter prefix and 4 or more digits (`004417`, `ACCT-000123`), except Unix times (10 or 13 digits in 2000-01-01..2100-01-01) in a column where ≥ 80% of values are such times, and XLSX cells with a date or time number format, which are measurements and never count. |
+| `detectorRates` | object `{ ip, email, host, guid, mac, address, numericId, plate, handle, phone }`, each 0 to 1 | Share of values each shape detector matched. All keys required but `address`, `plate`, `handle` and `phone` (absent from profiles written before they existed). `ip` (IPv4), `email`, `host`, `guid`, `mac` and `address` (a street line such as `12 Sample Lane`, with or without a unit and `City ST ZIP`) count values that contain the shape (a `host` only under the engine's host rule: three or more labels, or two under a known suffix, so `msg.reply` is not one); a column where at least 80% of values hold an address is classed `location` without a model, and blinded when `location` is sensitive; `plate`, `handle` and `phone` count values of the column shapes described under [Plates, handles and phones](#re-planning-with-a-saved-spec), codes sharing a letter prefix excluded; `numericId` counts values that are wholly an optional short letter prefix and 4 or more digits (`004417`, `ACCT-000123`), except Unix times (10 or 13 digits in 2000-01-01..2100-01-01) in a column where ≥ 80% of values are such times, and XLSX cells with a date or time number format, which are measurements and never count. |
 | `samples` | array of strings, each at most 120 characters, at most `sampleCount` items | Example values, quoted as data. |
 
 ### `documents`

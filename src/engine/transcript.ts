@@ -20,6 +20,7 @@
 //   scanned, so they stay byte-identical.
 
 import { DICTIONARY } from "../profile/words.ts";
+import { isDateWord } from "./datecontext.ts";
 import { nameParts, recurrenceExclusion } from "./recur.ts";
 import type { ExtraForm, Span } from "./text.ts";
 
@@ -402,13 +403,13 @@ export function speakerForms(
 ): ExtraForm[] {
   const names = [...new Set([...speakers].map(normName))].filter((n) => n !== "").sort(cmp);
   const out = new Map<string, ExtraForm>();
-  const add = (form: string, value: string) => {
-    if (!out.has(form)) out.set(form, { cls: "person", value, form, source: "speaker" });
+  const add = (form: string, value: string, datePart = false) => {
+    if (!out.has(form)) out.set(form, { cls: "person", value, form, source: "speaker", ...(datePart ? { datePart } : {}) });
   };
   for (const name of names) if (recurrenceExclusion(name, vocabulary) === null) add(name, name);
   // "Speaker 2" has only the dictionary word "Speaker" as a part, which is excluded.
   const parts = nameParts(names, others, vocabulary, keep);
-  for (const p of parts) if (p.exclusion === null) add(p.form, p.value);
+  for (const p of parts) if (p.exclusion === null) add(p.form, p.value, isDateWord(p.form));
   // Misspellings: capitalised spoken words one edit from a part (an excluded part too: "Rosy" for "Rose").
   const byFold = new Map(parts.map((p) => [fold(p.form), p]));
   const fuzzy = parts.filter((p) => [...fold(p.form)].length >= MIN_FUZZY_LENGTH);

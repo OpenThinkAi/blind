@@ -47,7 +47,7 @@ describe("a blinded column value recurring elsewhere (AGT-1779)", () => {
     const [out, outText] = sink();
     const [err] = sink();
     expect(await runApply(["in", "-o", "out"], { out, err, cwd: dir })).toBe(0);
-    expect(outText()).toContain("values blinded in a column replaced again where they recur outside it");
+    expect(outText()).toContain("values blinded in a column or in Office metadata replaced again where they recur outside it");
 
     const csv = readFileSync(join(dir, "out", "projects.csv"), "utf8");
     const txt = readFileSync(join(dir, "out", "status.txt"), "utf8");

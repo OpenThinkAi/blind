@@ -217,7 +217,9 @@ and not written (exit 1). Transcripts are found by content, not by name (see
 A rule that names a column the file does not have is an error, so a stale spec never quietly stops
 blinding a column. Rows above the header and the header row itself are treated as free text.
 
-**Recurring values.** Once every column is decided, each value a column rule pseudonymised, and each
+**Recurring values.** Once every column is decided, each value a column rule pseudonymised, each XLSX
+or DOCX identity metadata value replaced whole (creator, last modified by, comment and revision
+authors, Manager, Company, user IDs and account names in paths, with their class), and each
 value an earlier map holds, is replaced with the same pseudonym wherever else it appears: in text
 files, header and preamble rows, cells kept as text or under `keep`, JSON strings and keys, and DOCX free text (matched across runs
 like any other DOCX match). The
@@ -231,7 +233,7 @@ columns classed `vocabulary`, and the host labels and email local parts of a bli
 `blind audit` still reports any of these that survive, and spellings the case rules leave, so add
 them to the spec as entities if they must go.
 
-**Name parts.** Each person a column rule pseudonymised (or an earlier map holds) also has each part
+**Name parts.** Each person a column rule pseudonymised (or Office metadata names, or an earlier map holds) also has each part
 of their name replaced on its own, with that person's pseudonym: `Quill approved it; Avery agreed`
 after `Avery Quill` was blinded in an Owner column. A part is each word of the name as written and of
 its canonical form, and each piece of a hyphenated word, matched like a single capitalised word (so

@@ -165,7 +165,7 @@ export function renderReport(result: ApplyResult): string {
       lines.push(`  free text: ${f.entityReplacements} entity and ${f.patternReplacements} pattern replacements`);
     }
     if (f.mappedReplacements > 0) {
-      lines.push(`  ${f.mappedReplacements} value${f.mappedReplacements === 1 ? "" : "s"} blinded in a column replaced again where ${f.mappedReplacements === 1 ? "it recurs" : "they recur"} outside it`);
+      lines.push(`  ${f.mappedReplacements} value${f.mappedReplacements === 1 ? "" : "s"} blinded in a column or in Office metadata replaced again where ${f.mappedReplacements === 1 ? "it recurs" : "they recur"} outside it`);
     }
     if ((f.metadataReplacements ?? 0) > 0) {
       lines.push(`  metadata: ${f.metadataReplacements} author, creator, company or account-name value${f.metadataReplacements === 1 ? "" : "s"} replaced`);

@@ -97,7 +97,17 @@ describe("XLSX reveal", () => {
     expect(before.get("docProps/core.xml")).not.toContain("Avery Quill");
     // ... and reveal brings back every one of them.
     expect(back.restored).toBeGreaterThan(20);
-    expect(xlsxLocations(back.bytes)).toEqual(xlsxLocations(original));
+    // "Avery" in the defined name Avery_Total is the given name of the workbook's creator, Avery
+    // Quill, so it is blinded as a name part with the creator's pseudonym (AGT-1812) and comes back
+    // as the whole recorded form, made a valid defined name (restoreName). Everything else comes
+    // back as it was.
+    const expected = new Map(
+      [...xlsxLocations(original)].map(([k, v]) => [
+        k,
+        v.map((x) => x.replace(/^(definedNamename=|f=.*)Avery_Total/, "$1Avery_Quill_Total").replace(/^vt:lpstr=Avery_Total$/, "vt:lpstr=Avery Quill_Total")),
+      ]),
+    );
+    expect(xlsxLocations(back.bytes)).toEqual(expected);
     expect(xlsxShape(back.bytes)).toEqual(xlsxShape(original));
   });
 

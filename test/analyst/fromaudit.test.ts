@@ -9,6 +9,8 @@ import {
   type Candidate,
   collectCandidates,
   FromAuditError,
+  LEAK_FALLBACK_CLASS,
+  leakDecisions,
   parseAuditReport,
   parseDecisions,
   type ReportFinding,
@@ -266,6 +268,38 @@ describe("decisions", () => {
     expect(() => applyDecisions(vocab, [cand({})], parseDecisions(["c1=org"], []), EMPTY_MAP)).toThrow(/vocabulary form/);
   });
 
+  test("leakDecisions accepts every leak at its suggested class (id when none), and leaves candidates and given decisions alone", () => {
+    const cs = [
+      cand({}),
+      cand({ id: "c2", value: "ZX-4471-Q", kinds: ["pattern:guid"], suggested: "id", severity: "leak" }),
+      cand({ id: "c3", value: "Main Office", kinds: ["value"], suggested: null, severity: "leak" }),
+      cand({ id: "c4", value: "Harbour Lane", kinds: ["org"], suggested: "org", severity: "leak" }),
+    ];
+    const { decisions, skipped } = leakDecisions(SPEC, cs, parseDecisions(["c4=location"], []), EMPTY_MAP);
+    expect(skipped).toEqual([]);
+    expect(decisions).toEqual([
+      { id: "c4", action: "accept", as: "location" },
+      { id: "c2", action: "accept", as: "id" },
+      { id: "c3", action: "accept", as: LEAK_FALLBACK_CLASS },
+    ]);
+    const { spec } = applyDecisions(SPEC, cs, decisions, EMPTY_MAP);
+    expect(spec.entities.id?.map((e) => [e.canonical, e.source])).toEqual([["ZX-4471-Q", "human"], ["Main Office", "human"]]);
+    expect(spec.entities.location?.map((e) => e.canonical)).toEqual(["Harbour Lane"]);
+    expect(spec.entities.vocabulary).toBeUndefined();
+  });
+
+  test("leakDecisions leaves out a leak that cannot be accepted, with why, and still accepts the rest", () => {
+    const vocab = { ...SPEC, entities: { ...SPEC.entities, vocabulary: [{ canonical: "Main Office", aliases: [], parts: [] }] } };
+    const cs = [
+      cand({ value: "Main Office", kinds: ["value"], severity: "leak" }),
+      cand({ id: "c2", value: "ZX-4471-Q", kinds: ["pattern:guid"], suggested: "id", severity: "leak" }),
+    ];
+    const { decisions, skipped } = leakDecisions(vocab, cs, [], EMPTY_MAP);
+    expect(decisions.map((d) => d.id)).toEqual(["c2"]);
+    expect(skipped.map((x) => x.id)).toEqual(["c1"]);
+    expect(skipped[0]?.why).toMatch(/vocabulary form/);
+  });
+
   test("an unknown id is refused", () => {
     expect(() => applyDecisions(SPEC, [cand({})], parseDecisions(["c9"], []), EMPTY_MAP)).toThrow(/no candidate c9/);
   });
@@ -342,6 +376,27 @@ describe("blind plan --from-audit", () => {
     expect(r.code).toBe(1);
     expect(r.err).toMatch(/not read back: notes\.md line 1/);
     expect(r.err).not.toContain("Harbour");
+  });
+
+  test("--accept-leaks accepts the leaks without asking, leaves the other candidates undecided, and the next round has no leak", async () => {
+    const spec: Spec = { ...SPEC, columns: [...SPEC.columns, { file: "sites.csv", header: "Site", class: "unknown", treatment: "blind", confidence: 1, source: "human" }] };
+    writeFileSync(join(dir, ".blind", "spec.json"), JSON.stringify(spec), { mode: 0o600 });
+    // Values made only of dictionary words: blinded in their column, not recurred in prose, so the audit calls them leaks.
+    writeFileSync(join(dir, "in", "sites.csv"), "Site\nMain Office\nBlue House\nOld School\n");
+    writeFileSync(join(dir, "in", "visit.txt"), "Met at Main Office, then Blue House.\n");
+    const first = await round("out");
+    expect(first.code).toBe(2);
+    const asked: string[] = [];
+    const r = await plan(["--from-audit", "report.json", "-o", "out", "--accept-leaks"], { prompt: async (q) => (asked.push(q), null) });
+    expect(r.code).toBe(0);
+    expect(asked).toEqual([]);
+    expect(r.out).toMatch(/accepted "Main Office": added id entity \(source human\)/);
+    expect(r.out).toMatch(/accepted "Blue House": added id entity/);
+    expect(r.out).toContain("undecided (3)");
+    expect(savedSpec().entities.vocabulary).toBeUndefined();
+    const second = await round("out2");
+    expect(second.code).toBe(1);
+    expect(readFileSync(join(dir, "out2", "visit.txt"), "utf8")).not.toMatch(/Main Office|Blue House/);
   });
 
   test("decided candidates are not raised again: the next round is clean", async () => {

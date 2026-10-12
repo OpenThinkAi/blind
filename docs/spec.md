@@ -182,6 +182,16 @@ same blinded output tree. No model is called.
 | `--reject c1` | a `vocabulary` entity with `source: "human"`, so the mechanical and semantic layers do not raise it again |
 | neither | nothing; the next audit raises it again |
 
+- **`--accept-leaks`** decides the leaks without asking: every candidate with a `leak` finding (a
+  spec entity, a map value or an enabled pattern match that survives, all from the mechanical
+  layer) is accepted at its suggested class, or `id` when it suggests none (a map value a column
+  pass pseudonymised as `Value_`, an account name in a path). Candidates that are not leaks
+  (semantic and model findings, variants in another case) stay undecided unless `--accept` or
+  `--reject` decides them, and an `--accept` or `--reject` of a leak wins. A leak that cannot be
+  accepted (a saved vocabulary form) is listed with why and left undecided; the rest are still
+  accepted. Until two classes share a pseudonym, a map value accepted as `id` gets an `Id_`
+  pseudonym where it recurs, not its column's `Value_`.
+
 - **Saved entries are never changed.** New entities are appended; everything saved is written back
   byte-identical. A value that is already a form of a saved entity changes nothing (and is said so);
   accepting a saved vocabulary form is refused (delete it by hand first).
@@ -189,8 +199,9 @@ same blinded output tree. No model is called.
   pattern match cannot be rejected, nor can a value that contains, as whole words, a form of a spec
   entity or a value or canonical form from the map: as vocabulary it would be kept and would shield
   those words. Accept it or leave it undecided.
-- **Then** run `blind apply` and `blind audit` again. `--json` prints
-  `{ "spec", "candidates", "changes", "undecided", "other", "unmapped" }`. The candidates hold the
+- **Then** run `blind apply` and `blind audit` again (`blind run --accept-leaks` does both for
+  you). `--json` prints `{ "spec", "candidates", "changes", "undecided", "leaksSkipped", "other",
+  "unmapped" }`. The candidates hold the
   values read back from `<out>` in the clear, as the table does, so you can decide on them: treat
   that output as you treat the spec, and do not save it where others can read it.
 
@@ -449,7 +460,13 @@ the same code as the commands themselves.
   run on the same corpus is zero-touch.
 - **Apply, then audit** over `<out>` with the same map (`--map-out <path>`, default
   `.blind/map.json`).
-- **Exit status** is the audit's: 0 clean, 1 candidates, 2 leak. It is at least 1 when plan or
+- **`--accept-leaks`** closes the loop with no human and no model. While the audit finds a leak,
+  its report goes to `blind plan --from-audit --accept-leaks` (see [above](#feeding-the-audit-back-into-the-spec)),
+  and apply and audit run again into `<out>` with the same map. At most 3 rounds in all; it stops
+  early when the audit finds no leak, or when accepting changed nothing (another round would find
+  the same leaks). Only leaks are decided: candidates still need a human. The table printed for each
+  round is the audit's own.
+- **Exit status** is the last audit's: 0 clean, 1 candidates, 2 leak. It is at least 1 when plan or
   apply left inputs out (they are listed). 3 means `run` stopped for review, or a step refused or
   failed (a usage error, an invalid spec, an apply refusal), and nothing was audited; it is never
   2, which means a leak was found.

@@ -28,6 +28,7 @@ import {
   collectCandidates,
   type Decision,
   FromAuditError,
+  leakDecisions,
   parseAuditReport,
   parseDecisions,
   type ReportFinding,
@@ -49,7 +50,7 @@ export interface PlanIO {
 const PLAN_HELP = [
   "Usage: blind plan <inputs...> [--no-model] [--quiet] [--force] [--json]",
   "       blind plan --answer <id>=<option> [--answer ...]",
-  "       blind plan --from-audit <report.json> -o <out> [--accept <ids>] [--reject <ids>] [--map <path>] [--json]",
+  "       blind plan --from-audit <report.json> -o <out> [--accept <ids>] [--reject <ids>] [--accept-leaks] [--map <path>] [--json]",
   "",
   "Profiles the inputs, asks the analyst model (models.analyst in blind.toml) for a spec, saves it as",
   ".blind/spec.json (mode 0600) and prints it for review: questions first, then columns by class,",
@@ -73,6 +74,12 @@ const PLAN_HELP = [
   "Saved entries are never changed. Findings that are not one value (columns, unanswered questions,",
   "parts the audit could not read) are listed, not turned into changes. No model is called.",
   "",
+  "--accept-leaks accepts every candidate the audit raised as a leak (a spec entity, map value or",
+  "enabled pattern that survives) at its suggested class, or id when it suggests none, without",
+  "asking. Candidates that are not leaks stay undecided unless --accept or --reject decides them;",
+  "an --accept or --reject of a leak wins over --accept-leaks. A leak that cannot be accepted (a",
+  "vocabulary form) is listed and left undecided.",
+  "",
   "Options:",
   "  --answer <id>=<option>  Answer a question in the saved spec and print it again (repeatable)",
   "  --no-model              Heuristic analyst only: classify a column only when an email, ip, host,",
@@ -86,6 +93,7 @@ const PLAN_HELP = [
   "  -o, --out <out>         With --from-audit: the blinded output tree the report audited",
   "  --accept <ids>          With --from-audit: accept candidates, e.g. c1,c2=org,c3=pattern (repeatable)",
   "  --reject <ids>          With --from-audit: reject candidates into the vocabulary, e.g. c4,c5 (repeatable)",
+  "  --accept-leaks          With --from-audit: accept every leak at its suggested class (see above)",
   "  --map <path>            With --from-audit: the map apply wrote (default .blind/map.json)",
   "  -h, --help              Show this help",
   "",
@@ -252,6 +260,7 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
         out: { type: "string", short: "o" },
         accept: { type: "string", multiple: true },
         reject: { type: "string", multiple: true },
+        "accept-leaks": { type: "boolean", default: false },
         map: { type: "string" },
         help: { type: "boolean", short: "h", default: false },
       },
@@ -266,7 +275,8 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
     return 0;
   }
   const answers = values.answer ?? [];
-  const fromAuditOnly = values.out !== undefined || values.accept !== undefined || values.reject !== undefined || values.map !== undefined;
+  const fromAuditOnly =
+    values.out !== undefined || values.accept !== undefined || values.reject !== undefined || values["accept-leaks"] || values.map !== undefined;
   if (values["from-audit"] !== undefined) {
     if (answers.length > 0 || positionals.length > 0 || values["no-model"] || values.force) {
       io.err.write("blind plan: --from-audit changes the saved spec only; give it no inputs, --answer, --no-model or --force\n");
@@ -277,7 +287,7 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
       return 2;
     }
     try {
-      return await fromAudit(values["from-audit"], values.out, values, io);
+      return await fromAudit(values["from-audit"], values.out, { ...values, acceptLeaks: values["accept-leaks"] }, io);
     } catch (e) {
       if (e instanceof Refusal || e instanceof FromAuditError || e instanceof SchemaError || e instanceof MapError || e instanceof AnalystError) {
         io.err.write(`blind plan: ${e.message}\nno spec was written\n`);
@@ -287,7 +297,7 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
     }
   }
   if (fromAuditOnly) {
-    io.err.write("blind plan: -o, --accept, --reject and --map go with --from-audit\n");
+    io.err.write("blind plan: -o, --accept, --reject, --accept-leaks and --map go with --from-audit\n");
     return 2;
   }
   if (answers.length > 0 && (positionals.length > 0 || values["no-model"] || values.force || values.json)) {
@@ -433,7 +443,39 @@ async function promptDecisions(collected: Collected, saved: Spec, map: ReturnTyp
   return decisions;
 }
 
-async function fromAudit(reportPath: string, out: string, values: { accept?: string[]; reject?: string[]; map?: string; json: boolean }, io: PlanIO): Promise<number> {
+export interface FromAuditOptions {
+  accept?: string[];
+  reject?: string[];
+  /** --accept-leaks: accept every leak at its suggested class (leakDecisions). */
+  acceptLeaks?: boolean;
+  map?: string;
+  json: boolean;
+}
+
+async function fromAudit(reportPath: string, out: string, values: FromAuditOptions, io: PlanIO): Promise<number> {
+  const report = (): string => {
+    const reportFile = resolve(io.cwd, reportPath);
+    try {
+      return readFileSync(reportFile, "utf8");
+    } catch {
+      throw new Refusal(`${reportFile}: cannot read the audit report`);
+    }
+  };
+  return (await decideFromReport(report, reportPath, out, values, io)).code;
+}
+
+/**
+ * `--from-audit` on a report already in hand (`blind run --accept-leaks` passes the audit's own):
+ * the exit code plan gives, and whether the saved spec changed. Throws what fromAudit's caller
+ * catches (Refusal, FromAuditError, SchemaError, MapError) when it refuses; then nothing is written.
+ */
+export async function decideFromReport(
+  readReport: () => string,
+  label: string,
+  out: string,
+  values: FromAuditOptions,
+  io: PlanIO,
+): Promise<{ code: number; changed: boolean }> {
   const saved = readSaved(io.cwd);
   if (saved === undefined) throw new Refusal(`${join(io.cwd, BLIND_DIR, SPEC_FILE)} not found; run \`blind plan <inputs>\` first`);
   const mapPath = resolve(io.cwd, values.map ?? join(BLIND_DIR, MAP_FILE));
@@ -444,19 +486,15 @@ async function fromAudit(reportPath: string, out: string, values: { accept?: str
     if (e instanceof MapError) throw e;
     throw new Refusal(`${mapPath}: cannot read the map; pass --map with the map \`blind apply\` wrote`);
   }
-  const reportFile = resolve(io.cwd, reportPath);
-  let text: string;
-  try {
-    text = readFileSync(reportFile, "utf8");
-  } catch {
-    throw new Refusal(`${reportFile}: cannot read the audit report`);
-  }
-  const findings = parseAuditReport(text, reportPath);
+  const findings = parseAuditReport(readReport(), label);
   const collected = collectCandidates(findings, resolve(io.cwd, out), map);
 
-  const flagged = values.accept !== undefined || values.reject !== undefined;
+  const flagged = values.accept !== undefined || values.reject !== undefined || values.acceptLeaks === true;
   // Checked before anything is printed or asked: a bad id or a refused decision writes nothing.
   let decisions = parseDecisions(values.accept ?? [], values.reject ?? []);
+  applyDecisions(saved, collected.candidates, decisions, map);
+  let leaksSkipped: ReturnType<typeof leakDecisions>["skipped"] = [];
+  if (values.acceptLeaks) ({ decisions, skipped: leaksSkipped } = leakDecisions(saved, collected.candidates, decisions, map));
   let applied = applyDecisions(saved, collected.candidates, decisions, map);
   const interactive = !flagged && !values.json && io.prompt !== undefined && collected.candidates.length > 0;
 
@@ -481,9 +519,10 @@ async function fromAudit(reportPath: string, out: string, values: { accept?: str
   if (values.json) {
     const unmapped = collected.unmapped.map(({ finding: f, why }) => ({ file: f.file, part: f.part, in: f.in, offset: f.offset, class: f.class, masked: f.masked, why }));
     const other = collected.other.map((f: ReportFinding) => ({ file: f.file, part: f.part, in: f.in, class: f.class, reason: f.reason }));
-    io.out.write(`${JSON.stringify({ spec: written, candidates: collected.candidates, changes: applied.changes, undecided, other, unmapped }, null, 2)}\n`);
+    io.out.write(`${JSON.stringify({ spec: written, candidates: collected.candidates, changes: applied.changes, undecided, leaksSkipped, other, unmapped }, null, 2)}\n`);
   } else {
     if (applied.changes.length > 0) io.out.write(`\nchanges to the saved spec:\n${applied.changes.map(renderChange).join("\n")}\n`);
+    if (leaksSkipped.length > 0) io.out.write(`\nleaks --accept-leaks could not accept (${leaksSkipped.length}):\n${leaksSkipped.map((x) => `  ${x.id}  ${q(x.value)}: ${x.why}`).join("\n")}\n`);
     if (undecided.length > 0) {
       io.out.write(`\nundecided (${undecided.length}): ${undecided.join(", ")}. Nothing was added for them; the audit will raise them again.\n`);
       if (!flagged && !interactive) io.out.write("decide with: blind plan --from-audit <report> -o <out> --accept <ids> --reject <ids>\n");
@@ -497,9 +536,9 @@ async function fromAudit(reportPath: string, out: string, values: { accept?: str
   for (const { finding: f, why } of collected.unmapped) io.err.write(`blind plan: not read back: ${placeLabel(f)}  ${f.class} ${f.masked}: ${why}\n`);
   if (collected.unmapped.length > 0) {
     io.err.write(`blind plan: ${collected.unmapped.length} finding(s) could not be read back from ${out}, so they are not candidates here\n`);
-    return 1;
+    return { code: 1, changed };
   }
-  return 0;
+  return { code: 0, changed };
 }
 
 export function processPlanIO(): PlanIO {

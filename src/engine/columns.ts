@@ -5,7 +5,7 @@ import type { ColumnRule, EntityClassName } from "../schema.ts";
 import { type PseudoClass, phoneDigits } from "./canonical.ts";
 import { isPersonColumn } from "./prose.ts";
 import type { ExtraForm } from "./text.ts";
-import { type ColumnStats, columnStats, isIdentifierLike, THRESHOLDS } from "./stats.ts";
+import { type ColumnContext, type ColumnStats, columnStats, isIdentifierLike, THRESHOLDS } from "./stats.ts";
 
 export type ColumnOutcome =
   | "blinded"
@@ -38,10 +38,10 @@ function ruleAction(rule: ColumnRule): ColumnAction | "heuristic" {
  * identifier-like test. An identifier-like column of people's names (prose.ts isPersonColumn) is
  * pseudonymised as `person`, not `value`, so their name parts recur in free text (AGT-1830).
  */
-export function decide(rule: ColumnRule | undefined, values: readonly string[]): { action: ColumnAction; stats: ColumnStats | undefined } {
+export function decide(rule: ColumnRule | undefined, values: readonly string[], ctx: ColumnContext = {}): { action: ColumnAction; stats: ColumnStats | undefined } {
   const planned = rule === undefined ? "heuristic" : ruleAction(rule);
   if (planned !== "heuristic") return { action: planned, stats: undefined };
-  const stats = columnStats(values);
+  const stats = columnStats(values, ctx);
   if (!isIdentifierLike(stats)) return { action: { kind: "free" }, stats };
   return { action: { kind: "pseudo", cls: isPersonColumn(values) ? "person" : "value" }, stats };
 }

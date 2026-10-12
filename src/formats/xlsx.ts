@@ -228,6 +228,8 @@ export interface XlsxCell {
   v: string;
   /** Inline string runs (`inlineStr`), phonetic runs excluded. */
   runs: string[];
+  /** The `s` attribute: an index into the styles part's cell formats; -1 when absent. */
+  style: number;
 }
 
 export interface XlsxSheet {
@@ -256,6 +258,27 @@ export interface XlsxWorkbook {
   tables: XlsxTable[];
   /** Every member, as the rewriter reported it on a no-op pass. */
   members: MemberResult[];
+  /** Indices of cell formats (`XlsxCell.style`) whose number format is a date or time. */
+  dateStyles: ReadonlySet<number>;
+}
+
+/** Built-in number formats that are dates or times (ECMA-376 18.8.30, plus the East Asian ones). */
+const BUILTIN_DATE_FORMATS = new Set([14, 15, 16, 17, 18, 19, 20, 21, 22, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 45, 46, 47, 50, 51, 52, 53, 54, 55, 56, 57, 58]);
+
+/** Whether a custom number format code shows a date or time: a y, m, d, h or s outside quotes, brackets and escapes. */
+export function isDateFormatCode(code: string): boolean {
+  const bare = code
+    .replace(/"[^"]*"/g, "")
+    .replace(/\\./g, "")
+    .replace(/_./g, "")
+    .replace(/\[(?:[hms]+|[a-z]+=?[^\]]*)\]/gi, (m) => (/^\[[hms]+\]$/i.test(m) ? "h" : ""));
+  const section = bare.split(";")[0] ?? "";
+  return /[ymdhs]/i.test(section.replace(/General/gi, "").replace(/E[+-]/g, ""));
+}
+
+/** A numeric cell whose cell format is a date or time: its number is a serial, not an amount or an ID. */
+export function isDateCell(wb: Pick<XlsxWorkbook, "dateStyles">, cell: XlsxCell): boolean {
+  return cell.type === "n" && cell.style >= 0 && wb.dateStyles.has(cell.style);
 }
 
 interface Rel {
@@ -297,6 +320,8 @@ export function readWorkbook(bytes: Uint8Array): XlsxWorkbook {
   const worksheets = new Map<string, XlsxCell[]>();
   const ssts = new Map<string, SharedString[]>();
   const tables: XlsxTable[] = [];
+  const customFormats = new Map<number, string>();
+  const cellFormats: number[] = [];
   const values = new Map<string, (value: string, el: Frame, parents: readonly Frame[]) => void>();
 
   const rulesFor = (member: string): RewriteRules => {
@@ -336,7 +361,8 @@ export function readWorkbook(bytes: Uint8Array): XlsxWorkbook {
             if (ref === undefined || pos === null) throw new XlsxError(`${member}: a cell without a valid reference (r="${ref ?? ""}") is not supported`);
             const type = el.attrs.get("t") ?? "n";
             if (!CELL_TYPES.has(type)) throw new XlsxError(`${member}: cell ${ref} has an unknown type "${type}"`);
-            cell = { ref, ...pos, type: type as CellType, v: "", runs: [] };
+            const style = Number(el.attrs.get("s") ?? "-1");
+            cell = { ref, ...pos, type: type as CellType, v: "", runs: [], style: Number.isInteger(style) ? style : -1 };
             cells.push(cell);
           } else if (cell !== null && name === "t" && within(parents, "is") && !within(parents, "rPh")) cell.runs.push("");
         } else if (root === "sst") {
@@ -345,6 +371,9 @@ export function readWorkbook(bytes: Uint8Array): XlsxWorkbook {
             si = { runs: [] };
             strings.push(si);
           } else if (si !== null && name === "t" && !within(parents, "rPh")) si.runs.push("");
+        } else if (root === "styleSheet") {
+          if (name === "numFmt") customFormats.set(Number(el.attrs.get("numFmtId")), el.attrs.get("formatCode") ?? "");
+          else if (name === "xf" && within(parents, "cellXfs")) cellFormats.push(Number(el.attrs.get("numFmtId") ?? "0"));
         } else if (root === "table") {
           if (name === "table") tables.push({ member, name: el.attrs.get("name") ?? "", displayName: el.attrs.get("displayName") ?? "", columns: [] });
           else if (name === "tableColumn") tables[tables.length - 1]?.columns.push(el.attrs.get("name") ?? "");
@@ -394,7 +423,12 @@ export function readWorkbook(bytes: Uint8Array): XlsxWorkbook {
       }
     }
   }
-  return { sheets, sharedStrings, definedNames: wb.definedNames, tables, members };
+  const dateStyles = new Set<number>();
+  cellFormats.forEach((id, i) => {
+    const code = customFormats.get(id);
+    if (code === undefined ? BUILTIN_DATE_FORMATS.has(id) : isDateFormatCode(code)) dateStyles.add(i);
+  });
+  return { sheets, sharedStrings, definedNames: wb.definedNames, tables, members, dateStyles };
 }
 
 /** A worksheet as rows of cell text, row 1 first, for header detection and statistics. */

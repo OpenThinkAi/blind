@@ -10,7 +10,9 @@ import {
   type SpawnFn,
   ask,
   profilePayload,
+  assertResolvesLoopback,
   isLoopback,
+  isLoopbackAddress,
   parseReply,
   renderPrompt,
   resolveEndpoint,
@@ -136,6 +138,109 @@ describe("local-only refuses non-loopback endpoints before any request", () => {
     expect(resolveEndpoint("analyst", cfg, "profile-only")?.host).toBe("api.example.com");
     expect(() => resolveEndpoint("analyst", { ...cfg, url: "http://api.example.com/v1" }, "profile-only")).toThrow("https");
     expect(() => resolveEndpoint("analyst", { ...cfg, url: "ftp://127.0.0.1/" }, "profile-only")).toThrow("http or https");
+  });
+});
+
+describe("local-only resolves host names before any request", () => {
+  /** A lookup that records each host it was asked about and answers with the given addresses. */
+  const answering = (...addresses: string[]) => {
+    const asked: string[] = [];
+    const lookup = async (host: string) => {
+      asked.push(host);
+      return addresses.map((address) => ({ address }));
+    };
+    return { asked, lookup };
+  };
+  const mustNotLookUp = (host: string) => {
+    throw new Error(`lookup should not run for ${host}`);
+  };
+
+  test.each([
+    ["127.0.0.1", true],
+    ["127.255.0.9", true],
+    ["::1", true],
+    ["::ffff:127.0.0.1", true],
+    ["10.0.0.5", false],
+    ["93.184.216.34", false],
+    ["::ffff:10.0.0.5", false],
+    ["2001:db8::1", false],
+  ])("isLoopbackAddress(%s) is %p", (address, want) => {
+    expect(isLoopbackAddress(address)).toBe(want);
+  });
+
+  test("a name that resolves only to loopback is accepted", async () => {
+    const { asked, lookup } = answering("127.0.0.1", "::1");
+    await expect(assertResolvesLoopback(new URL("http://localhost:11434/v1"), lookup)).resolves.toBeUndefined();
+    expect(asked).toEqual(["localhost"]);
+  });
+
+  test("localhost resolving to one loopback and one private address is refused", async () => {
+    const { lookup } = answering("127.0.0.1", "10.0.0.5");
+    const err = await assertResolvesLoopback(new URL("http://localhost:11434/v1"), lookup).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ModelRefusal);
+    const msg = (err as Error).message;
+    expect(msg).toStartWith("privacy.mode is local-only: localhost resolves to 10.0.0.5");
+    expect(msg).toContain("use 127.0.0.1");
+  });
+
+  test("a name that resolves to a public address is refused through ask, before any request", async () => {
+    const { lookup } = answering("93.184.216.34");
+    const msg = await rejection(
+      ask("analyst", "sys", PROMPT, SCHEMA, {
+        policy: policy({ url: "http://localhost:11434/v1", model: "m" }),
+        lookup,
+        fetch: noFetch,
+        stderr: () => {},
+      }),
+    );
+    expect(msg).toContain("localhost resolves to 93.184.216.34");
+  });
+
+  test("a failed lookup refuses rather than assuming loopback", async () => {
+    const lookup = async () => {
+      throw new Error("ENOTFOUND");
+    };
+    const msg = await rejection(
+      ask("analyst", "sys", PROMPT, SCHEMA, { policy: policy({ url: "http://localhost:11434/v1", model: "m" }), lookup, fetch: noFetch }),
+    );
+    expect(msg).toContain("cannot resolve localhost to confirm it is loopback");
+  });
+
+  test("an empty answer refuses", async () => {
+    const { lookup } = answering();
+    const msg = await rejection(assertResolvesLoopback(new URL("http://localhost:11434/v1"), lookup));
+    expect(msg).toContain("cannot resolve localhost");
+  });
+
+  test.each(["http://127.0.0.1:11434/v1", "http://[::1]:8000/v1"])("IP literal %s is not looked up", async (url) => {
+    await expect(assertResolvesLoopback(new URL(url), mustNotLookUp)).resolves.toBeUndefined();
+  });
+
+  test("a non-loopback literal is still refused by resolveEndpoint before the lookup", async () => {
+    const msg = await rejection(
+      ask("analyst", "sys", PROMPT, SCHEMA, { policy: policy({ url: "http://10.0.0.5/v1", model: "m" }), lookup: mustNotLookUp, fetch: noFetch }),
+    );
+    expect(msg).toStartWith("privacy.mode is local-only: ");
+  });
+
+  test("a non-loopback name is refused by resolveEndpoint without any lookup", async () => {
+    const msg = await rejection(
+      ask("analyst", "sys", PROMPT, SCHEMA, {
+        policy: policy({ url: "http://llm.example.com/v1", model: "m" }),
+        lookup: mustNotLookUp,
+        fetch: noFetch,
+      }),
+    );
+    expect(msg).toContain("is not loopback");
+  });
+
+  test("profile-only does not look names up, so remote https is unchanged", async () => {
+    const cfg: ModelConfig = { backend: "openai-compatible", url: "https://api.example.com/v1", model: "m", key_env: "" };
+    expect(resolveEndpoint("analyst", cfg, "profile-only")?.host).toBe("api.example.com");
+    const msg = await rejection(
+      ask("analyst", "sys", PROMPT, SCHEMA, { policy: policy({ ...cfg }, "profile-only"), lookup: mustNotLookUp, fetch: noFetch }),
+    );
+    expect(msg).not.toContain("resolves to");
   });
 });
 

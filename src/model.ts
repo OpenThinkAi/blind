@@ -9,8 +9,9 @@
 // (a failed check throws ModelRefusal, which a command reports with exit 2; blind audit, where
 // 2 means a leak, reports it with exit 3):
 //   - privacy.mode "none" calls no model; "local-only" refuses anything that is not a
-//     loopback literal (127.0.0.0/8, ::1, localhost), which rules out claude-cli and the
-//     hosted Anthropic API. There is no fallback to another backend.
+//     loopback literal (127.0.0.0/8, ::1), and a host name (localhost) only if every address it
+//     resolves to is loopback. That rules out claude-cli and the hosted Anthropic API. There is
+//     no fallback to another backend.
 //   - privacy.mode "profile-only" allows a remote model that never sees a value (AGT-1832): the
 //     data must be exactly profilePayload(profile, policy), a schema-valid profile and the policy,
 //     nothing else; the profile carries no samples (sampleCount 0, no sample values, sentences or
@@ -28,6 +29,8 @@
 // The engine must never import this module (see .stamp/reviewers/standards.md).
 
 import { mkdtempSync, rmSync } from "node:fs";
+import { lookup as dnsLookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_LOCAL_URL, type ModelConfig, type Policy, type PrivacyMode, SENSITIVE_CLASSES } from "./policy.ts";
@@ -63,6 +66,9 @@ export type SpawnFn = (
   opts: { stdin: Uint8Array; cwd: string; env: Record<string, string | undefined>; timeoutMs: number },
 ) => Promise<SpawnResult>;
 
+/** Resolves a host name to its addresses. Injected by tests; the default is the system resolver. */
+export type LookupFn = (host: string) => Promise<{ address: string }[]>;
+
 export interface AskOptions {
   policy: Pick<Policy, "models" | "privacy">;
   /**
@@ -72,6 +78,7 @@ export interface AskOptions {
   quiet?: boolean;
   fetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
   spawn?: SpawnFn;
+  lookup?: LookupFn;
   env?: Record<string, string | undefined>;
   stderr?: (line: string) => void;
   timeoutMs?: number;
@@ -157,6 +164,44 @@ export function resolveEndpoint(role: Role, cfg: ModelConfig, mode: PrivacyMode)
     throw new ModelRefusal(`models.${role}.url must use https for a non-loopback host (${url.hostname})`);
   }
   return url;
+}
+
+/** True for 127.0.0.0/8 and ::1, including the IPv4-mapped form ::ffff:127.x.x.x. */
+export function isLoopbackAddress(address: string): boolean {
+  const a = address.toLowerCase();
+  if (a === "::1") return true;
+  const v4 = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(a)?.[1] ?? a;
+  const m = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(v4);
+  return m !== null && m.slice(1).every((o) => Number(o) <= 255);
+}
+
+const systemLookup: LookupFn = (host) => dnsLookup(host, { all: true });
+
+/**
+ * Under local-only, a host NAME (such as localhost) is only as local as what it resolves to,
+ * because fetch asks the system resolver. Every address it returns must be loopback. IP
+ * literals were already decided by resolveEndpoint, so they are not looked up. Call before
+ * any request is sent.
+ */
+export async function assertResolvesLoopback(url: URL, lookup: LookupFn = systemLookup): Promise<void> {
+  const host = url.hostname.replace(/^\[(.*)\]$/, "$1");
+  if (isIP(host) !== 0) return;
+  let addresses: { address: string }[];
+  try {
+    addresses = await lookup(host);
+  } catch {
+    throw new ModelRefusal(`privacy.mode is local-only: cannot resolve ${url.hostname} to confirm it is loopback`);
+  }
+  if (addresses.length === 0) {
+    throw new ModelRefusal(`privacy.mode is local-only: cannot resolve ${url.hostname} to confirm it is loopback`);
+  }
+  const remote = addresses.find((a) => !isLoopbackAddress(a.address));
+  if (remote !== undefined) {
+    throw new ModelRefusal(
+      `privacy.mode is local-only: ${url.hostname} resolves to ${remote.address}, which is not loopback; ` +
+        `use 127.0.0.1 in the url, or set privacy.mode = "profile-only" to allow a remote model`,
+    );
+  }
 }
 
 /** Refuses data holding any string or key longer than MAX_DATA_STRING characters. */
@@ -527,6 +572,7 @@ export async function ask<T>(role: Role, system: string, prompt: Prompt, schema:
   const cfg = opts.policy.models[role];
   const mode = opts.policy.privacy.mode;
   const url = resolveEndpoint(role, cfg, mode);
+  if (mode === "local-only" && url !== null) await assertResolvesLoopback(url, opts.lookup);
   if (mode === "profile-only") assertProfilePayload(prompt.data);
   assertShortStrings(prompt.data);
   const samples = mode === "profile-only" ? (prompt.data as ProfilePayload).profile.sampleCount : undefined;

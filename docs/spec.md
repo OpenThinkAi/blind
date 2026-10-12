@@ -449,7 +449,16 @@ replaced, and any tags kept; a file that is not a transcript reports the speaker
 output tree is rewritten like free text: enabled patterns, spec entities, and also every cell value
 a column rule replaced, so `reviews/Robin Example.md` is written as `reviews/Person_4C1D.md` when
 `Robin Example` is a blinded `Owner`. Names use the same pseudonyms as the content. Names are
-also searched piece by piece between underscores (`backup_db01.example.com.txt`). The report lists each renamed file
+also searched piece by piece between underscores (`backup_db01.example.com.txt`).
+Names written as identifiers are read word by word: a name is split at `_`, `-`, `.`, spaces,
+CamelCase changes and letter/digit changes, and a spec person or org name part, or a whole name, is
+matched there in any case across those joins, so `consult_sample.srt`, `SampleTotal` and
+`invoice-lee.sample.pdf` are blinded for the person `Lee Sample`. A lone word that is a dictionary
+word, an honorific or role word, a keep term or a vocabulary form is not replaced in another case
+(`report_value.txt` keeps `value`). A pseudonym that would touch a letter or digit of the name is
+set off with `_` (`SampleTotal` is written `Person_4C1D_Total`), so it stays a whole token for
+`blind reveal`. The audit agrees: a match on a word boundary of a name is a leak where the engine
+replaces it, and a candidate (inside a longer word) otherwise. The report lists each renamed file
 (`written as ...`). Two inputs whose blinded names coincide are refused (exit 2, nothing written).
 Every pseudonym used in a name is in the reversal map, so names are as reversible as the content:
 `blind reveal` restores file and folder names (see [below](#how-blind-reveal-reverses-a-blinded-file)).
@@ -483,7 +492,8 @@ is an error). The column table above applies to every cell, with these workbook 
   cell values that nothing would clear), means the workbook is not written (exit 1, listed with
   the reason). Blind such a column instead.
 - **Sheet and defined names.** Worksheet names, defined names and table names are rewritten through
-  the same name hook as file names. Blinded worksheet names must stay distinct ignoring case, and
+  the same name hook as file names (including the word-by-word reading above: `SampleTotal` and
+  `Sample L (overdue)` are blinded, and formulas follow). Blinded worksheet names must stay distinct ignoring case, and
   every blinded name must keep the spreadsheet's naming rules; otherwise apply refuses (exit 2,
   nothing written). A cell, shared string, hyperlink text or `docProps/app.xml` sheet title whose
   whole text is a worksheet's name is written as that sheet's blinded name, so a contents sheet

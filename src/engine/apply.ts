@@ -789,7 +789,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   const claimed = new Set([...forms, ...voices, ...parts].map((f) => `${f.cls}\0${f.form ?? f.value}`));
   const prose = proseForms(prosePeople, [...people, ...voiceNames], vocabularySet, keepSet).filter((f) => !claimed.has(`${f.cls}\0${f.form ?? f.value}`));
   const nameMatcher = new EntityMatcher(spec.entities, [...columnValues, ...voices, ...parts, ...prose]);
-  const names = new NameRewriter(nameMatcher, spec.patterns, keep);
+  const names = new NameRewriter(nameMatcher, spec.patterns, keep, { vocabulary: vocabularySet, keep: keepSet });
   for (const p of plans) names.planPath(p.input.path);
 
   // Every column is decided: scan the rest of the text for patterns, entities and the values the

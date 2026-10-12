@@ -46,6 +46,7 @@ import { inDateContext, isDateWord } from "../engine/datecontext.ts";
 import { decode, EncodingError } from "../engine/encoding.ts";
 import type { BlindMap } from "../engine/map.ts";
 import { isPseudonym } from "../engine/pseudonym.ts";
+import { nameWordExcluded, onNameTokens } from "../engine/names.ts";
 import { findPatternSpans, keepDomains, type Span } from "../engine/text.ts";
 import { detectHeaderRow } from "../profile/table.ts";
 import { DICTIONARY } from "../engine/words.ts";
@@ -343,6 +344,8 @@ interface Context {
   index: NeedleIndex;
   /** Keep-list domains (keepDomains): host names under them are kept by the engine, by policy. */
   keep: string[];
+  /** The keep list, folded: a lone word among them is never replaced in another case inside a name. */
+  keepTerms: ReadonlySet<string>;
 }
 
 // The same shapes unanchored, for "is this pattern match made only of pseudonyms?": a blinded name
@@ -431,6 +434,16 @@ function scanView(view: View, ctx: Context, isName: boolean): Hit[] {
     const len = cps(n.folded).length;
     const what = n.source === "entity" ? `spec ${n.class} entity` : `${n.class} value from the map`;
     const base = { class: n.class, source: n.source };
+    // A file, folder, sheet or defined name is also read as an identifier (AGT-1845): its words are
+    // replaced in any case and across "_", "-", ".", spaces and CamelCase joins, so a match on word
+    // boundaries there is a leak, as it is for the engine (names.ts), unless the engine would leave
+    // a lone dictionary word, honorific or keep term alone.
+    const asWords = isName && n.rule !== "exact" && !n.component && n.role === "find" && onNameTokens(text, start, end);
+    if (asWords && !(n.part === "word" || (!/\s/.test(n.folded) && nameWordExcluded(text.slice(start, end), undefined, ctx.keepTerms)))) {
+      const kind = n.part === undefined ? `${what}, as a word of the name` : "a word of a blinded person's name (from the map), as a word of the name";
+      push(start, end, { ...base, severity: "leak", reason: `${kind}: blind replaces it there in any case` });
+      continue;
+    }
     if (n.part !== undefined) {
       // A word of a blinded person's name, alone: whole words only, never an embedded one.
       if (!whole) continue;
@@ -850,7 +863,7 @@ export function addLayer(
 
 /** Audit an output tree (every entry under it, paths relative to its root) against the spec and map. */
 export function auditTree(entries: readonly TreeEntry[], spec: Spec, map: BlindMap, keep: readonly string[] = []): AuditReport {
-  const ctx: Context = { spec, map, index: new NeedleIndex(buildNeedles(spec, map, keep)), keep: keepDomains(keep) };
+  const ctx: Context = { spec, map, index: new NeedleIndex(buildNeedles(spec, map, keep)), keep: keepDomains(keep), keepTerms: new Set(keep.map(fold)) };
   const rulesByFile = new Map<string, ColumnRule[]>();
   for (const r of spec.columns) rulesByFile.set(r.file, [...(rulesByFile.get(r.file) ?? []), r]);
 

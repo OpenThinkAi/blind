@@ -215,7 +215,8 @@ const WHOLE_PROPERTIES = new Map<PartKind, ReadonlyMap<string, PseudoClass>>([
   ["app", new Map([["Manager", "person"], ["Company", "org"]])],
 ]);
 
-function rulesFor(kind: PartKind, visit?: RewriteRules["visit"]): RewriteRules {
+/** The text nodes and attributes offered in a part of `kind`; shared with reveal, so it restores exactly what blinding rewrites. */
+export function rulesFor(kind: PartKind, visit?: RewriteRules["visit"]): RewriteRules {
   const none = () => false;
   switch (kind) {
     case "word":

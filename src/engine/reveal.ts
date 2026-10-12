@@ -13,15 +13,25 @@
 //
 // Formats: CSV/TSV cell by cell (a restored value that needs quoting is quoted),
 // JSON/JSONL string by string (spliced into the original text, escaped as JSON),
-// and text. Anything else has no reversal path yet and is refused.
+// text, and the two Office formats at the zip and XML level, in exactly the
+// places blinding rewrites: XLSX through `classify` (src/formats/xlsx.ts), DOCX
+// through the units and part rules of src/engine/docx.ts. Rich text (shared and
+// inline strings, a DOCX paragraph) is matched as one text, so a pseudonym an
+// editor split across runs is restored too: the original goes where the
+// pseudonym starts and the rest of it is removed from the later runs. Anything
+// else has no reversal path and is refused. An Office file is revealed whole or
+// not at all: a member that cannot be read refuses the file.
 
+import { type Frame, localName, rewriteOoxml, ZipError } from "../formats/ooxml.ts";
+import { classify, needsQuotes, quoteSheet, readWorkbook, type Slot, slotRules, tokenizeFormula, XlsxError } from "../formats/xlsx.ts";
 import { guidCore } from "./canonical.ts";
 import { CsvError, parseCsv, renderCell, serializeCsv, sniffDelimiter } from "./csv.ts";
 import { decode, EncodingError, encode } from "./encoding.ts";
 import { engineFormat } from "./apply.ts";
 import { isJsonNumber, JsonError, quote, scanJson, scanJsonl, stringOffsets } from "./json.ts";
 import type { BlindMap } from "./map.ts";
-import { splitExtension } from "./names.ts";
+import { DocxError, type DocxPlan, planDocx, rulesFor } from "./docx.ts";
+import { type NameSlot, splitExtension, violation } from "./names.ts";
 
 /** A file that cannot be revealed: no reversal path for its format, or it does not parse. */
 export class RevealError extends Error {
@@ -81,6 +91,11 @@ export class Revealer {
       return this.original(m);
     });
     return { text: out, restored };
+  }
+
+  /** The original of `form` when the whole of it is a pseudonym the map records. */
+  exact(form: string): string | undefined {
+    return this.targets.has(form) ? this.original(form) : undefined;
   }
 
   /** Spans of pseudonyms in `text`, in order: [start, end, original]. */
@@ -181,12 +196,13 @@ export interface RevealedFile {
 /** The blinded file at `path` (its extension decides the format) with every pseudonym restored. */
 export function revealFile(path: string, bytes: Uint8Array, rv: Revealer): RevealedFile {
   const format = engineFormat(path);
-  // Only formats with a reversal path below; anything apply learns later is refused until it gets one.
-  if (format !== "csv" && format !== "tsv" && format !== "json" && format !== "jsonl" && format !== "text") {
+  if (format === null) {
     const dot = path.lastIndexOf(".");
     const ext = dot > path.lastIndexOf("/") ? path.slice(dot) : "(no extension)";
-    throw new RevealError(`no reversal path for ${ext} files yet; reveal handles CSV/TSV, JSON/JSONL and text (.txt, .md, .log)`);
+    throw new RevealError(`no reversal path for ${ext} files; reveal handles CSV/TSV, JSON/JSONL, text (.txt, .md, .log), XLSX and DOCX`);
   }
+  if (format === "xlsx") return revealXlsx(bytes, rv);
+  if (format === "docx") return revealDocx(bytes, rv);
   try {
     const { encoding, text } = decode(bytes);
     const r =
@@ -202,4 +218,328 @@ export function revealFile(path: string, bytes: Uint8Array, rv: Revealer): Revea
     }
     throw e;
   }
+}
+
+// ---------------------------------------------------------------- runs
+
+/** A cut in one run or text node: [start, end) removed, `insert` written in its place. */
+interface Cut {
+  start: number;
+  end: number;
+  insert: string;
+}
+
+/** The parts of the joined-text span [s, e) that fall in each segment, in segment offsets. */
+function pieces<T>(segments: readonly { key: T; start: number; value: string }[], s: number, e: number): { key: T; start: number; end: number }[] {
+  const out: { key: T; start: number; end: number }[] = [];
+  for (const g of segments) {
+    const a = Math.max(s, g.start) - g.start;
+    const b = Math.min(e, g.start + g.value.length) - g.start;
+    if (a < b) out.push({ key: g.key, start: a, end: b });
+  }
+  return out;
+}
+
+/** `value` with its cuts (sorted, not overlapping) applied. */
+function splice(value: string, cuts: readonly Cut[]): string {
+  let out = "";
+  let at = 0;
+  for (const c of cuts) {
+    out += value.slice(at, c.start) + c.insert;
+    at = c.end;
+  }
+  return out + value.slice(at);
+}
+
+/** The runs of one rich string, read as one text, with every pseudonym restored in the run where it starts. */
+function revealRuns(runs: readonly string[], rv: Revealer): { runs: string[]; restored: number } {
+  let at = 0;
+  const segments = runs.map((value, key) => {
+    const g = { key, start: at, value };
+    at += value.length;
+    return g;
+  });
+  const spans = rv.spans(runs.join(""));
+  const cuts: Cut[][] = runs.map(() => []);
+  for (const [s, e, orig] of spans) {
+    pieces(segments, s, e).forEach((p, i) => (cuts[p.key] as Cut[]).push({ start: p.start, end: p.end, insert: i === 0 ? orig : "" }));
+  }
+  return { runs: runs.map((r, i) => splice(r, cuts[i] as Cut[])), restored: spans.length };
+}
+
+// ---------------------------------------------------------------- XLSX
+
+const NUMBER = /^(-?)(\d+)(?:\.(\d+))?([Ee][+-]?\d+)?$/;
+const lower = (s: string): string => s.toLowerCase();
+
+/**
+ * A restored worksheet, defined or table name. A pseudonym blinded from part of an identity comes
+ * back as the whole recorded form, which a defined name may not hold ("Avery_Total" was blinded to
+ * "Person_C625_Total", whose recorded form is "Avery Quill"): each character a defined name cannot
+ * have becomes "_", so the name and every formula naming it stay valid and agree. A worksheet name
+ * is written as recorded; checkNames refuses one the spreadsheet would not accept.
+ */
+function restoreName(slot: NameSlot, name: string, rv: Revealer): Revealed {
+  const r = rv.text(name);
+  if (slot !== "definedName" || r.restored === 0 || violation(slot, r.text) === null) return r;
+  return { text: r.text.replace(/[^\p{L}\p{N}_.\\]/gu, "_").replace(/^(?=[^\p{L}_\\])/u, "_"), restored: r.restored };
+}
+
+/** Restored worksheet or defined names must be valid and distinct (ignoring case), or the workbook is not revealed. */
+function checkNames(slot: NameSlot, names: readonly string[], rv: Revealer): void {
+  const what = slot === "sheet" ? "worksheet" : "defined or table";
+  const seen = new Map<string, string>();
+  for (const name of new Map(names.map((n) => [lower(n), n])).values()) {
+    const r = restoreName(slot, name, rv);
+    const why = r.restored === 0 ? null : violation(slot, r.text);
+    if (why !== null) throw new RevealError(`a restored ${what} name ${why}`);
+    const other = seen.get(lower(r.text));
+    if (other !== undefined && other !== lower(name)) throw new RevealError(`two ${what} names would reveal to the same name`);
+    seen.set(lower(r.text), lower(name));
+  }
+}
+
+function revealXlsx(bytes: Uint8Array, rv: Revealer): RevealedFile {
+  let wb;
+  try {
+    wb = readWorkbook(bytes);
+  } catch (e) {
+    if (e instanceof XlsxError || e instanceof ZipError) throw new RevealError(`cannot read it as XLSX: ${e.message}`);
+    throw e;
+  }
+  const broken = wb.members.find((m) => m.kind === "error");
+  if (broken?.kind === "error") throw new RevealError(`cannot read it as XLSX: member ${broken.name} cannot be read (${broken.error})`);
+  checkNames("sheet", wb.sheets.map((s) => s.name), rv);
+  checkNames("definedName", [...wb.definedNames, ...wb.tables.flatMap((t) => [t.name, t.displayName])], rv);
+
+  let restored = 0;
+  const count = (r: Revealed): string => {
+    restored += r.restored;
+    return r.text;
+  };
+  const text = (v: string): string => count(rv.text(v));
+  const definedName = (v: string): string => count(restoreName("definedName", v, rv));
+  // A renumbered number: its digits (without sign, point or exponent) are an `id` pseudonym of the
+  // same length, the original digits put back around the decimal point where it was.
+  const number = (v: string): string => {
+    const m = NUMBER.exec(v);
+    if (m === null) return v;
+    const [, sign, int, frac = "", exp = ""] = m as unknown as [string, string, string, string?, string?];
+    const orig = rv.exact(int + frac);
+    if (orig === undefined || !/^\d+$/.test(orig) || orig.length !== int.length + frac.length) return v;
+    restored++;
+    return `${sign}${orig.slice(0, int.length)}${frac === "" ? "" : `.${orig.slice(int.length)}`}${exp}`;
+  };
+  // The first sheet of a 3-D reference (Sheet1:Sheet3!A1) is a bare name; the whole reference
+  // would need quoting if its restored name did, which is not written.
+  const firstSheet = (name: string): string => {
+    const to = text(name);
+    if (to !== name && needsQuotes(to)) throw new RevealError("a worksheet name restored in a 3-D reference would need quotes");
+    return to;
+  };
+  const literal = (v: string): string => {
+    // HYPERLINK("#'Sheet name'!A1", ...) and the like.
+    const m = /^(#?)(?:'((?:[^']|'')+)'|([^'!#]+))!(.*)$/s.exec(v);
+    if (m !== null) {
+      const name = m[2] !== undefined ? m[2].replace(/''/g, "'") : (m[3] as string);
+      const to = text(name);
+      if (to !== name) return `${m[1]}${m[2] !== undefined || needsQuotes(to) ? quoteSheet(to) : to}!${text(m[4] as string)}`;
+    }
+    return text(v);
+  };
+  const formula = (f: string): string =>
+    tokenizeFormula(f)
+      .map((t, i, tokens) => {
+        switch (t.kind) {
+          case "string":
+            return `"${literal(t.text).replace(/"/g, '""')}"`;
+          case "sheet": {
+            const to = text(t.text);
+            if (to === t.text) return t.raw;
+            return t.quoted || to.split(":").some(needsQuotes) ? quoteSheet(to) : to;
+          }
+          case "name": {
+            const next = tokens[i + 1];
+            return next?.kind === "other" && next.text.startsWith(":") ? firstSheet(t.text) : definedName(t.text);
+          }
+          case "bracket":
+            return t.text.replace(/\[([^[\]#'][^[\]]*)\]/g, (whole, inner: string) => {
+              const to = text(inner);
+              return to === inner ? whole : `[${to}]`;
+            });
+          case "other":
+            return t.text;
+        }
+      })
+      .join("");
+
+  // The main runs of each shared string (by index) and inline string (by member and cell), revealed once.
+  const source = new Map<string, readonly string[]>(wb.sharedStrings.map((s, i) => [`${i}`, s.runs]));
+  for (const s of wb.sheets) for (const c of s.cells) if (s.member !== null && c.type === "inlineStr") source.set(`${s.member}\0${c.ref}`, c.runs);
+  const revealed = new Map<string, string[]>();
+  const runs = (key: string): string[] | undefined => {
+    let out = revealed.get(key);
+    const from = source.get(key);
+    if (out === undefined && from !== undefined) {
+      const r = revealRuns(from, rv);
+      restored += r.restored;
+      out = r.runs;
+      revealed.set(key, out);
+    }
+    return out;
+  };
+
+  const phonetic = (parents: readonly Frame[]): boolean => parents.some((f) => localName(f.name) === "rPh");
+  const counters = new Map<string, () => { si: number; run: number }>();
+
+  const slotValue = (slot: Slot | null, value: string, member: string, parents: readonly Frame[]): string => {
+    switch (slot) {
+      case null:
+        return value;
+      case "cellValue": {
+        const type = parents[parents.length - 1]?.attrs.get("t") ?? "n";
+        return type === "n" ? number(value) : type === "str" ? text(value) : value;
+      }
+      case "inlineRun":
+      case "sharedRun": {
+        // Phonetic runs are read on their own; the main runs as one text.
+        if (phonetic(parents)) return text(value);
+        const pos = (counters.get(member) as () => { si: number; run: number })();
+        const ref = [...parents].reverse().find((f) => localName(f.name) === "c")?.attrs.get("r") ?? "";
+        const out = runs(slot === "sharedRun" ? `${pos.si}` : `${member}\0${ref}`);
+        // A run the read pass did not see cannot be placed in its string: the workbook is not revealed.
+        if (out === undefined || out[pos.run] === undefined) throw new RevealError(`cannot read it as XLSX: ${member} has a text run outside any string`);
+        return out[pos.run] as string;
+      }
+      case "formula":
+      case "location":
+        return formula(value);
+      case "display":
+        return value.includes("!") ? formula(value) : text(value);
+      case "number":
+        return number(value);
+      case "cache":
+        return NUMBER.test(value) ? number(value) : text(value);
+      case "definedName":
+      case "nameRef":
+        return definedName(value);
+      case "sheetName":
+      case "sheetRef":
+      case "text":
+      case "header":
+        return text(value);
+    }
+  };
+
+  let result;
+  try {
+    result = rewriteOoxml(
+      bytes,
+      (value, ctx) => slotValue(classify(ctx.member, ctx.element, ctx.parents, ctx.attribute), value, ctx.member, ctx.parents),
+      (member) => {
+        // Which shared string, and which run of it or of an inline string, the next <t> belongs to.
+        let si = -1;
+        let run = -1;
+        counters.set(member, () => ({ si, run }));
+        return slotRules(member, {
+          visit(el, parents) {
+            const name = localName(el.name);
+            const root = localName((parents[0] ?? el).name);
+            if (root === "sst" && name === "si") {
+              si++;
+              run = -1;
+            } else if (root === "worksheet" && name === "is") run = -1;
+            else if (name === "t" && !phonetic(parents)) run++;
+          },
+        });
+      },
+    );
+  } catch (e) {
+    if (e instanceof ZipError) throw new RevealError(`cannot read it as XLSX: ${e.message}`);
+    throw e;
+  }
+  const failed = result.members.find((m) => m.kind === "error");
+  if (failed?.kind === "error") throw new RevealError(`cannot read it as XLSX: member ${failed.name} cannot be read (${failed.error})`);
+  return { bytes: restored === 0 ? bytes : result.bytes, restored };
+}
+
+// ---------------------------------------------------------------- DOCX
+
+type DocxNode = DocxPlan["wholes"][number];
+type Role = DocxNode["role"];
+
+function revealDocx(bytes: Uint8Array, rv: Revealer): RevealedFile {
+  let plan: DocxPlan;
+  try {
+    plan = planDocx(bytes);
+  } catch (e) {
+    if (e instanceof DocxError) throw new RevealError(`cannot read it as DOCX: ${e.message}`);
+    throw e;
+  }
+  let restored = 0;
+  const cuts = new Map<DocxNode, Cut[]>();
+
+  // Each unit (a paragraph's text, its field instructions, or a single value) read as one text. With
+  // tracked changes it is read as accepted and as rejected, as blinding reads it; a pseudonym both
+  // readings find in the same place is restored once.
+  for (const unit of plan.units) {
+    const nodes = unit.items.flatMap((i) => ("node" in i ? [i.node] : []));
+    if (nodes.length === 0) continue;
+    const ids = new Map(nodes.map((n, i) => [n, i]));
+    const revised = unit.items.some((i) => ("node" in i ? i.node.role : i.role) !== "plain");
+    const readings: { skip: Role; own: Role }[] = revised ? [{ skip: "del", own: "ins" }, { skip: "ins", own: "del" }] : [{ skip: "del", own: "ins" }];
+    const recorded = new Set<string>();
+    for (const { skip, own } of readings) {
+      let joined = "";
+      const segments: { key: DocxNode; start: number; value: string }[] = [];
+      for (const item of unit.items) {
+        if ("node" in item) {
+          if (item.node.role === skip) continue;
+          segments.push({ key: item.node, start: joined.length, value: item.node.value });
+          joined += item.node.value;
+        } else if (item.role !== skip) joined += item.sep;
+      }
+      for (const [s, e, orig] of rv.spans(joined)) {
+        const ps = pieces(segments, s, e);
+        const key = ps.map((p) => `${ids.get(p.key)}:${p.start}-${p.end}`).join(",");
+        if (recorded.has(key)) continue;
+        recorded.add(key);
+        if (ps.some((p) => (cuts.get(p.key) ?? []).some((c) => c.start < p.end && p.start < c.end))) {
+          throw new RevealError("a pseudonym reads differently with tracked changes accepted and with them rejected; accept or reject the changes, then reveal");
+        }
+        const anchor = ps.find((p) => p.key.role === own) ?? ps[0];
+        for (const p of ps) {
+          const list = cuts.get(p.key) ?? [];
+          list.push({ start: p.start, end: p.end, insert: p === anchor ? orig : "" });
+          cuts.set(p.key, list);
+        }
+        restored++;
+      }
+    }
+  }
+  for (const list of cuts.values()) list.sort((a, b) => a.start - b.start);
+
+  const next = new Map<string, number>();
+  const result = rewriteOoxml(
+    plan.bytes,
+    (value, ctx) => {
+      const k = next.get(ctx.member) ?? 0;
+      next.set(ctx.member, k + 1);
+      const node = plan.nodes.get(ctx.member)?.[k];
+      // The write pass sees the same values in the same order as the read, or it stops.
+      if (node === undefined || node.value !== value) throw new Error(`docx reveal: ${ctx.member} changed between read and write`);
+      // Values replaced whole (authors, creator, company) are pseudonyms as a whole.
+      if (node.whole !== undefined) {
+        const r = rv.text(value);
+        restored += r.restored;
+        return r.text;
+      }
+      const list = cuts.get(node);
+      return list === undefined ? value : splice(value, list);
+    },
+    (member) => rulesFor(plan.kinds.get(member) ?? "inert"),
+  );
+  const failed = result.members.find((m) => m.kind === "error");
+  if (failed?.kind === "error") throw new RevealError(`cannot read it as DOCX: part ${failed.name} cannot be written (${failed.error})`);
+  return { bytes: restored === 0 ? bytes : result.bytes, restored };
 }

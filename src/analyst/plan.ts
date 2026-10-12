@@ -11,7 +11,7 @@ import { MAP_FILE, SPEC_FILE } from "../apply.ts";
 import { MapError, readMap } from "../engine/map.ts";
 import { BLIND_DIR } from "../init.ts";
 import { type AskOptions, ModelError, modelsEnabled } from "../model.ts";
-import { loadPolicy, POLICY_FILE, PolicyError, type PolicyPatterns } from "../policy.ts";
+import { loadKeepTerms, loadPolicy, POLICY_FILE, PolicyError, type PolicyPatterns } from "../policy.ts";
 import { writeProfile } from "../profile/command.ts";
 import { buildProfile, forPrivacyMode, InputError } from "../profile/profile.ts";
 import { type ColumnRule, type EntityClassName, type Location, patternOn, REDACTED_VALUE, type Spec } from "../schema.ts";
@@ -29,6 +29,7 @@ import {
   collectCandidates,
   type Decision,
   FromAuditError,
+  keptValues,
   leakDecisions,
   parseAuditReport,
   parseDecisions,
@@ -84,7 +85,8 @@ const PLAN_HELP = [
   "enabled pattern that survives) at its suggested class, or id when it suggests none, without",
   "asking. Candidates that are not leaks stay undecided unless --accept or --reject decides them;",
   "an --accept or --reject of a leak wins over --accept-leaks. A leak that cannot be accepted (a",
-  "vocabulary form) is listed and left undecided.",
+  "vocabulary form) or is not sensitive (dictionary words only, a value kept by a keep column or",
+  "[keep].terms, a measure, a number under 5 digits) is listed with why and left undecided.",
   "",
   "Options:",
   "  --answer <id>=<option>  Answer a question in the saved spec and print it again (repeatable)",
@@ -529,7 +531,7 @@ export async function decideFromReport(
   let decisions = parseDecisions(values.accept ?? [], values.reject ?? []);
   applyDecisions(saved, collected.candidates, decisions, map);
   let leaksSkipped: ReturnType<typeof leakDecisions>["skipped"] = [];
-  if (values.acceptLeaks) ({ decisions, skipped: leaksSkipped } = leakDecisions(saved, collected.candidates, decisions, map));
+  if (values.acceptLeaks) ({ decisions, skipped: leaksSkipped } = leakDecisions(saved, collected.candidates, decisions, map, keptValues(resolve(io.cwd, out), saved, loadKeepTerms(io.cwd))));
   let applied = applyDecisions(saved, collected.candidates, decisions, map);
   const interactive = !flagged && !values.json && io.prompt !== undefined && collected.candidates.length > 0;
 
@@ -557,7 +559,7 @@ export async function decideFromReport(
     io.out.write(`${JSON.stringify({ spec: written, candidates: collected.candidates, changes: applied.changes, undecided, leaksSkipped, other, unmapped }, null, 2)}\n`);
   } else {
     if (applied.changes.length > 0) io.out.write(`\nchanges to the saved spec:\n${applied.changes.map(renderChange).join("\n")}\n`);
-    if (leaksSkipped.length > 0) io.out.write(`\nleaks --accept-leaks could not accept (${leaksSkipped.length}):\n${leaksSkipped.map((x) => `  ${x.id}  ${q(x.value)}: ${x.why}`).join("\n")}\n`);
+    if (leaksSkipped.length > 0) io.out.write(`\nleaks --accept-leaks left undecided (${leaksSkipped.length}):\n${leaksSkipped.map((x) => `  ${x.id}  ${q(x.value)}: ${x.why}`).join("\n")}\n`);
     if (undecided.length > 0) {
       io.out.write(`\nundecided (${undecided.length}): ${undecided.join(", ")}. Nothing was added for them; the audit will raise them again.\n`);
       if (!flagged && !interactive) io.out.write("decide with: blind plan --from-audit <report> -o <out> --accept <ids> --reject <ids>\n");

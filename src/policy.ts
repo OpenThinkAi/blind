@@ -52,12 +52,20 @@ export const COLUMN_TREATMENTS: readonly Treatment[] = ["keep", "scan", "drop", 
 
 /**
  * A `[[columns]]` rule: the columns (and JSON keys) whose header matches one of `header` (globs,
- * case-insensitive), in the files `file` matches (a glob on the input-relative path; absent = every
- * file), get `treatment` and `class`. `blind plan` writes them into the spec ahead of the analyst
- * and the heuristic; the first matching rule wins.
+ * case-insensitive; a JSON key by its last key name) and, when `path` is given, the JSON keys whose
+ * full key path matches it, in the files `file` matches and on the worksheets `sheet` matches, get
+ * `treatment` and `class`. `blind plan` writes them into the spec ahead of the analyst and the
+ * heuristic. When several rules match one column, the most specific wins (see ruleRank in
+ * analyst/policycolumns.ts): scoped (`path`, `sheet` or `file`) over unscoped, then exact over glob,
+ * then fewer wildcards, then more literal text, then file order.
  */
 export interface ColumnPolicyRule {
-  header: string[];
+  /** Header globs. At least one of `header` and `path` is given. */
+  header?: string[];
+  /** A JSON key-path glob over the whole path (`owner.dob`, `users[*].profile.*`, `**.profile.dob`). JSON keys only. */
+  path?: string;
+  /** A worksheet-name glob. XLSX columns only. */
+  sheet?: string;
   file?: string;
   treatment: Treatment;
   /** Defaults to `vocabulary` for `keep` and to `unknown` for the rest (a `scan` column needs no class). */
@@ -206,9 +214,14 @@ export function renderPolicy(p: Policy): string {
       ? '# triggers = ["locker code", { word = "license", kind = "number" }, { word = "born", kind = "date" }]'
       : `triggers = [${p.context.triggers.map((t) => (typeof t === "string" ? str(t) : `{ word = ${str(t.word)}, kind = ${str(t.kind)} }`)).join(", ")}]`,
     "",
-    "# Column rules, applied by `blind plan` before the analyst and the heuristic; the first match wins.",
-    "# header: header globs (* and ?, any case); a JSON key matches by its name. file: optional path glob",
+    "# Column rules, applied by `blind plan` before the analyst and the heuristic.",
+    "# header: header globs (* and ?, any case); a JSON key matches by its last key name. path: optional JSON",
+    "# key-path glob over the whole path (owner.dob, users[*].profile.*, **.profile.dob; * within one key, ** across",
+    "# keys); JSON keys only. sheet: optional worksheet-name glob; XLSX columns only. file: optional path glob",
     `# (* within a folder, ** across folders). treatment: ${COLUMN_TREATMENTS.join(" | ")}. class: optional.`,
+    "# When several rules match a column, the most specific wins, whatever the file order: scoped (path, sheet or",
+    "# file) over unscoped, then an exact name over a glob, then fewer wildcards, then more literal text; only a",
+    "# full tie goes to the rule written first. `blind plan` notes every column two rules disagree on.",
     "# A column whose header is a [keep] term is kept too, unless a rule here says otherwise.",
     "# keep: byte-identical, nothing in it is replaced. scan: kept as written apart from what the free-text",
     "# scanner finds (phones, emails, names, plates and codes after a keyword): the one for notes, remarks, diagnoses.",
@@ -221,11 +234,22 @@ export function renderPolicy(p: Policy): string {
           "# [[columns]]",
           '# header = ["notes", "remarks", "diagnosis"]',
           '# treatment = "scan"',
+          "#",
+          "# The pet's date of birth is kept; the owner's is not. The path rule is scoped, so it wins at owner.dob.",
+          "# [[columns]]",
+          '# header = "dob"',
+          '# treatment = "keep"',
+          "#",
+          "# [[columns]]",
+          '# path = "owner.dob"',
+          '# treatment = "redact"',
         ]
       : p.columns.flatMap((c, i) => [
           ...(i === 0 ? [] : [""]),
           "[[columns]]",
-          `header = ${list(c.header)}`,
+          ...(c.header === undefined ? [] : [`header = ${list(c.header)}`]),
+          ...(c.path === undefined ? [] : [`path = ${str(c.path)}`]),
+          ...(c.sheet === undefined ? [] : [`sheet = ${str(c.sheet)}`]),
           ...(c.file === undefined ? [] : [`file = ${str(c.file)}`]),
           `treatment = ${str(c.treatment)}`,
           `class = ${str(c.class)}`,
@@ -335,7 +359,7 @@ function readModels(r: Reader, models: Table): Policy["models"] {
   return { analyst, auditor: readModel(r, models, "auditor"), auditorExplicit: true };
 }
 
-const COLUMN_RULE_KEYS = ["header", "file", "treatment", "class"] as const;
+const COLUMN_RULE_KEYS = ["header", "path", "sheet", "file", "treatment", "class"] as const;
 
 function readColumns(r: Reader, doc: Table, source: string): ColumnPolicyRule[] {
   const v = doc.columns;
@@ -344,21 +368,38 @@ function readColumns(r: Reader, doc: Table, source: string): ColumnPolicyRule[] 
   return (v as Table[]).map((t, i): ColumnPolicyRule => {
     const path = `columns[${i}]`;
     r.noExtra(t, path, COLUMN_RULE_KEYS);
-    const raw = t.header;
-    const header = typeof raw === "string" ? [raw] : r.strings(t, "header", `${path}.header`);
-    if (header.length === 0 || header.some((h) => h.trim() === "")) r.fail(`${path}.header`, "a non-empty glob or array of non-empty globs", raw);
+    const glob = (key: "path" | "sheet" | "file"): string | undefined => {
+      if (t[key] === undefined) return undefined;
+      const g = r.string(t, key, `${path}.${key}`);
+      if (g.trim() === "") r.fail(`${path}.${key}`, "a non-empty glob", g);
+      return g;
+    };
+    const keyPath = glob("path");
+    const sheet = glob("sheet");
+    const file = glob("file");
+    let header: string[] | undefined;
+    // A rule names columns by header, JSON keys by path, or both.
+    if (t.header === undefined && keyPath === undefined) r.fail(`${path}.header`, "set (a rule needs header, path or both)", undefined);
+    if (t.header !== undefined) {
+      const raw = t.header;
+      header = typeof raw === "string" ? [raw] : r.strings(t, "header", `${path}.header`);
+      if (header.length === 0 || header.some((h) => h.trim() === "")) r.fail(`${path}.header`, "a non-empty glob or array of non-empty globs", raw);
+    }
+    // A path names JSON keys and a sheet names worksheet columns: a rule with both could match nothing.
+    if (keyPath !== undefined && sheet !== undefined) {
+      throw new PolicyError(`${source}: ${path}: path (JSON keys) and sheet (worksheet columns) cannot both be set; a rule with both matches nothing`);
+    }
     const treatment = r.oneOf(t, "treatment", `${path}.treatment`, COLUMN_TREATMENTS);
     const cls = t.class === undefined ? (treatment === "keep" ? "vocabulary" : "unknown") : r.oneOf(t, "class", `${path}.class`, COLUMN_CLASSES);
     // The spec's fail-closed rule: nobody decided an `unknown` column, so it may not pass through.
     if (cls === "unknown" && treatment === "keep") {
       throw new PolicyError(`${source}: ${path}: class "unknown" cannot use treatment "keep"; leave class out or name one (e.g. "vocabulary")`);
     }
-    const rule: ColumnPolicyRule = { header, treatment, class: cls };
-    if (t.file !== undefined) {
-      const file = r.string(t, "file", `${path}.file`);
-      if (file.trim() === "") r.fail(`${path}.file`, "a non-empty glob", file);
-      rule.file = file;
-    }
+    const rule: ColumnPolicyRule = { treatment, class: cls };
+    if (header !== undefined) rule.header = header;
+    if (keyPath !== undefined) rule.path = keyPath;
+    if (sheet !== undefined) rule.sheet = sheet;
+    if (file !== undefined) rule.file = file;
     return rule;
   });
 }

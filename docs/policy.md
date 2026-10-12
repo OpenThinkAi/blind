@@ -136,11 +136,27 @@ treatment = "drop"
 header = "owner"
 treatment = "blind"
 class = "person"
+
+# The pet's date of birth is kept; the owner's is not. The path rule is scoped, so it wins at owner.dob.
+[[columns]]
+header = "dob"
+treatment = "keep"
+
+[[columns]]
+path = "owner.dob"
+treatment = "redact"
+
+[[columns]]
+header = "dob"
+sheet = "Clients"
+treatment = "redact"
 ```
 
 | Key | Type | Required | Meaning |
 |---|---|---|---|
-| `header` | string or array of strings | yes | Header globs: `*` any run of characters, `?` one. Case and runs of spaces do not matter. A JSON key path matches by its last key name (`$.visits[*].weight` by `weight`); the root and record-ID keys (`.*~`) never match. |
+| `header` | string or array of strings | yes, unless `path` is given | Header globs: `*` any run of characters, `?` one. Case and runs of spaces do not matter. A JSON key path matches by its last key name (`$.visits[*].weight` by `weight`); the root and record-ID keys (`.*~`) never match. |
+| `path` | string | no | A JSON key-path glob over the **whole** path: `owner.dob`, `users[*].profile.*`, `**.profile.dob`, `clinic["visit date"]`. Keys are separated by `.`; `*` and `?` match within one key, `**` any number of keys (none included). A leading `$` is optional and `[*]` array markers are ignored on both sides, so `users.profile.dob` matches `$.users[*].profile.dob`. Case does not matter. A rule with `path` matches JSON keys only; with `header` too, the key must match both. |
+| `sheet` | string | no | A worksheet-name glob (`*`, `?`, any case). A rule with `sheet` matches XLSX columns only. `sheet` and `path` cannot both be set. |
 | `file` | string | no | A glob on the input-relative path (`/`-separated): `*` and `?` within one folder, `**` across folders. Absent: every file. |
 | `treatment` | `"keep"`, `"scan"`, `"drop"`, `"blind"`, `"value"` or `"redact"` | yes | What the matching columns get (the spec's treatments, [spec.md](spec.md#columns)). `keep` leaves every cell byte-identical, whatever it holds. `scan` keeps the cell as written except for what the free-text scanner finds in it: pattern matches (phone, email, IP), spec entities, values blinded elsewhere, people named only in prose and the value after a [context](#context) keyword; use it for notes, remarks and diagnoses. `drop` removes the column or key from the output; `redact` writes `REDACTED` in each non-empty value. The column itself is not in the map, so it cannot be revealed; but every non-empty value still recurs: the same text in another file or column is replaced, and so are a person's name parts, as if the column had been blinded. The class is the rule's `class` when it is sensitive, else `person` for a column of names, `id` for phones, emails and codes, else `value`. |
 | `class` | a spec class (`person`, `org`, `host`, `email`, `id`, `location`, `vocabulary`, `secret`, `unknown`) | no | Default: `vocabulary` for `keep`, `unknown` otherwise. `keep` with `unknown` is an error; `scan` needs no class (the audit reads a `scan` column as free text whatever its class). `blind` with a sensitive class gives that class's pseudonyms; with `unknown`, `Value_` ones; with `secret` (a password or key column), `REDACTED` in every non-empty cell, as `redact` does. `value` with `unknown` leaves the column to the engine's identifier-like test. |
@@ -148,9 +164,10 @@ class = "person"
 How they apply:
 
 - **When.** `blind plan` (and so `blind run`) writes them into the spec after the analyst or the
-  heuristic has proposed its rules, on every plan, with `source: "policy"`. The first rule that
-  matches a column wins; a [keep term](#keep) naming the header comes after every rule. `blind
-  apply` reads only the spec, so re-plan after editing this table.
+  heuristic has proposed its rules, on every plan, with `source: "policy"`. When several rules
+  match a column, the most specific wins (see [Precedence](#precedence)); a [keep term](#keep)
+  naming the header comes after every rule. `blind apply` reads only the spec, so re-plan after
+  editing this table.
 - **What they override.** Analyst, heuristic and earlier policy rules. A spec rule with
   `source: "human"` (an answered question, or a rule you wrote) is kept, and the plan says so. An
   unanswered question about a column a rule now decides is removed.
@@ -163,6 +180,39 @@ How they apply:
   the corpus (a pet's name, a clinic's public number) is never pseudonymised whole by the
   fail-closed fallback in another column: those cells are scanned as text instead, and `blind
   apply` reports how many per column. A rule that blinds that other column still wins.
+
+### Precedence
+
+When two or more rules match the same column or JSON key, the most specific one decides it,
+wherever it sits in the file. Rules are compared step by step, and the first step that tells them
+apart decides:
+
+1. **Scoped over unscoped.** A rule with `path`, `sheet` or `file` beats one with none of them.
+2. **Exact over glob.** A rule whose matching globs have no `*` or `?` beats one with a wildcard.
+3. **Fewer wildcards.** Counted over the globs that matched (`**` counts as two).
+4. **More literal text.** The characters that are not wildcards, over the globs that matched.
+5. **File order.** Only a full tie goes to the rule written first.
+
+Of a rule's `header` globs, the most specific one that matches is the one compared; a rule with
+both `path` and `header` is ranked on both together.
+
+So `owner_city` beats `owner*` (exact over glob), a `msg_opt_in` keep rule beats a `*msg*` drop
+rule written above it, and `path = "owner.*"` beats a plain `dob` keep rule at `owner.dob` while
+`pet.dob` stays kept. A configuration where no two rules match the same column decides exactly
+what it decided before precedence existed (when only the first match counted).
+
+`blind plan` prints a note for every column or key that two or more rules match with different
+treatments or classes, naming each rule by its place in the file (`columns[0]` is the first
+`[[columns]]` table) and the glob that matched, winner first, and why it won:
+
+```
+note: "v.csv" "msg_opt_in": 2 blind.toml rules match: columns[3] (header "msg_opt_in", keep/vocabulary); columns[1] (header "*msg*", drop/unknown); columns[3] wins (an exact name beats a glob)
+```
+
+It prints a warning when a `keep` rule matches columns but decides none of them, because another
+rule wins at every one (a keep rule that loses only to another keep rule of the same class is
+not reported). Notes and warnings name files, headers, key paths and globs, never a value. With
+`--json` they are in `notes`.
 
 ## `[defaults]`
 

@@ -26,7 +26,10 @@
 // (person) and Company (org). Other metadata and attribute text (titles,
 // keywords, custom properties, drawing names and alt text, form-field and
 // content-control text, document variables, mail-merge strings, field
-// instructions, external hyperlink targets) is free text.
+// instructions, external hyperlink targets) is free text. In a path (any attribute
+// holding one, app.xml Template and HyperlinkBase: src/formats/paths.ts) the
+// account name of a user folder (`C:\Users\avery\`) is replaced as a whole with
+// a person pseudonym, and the rest of the path is free text.
 //
 // Office's own linking IDs (edit-session rsids, paragraph, text and durable ids, document and
 // list ids, data store ids: src/formats/officeids.ts) are rewritten wherever they are, so the
@@ -40,6 +43,7 @@
 
 import { type Frame, localName, readOoxml, type RewriteRules, rewriteOoxml, rewriteXml, XmlError } from "../formats/ooxml.ts";
 import { type LinkShape, officeLinkAttribute } from "../formats/officeids.ts";
+import { accountSegments } from "../formats/paths.ts";
 import type { PseudoClass } from "./canonical.ts";
 import { type HexNamer, rewriteOfficeId } from "./officeid.ts";
 import type { Pseudonymizer } from "./pseudonym.ts";
@@ -71,6 +75,8 @@ export interface DocxPlan {
   values: string[];
   /** Hex linking IDs the render needs, for the caller to derive in sorted order. */
   hexIds: string[];
+  /** Account names in paths, each replaced as a whole with a person pseudonym. */
+  accounts: Edit[];
   warnings: string[];
 }
 
@@ -111,7 +117,8 @@ interface Node {
 interface Edit {
   cls: PseudoClass;
   value: string;
-  source: Span["source"];
+  /** `account`: an account name in a path (src/formats/paths.ts). */
+  source: Span["source"] | "account";
 }
 
 type Item = { node: Node } | { sep: string; role: Role };
@@ -233,14 +240,31 @@ const WHOLE_PROPERTIES = new Map<PartKind, ReadonlyMap<string, PseudoClass>>([
   ["app", new Map([["Manager", "person"], ["Company", "org"]])],
 ]);
 
+/** app.xml elements whose text is a path. */
+const PATH_PROPERTIES = new Set(["Template", "HyperlinkBase"]);
+
+/**
+ * An attribute that holds a path with an account name in it (src/formats/paths.ts), in any part.
+ * A part's own name and an internal relationship's target are not: renaming them would break the
+ * package. Namespace declarations are never paths.
+ */
+function pathAttribute(el: Frame, attr: string): boolean {
+  if (attr === "xmlns" || attr.startsWith("xmlns:") || attr === "PartName") return false;
+  if (localName(el.name) === "Relationship" && attr === "Target" && el.attrs.get("TargetMode") !== "External") return false;
+  return accountSegments(el.attrs.get(attr) ?? "").length > 0;
+}
+
 /**
  * The text nodes and attributes offered in a part of `kind`, with every Office linking ID position
- * offered as well; shared with reveal, so it reads exactly what blinding rewrites (it leaves the
- * linking IDs, nodes with `link` set, as written).
+ * and every attribute holding a path with an account name offered as well; shared with reveal, so it
+ * reads exactly what blinding rewrites (it leaves the linking IDs, nodes with `link` set, as written).
  */
 export function rulesFor(kind: PartKind, visit?: RewriteRules["visit"]): RewriteRules {
   const rules = kindRules(kind, visit);
-  return { ...rules, attribute: (el, attr, parents) => officeLinkAttribute(el.name, attr) !== null || rules.attribute(el, attr, parents) };
+  return {
+    ...rules,
+    attribute: (el, attr, parents) => officeLinkAttribute(el.name, attr) !== null || rules.attribute(el, attr, parents) || pathAttribute(el, attr),
+  };
 }
 
 function kindRules(kind: PartKind, visit?: RewriteRules["visit"]): RewriteRules {
@@ -307,7 +331,7 @@ export function planDocx(bytes: Uint8Array): DocxPlan {
   } catch (e) {
     throw new DocxError(`not a readable DOCX package (${(e as Error).message})`);
   }
-  const plan: DocxPlan = { bytes, nodes: new Map(), kinds: new Map(), edits: [], wholes: [], units: [], keptHosts: 0, requests: [], values: [], hexIds: [], warnings: [] };
+  const plan: DocxPlan = { bytes, nodes: new Map(), kinds: new Map(), edits: [], wholes: [], units: [], keptHosts: 0, requests: [], values: [], hexIds: [], accounts: [], warnings: [] };
 
   const images: string[] = [];
   for (const m of members) {
@@ -397,6 +421,17 @@ export function planDocx(bytes: Uint8Array): DocxPlan {
               plan.requests.push({ cls, value: value.trim() });
             }
             return value;
+          }
+          // A path (an attribute, or app.xml Template and HyperlinkBase): its account names are
+          // replaced whole; the rest of it is free text, matched as usual.
+          if (ctx.attribute !== undefined || (kind === "app" && ctx.parents.length === 1 && PATH_PROPERTIES.has(n))) {
+            for (const seg of accountSegments(value)) {
+              const edit: Edit = { cls: "person", value: seg.value, source: "account" };
+              plan.accounts.push(edit);
+              plan.requests.push({ cls: edit.cls, value: edit.value });
+              node.blanks.push([seg.start, seg.end]);
+              node.inserts.push({ at: seg.start, edit });
+            }
           }
           const p = ctx.attribute === undefined && kind === "word" ? paragraphOf(ctx.parents) : undefined;
           if (p !== undefined) (INSTR_TEXT.has(n) ? p.instr : p.text).items.push({ node });
@@ -559,6 +594,7 @@ export function renderDocx(plan: DocxPlan, pz: Pseudonymizer, ids: HexNamer): Do
   if (failed !== undefined && failed.kind === "error") throw new DocxError(`part ${failed.name} cannot be written (${failed.error})`);
   let metadataReplacements = 0;
   for (const n of plan.wholes) if (renderNode(n, pz, ids) !== n.value) metadataReplacements++;
+  for (const e of plan.accounts) if (pz.pseudonym(e.cls, e.value) !== e.value) metadataReplacements++;
   return {
     bytes: result.bytes,
     changed: result.members.some((m) => m.kind === "xml" && m.changed),

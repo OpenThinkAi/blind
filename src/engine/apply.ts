@@ -143,7 +143,7 @@ export interface FileReport {
   mappedReplacements: number;
   /** Host names left as written because they are under a keep-list domain. */
   keptHosts: number;
-  /** DOCX only: identity metadata (authors, initials, creator, company) replaced as a whole. */
+  /** DOCX and XLSX: identity metadata (authors, initials, creator, company) and account names in paths replaced as a whole. */
   metadataReplacements?: number;
   /** Parts of the file copied without blinding (images), for the report. */
   warnings?: string[];
@@ -817,6 +817,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         mappedReplacements: r.mappedReplacements,
         keptHosts: r.keptHosts,
         ...(r.speakerReplacements > 0 ? { speakerMentions: r.speakerReplacements } : {}),
+        ...(r.metadataReplacements > 0 ? { metadataReplacements: r.metadataReplacements } : {}),
         sheets: p.plan.sheets.map((s) => ({ ...s, outputName: r.sheetNames.find((n) => n.from === s.name)?.to ?? s.name })),
         unread: r.members.filter((m) => m.kind === "other" && !m.name.endsWith("/")).map((m) => m.name),
         changed,

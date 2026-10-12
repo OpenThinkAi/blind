@@ -1,6 +1,6 @@
 {
   "name": "@openthink/blind",
-  "version": "0.0.0",
+  "version": "0.0.2",
   "description": "Make any document set blind to the identities you choose: analyst proposes, human approves, engine applies, auditor checks",
   "license": "MIT",
   "repository": {

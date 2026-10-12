@@ -1,7 +1,7 @@
 // CSV and TSV: parsing (via the engine tokenizer), header-row detection and per-column statistics.
 
 import type { ProfileTable } from "../schema.ts";
-import { CsvError, parseCsv, sniffDelimiter } from "../engine/csv.ts";
+import { assertRowWidths, CsvError, parseCsv, sniffDelimiter } from "../engine/csv.ts";
 import { excerpt, valueStats } from "./stats.ts";
 
 export class ParseError extends Error {
@@ -14,7 +14,9 @@ export class ParseError extends Error {
  */
 export function parseTable(text: string, format: "csv" | "tsv"): string[][] {
   try {
-    return parseCsv(text, sniffDelimiter(text, format === "tsv" ? "\t" : undefined)).map((r) => r.cells.map((c) => c.value));
+    const rows = parseCsv(text, sniffDelimiter(text, format === "tsv" ? "	" : undefined)).map((r) => r.cells.map((c) => c.value));
+    assertRowWidths(rows, (detectHeaderRow(rows) ?? 1) - 1);
+    return rows;
   } catch (e) {
     if (e instanceof CsvError) throw new ParseError(e.message);
     throw e;

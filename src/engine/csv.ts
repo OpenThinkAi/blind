@@ -47,6 +47,23 @@ export function sniffDelimiter(text: string, preferred?: string): string {
   return best;
 }
 
+/**
+ * A row below the header must be as wide as the header; a mismatch means a stray or unclosed quote
+ * swallowed rows or the file is corrupt. Rows above the header (title lines) and blank lines are exempt.
+ * `headerIndex` is 0-based.
+ */
+export function assertRowWidths(rows: readonly (readonly (Cell | string)[])[], headerIndex: number): void {
+  const width = rows[headerIndex]?.length;
+  if (width === undefined) return;
+  for (let r = headerIndex + 1; r < rows.length; r++) {
+    const row = rows[r] as readonly (Cell | string)[];
+    const blank = row.length === 1 && (typeof row[0] === "string" ? row[0] : (row[0] as Cell).raw) === "";
+    if (row.length !== width && !blank) {
+      throw new CsvError(`row ${r + 1} has ${row.length} cells but the header has ${width}; a quote is probably unclosed`);
+    }
+  }
+}
+
 export function parseCsv(text: string, delim: string): Row[] {
   const rows: Row[] = [];
   let cells: Cell[] = [];
@@ -78,8 +95,11 @@ export function parseCsv(text: string, delim: string): Row[] {
         value += ch;
         i++;
       }
-      // Lenient: anything between the closing quote and the delimiter is kept literally.
-      while (i < n && text[i] !== delim && text[i] !== "\n" && text[i] !== "\r") value += text[i++];
+      // Text between the closing quote and the delimiter means the quote never really closed
+      // (an earlier unclosed quote ran on to a later one), so refuse rather than swallow rows.
+      if (i < n && text[i] !== delim && text[i] !== "\n" && text[i] !== "\r") {
+        throw new CsvError(`unexpected text after the closing quote of the field starting on line ${openLine}; a quote is probably unclosed`);
+      }
     } else {
       while (i < n && text[i] !== delim && text[i] !== "\n" && text[i] !== "\r") value += text[i++];
     }

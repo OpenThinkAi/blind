@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CsvError, parseCsv, renderCell, serializeCsv, sniffDelimiter } from "../../src/engine/csv.ts";
+import { assertRowWidths, CsvError, parseCsv, renderCell, serializeCsv, sniffDelimiter } from "../../src/engine/csv.ts";
 
 const roundTrip = (text: string, delim = ",") => serializeCsv(parseCsv(text, delim), delim);
 
@@ -12,7 +12,6 @@ describe("parseCsv / serializeCsv", () => {
     ["no trailing newline", "a,b\n1,2"],
     ["quoted with delimiter, quote and newline", 'a,b\n"x, ""y""\r\nz",2\n'],
     ["empty cells and blank lines", "a,,c\n\n,,\n"],
-    ["text after a closing quote is kept", 'a,b\n"x"y,2\n'],
     ["stray quote inside an unquoted cell", 'a,b\nab"c,2\n'],
   ])("%s round-trips byte for byte", (_name, text) => {
     expect(roundTrip(text)).toBe(text);
@@ -33,6 +32,22 @@ describe("parseCsv / serializeCsv", () => {
   test("an unterminated quote is an error naming the line", () => {
     expect(() => parseCsv('a,b\n1,"open\nstill open', ",")).toThrow(CsvError);
     expect(() => parseCsv('a,b\n1,"open', ",")).toThrow(/line 2/);
+  });
+
+  test("an unclosed quote that a later quote closes is refused, not swallowed", () => {
+    const text = 'id,name\n1,"Avery\n2,"Blake"\n3,Casey\n';
+    expect(() => parseCsv(text, ",")).toThrow(/closing quote/);
+  });
+
+  test("a row whose width differs from the header is refused", () => {
+    const rows = (t: string) => parseCsv(t, ",").map((r) => r.cells);
+    expect(() => assertRowWidths(rows("a,b,c\n1,2,3\n4,5\n"), 0)).toThrow(/row 3 has 2 cells but the header has 3/);
+    expect(() => assertRowWidths(rows("a,b\n1,2,3\n"), 0)).toThrow(CsvError);
+    expect(() => assertRowWidths(rows("Title\na,b\n1,2\n"), 1)).not.toThrow();
+  });
+
+  test("a blank line between rows is still allowed", () => {
+    expect(() => assertRowWidths(parseCsv("a,b\n\n1,2\n", ",").map((r) => r.cells), 0)).not.toThrow();
   });
 
   test("tab and semicolon delimiters", () => {

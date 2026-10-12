@@ -90,7 +90,7 @@ documents ------------ engine (deterministic) ---------------+--> blinded docume
 
 | Handled | Notes |
 |---|---|
-| CSV, TSV | Delimiter, quoting and line endings kept |
+| CSV, TSV | Delimiter, quoting and line endings kept; a file with an unclosed quote or a row whose width differs from the header is refused, never truncated |
 | JSON, JSONL | Edits spliced into the original text |
 | XLSX | Cells, sheet and defined names, formulas, comments (including their legacy VML drawing, scrubbed only inside `<x:ClientData>`), metadata, pivot caches |
 | DOCX | Text across runs, tables, headers, comments, tracked changes, metadata |

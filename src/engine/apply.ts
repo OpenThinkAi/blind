@@ -1206,7 +1206,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         ...(r.metadataReplacements > 0 ? { metadataReplacements: r.metadataReplacements } : {}),
         sheets: p.plan.sheets.map((s) => ({ ...s, outputName: r.sheetNames.find((n) => n.from === s.name)?.to ?? s.name })),
         unread: r.members.filter((m) => m.kind === "other" && m.replaced !== true && !m.name.endsWith("/")).map((m) => m.name),
-        ...(pictureNote.line !== null && (opts.images ?? "replace") === "replace" ? { warnings: [pictureNote.line] } : {}),
+        ...(pictureNote.line !== null ? { warnings: [pictureNote.line] } : {}),
         changed,
       };
       outputs.push({ path: report.outputPath, bytes: changed ? r.bytes : p.input.bytes });

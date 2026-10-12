@@ -479,14 +479,14 @@ export function prepareXlsx(path: string, bytes: Uint8Array, p: XlsxPlan, env: E
     },
   };
   const hexIds: string[] = [];
-  walk(path, bytes, p, env, recorder, { hex: (v) => (hexIds.push(v), v) }, false);
+  walk(path, bytes, p, env, recorder, { hex: (v) => (hexIds.push(v), v) }, false, "keep");
   p.requests = requests;
   p.hexIds = hexIds;
   return null;
 }
 
 /** Step 3. Throws XlsxSpecError when blinded names would collide. */
-export function renderXlsx(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer, ids: HexNamer, images: ImageMode = "keep"): Rendered {
+export function renderXlsx(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer, ids: HexNamer, images: ImageMode): Rendered {
   return walk(path, bytes, p, env, pz, ids, true, images);
 }
 
@@ -502,7 +502,7 @@ function renumber(v: string, pz: Namer): string {
   return `${sign}${d.slice(0, int.length)}${frac === "" ? "" : `.${d.slice(int.length)}`}${exp}`;
 }
 
-function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer, ids: HexNamer, render: boolean, images: ImageMode = "keep"): Rendered {
+function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer, ids: HexNamer, render: boolean, images: ImageMode): Rendered {
   let entityReplacements = 0;
   let patternReplacements = 0;
   let mappedReplacements = 0;

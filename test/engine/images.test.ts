@@ -77,6 +77,7 @@ describe("images: replaced with placeholders by default (AGT-1865)", () => {
     const { res, kept } = check("book.xlsx", buildWorkbook({ extra: SHEET_IMAGES }), ["xl/media/image1.png", "xl/media/image2.jpg"]);
     expect(res.files[0]!.unread).toEqual([]);
     expect(kept.files[0]!.unread).toEqual(["xl/media/image1.png", "xl/media/image2.jpg"]);
+    expect(renderReport(kept)).toContain("warning: 2 images copied unchanged (images are not blinded): xl/media/image1.png, xl/media/image2.jpg");
   });
 
   test("a package without pictures is untouched by the setting", () => {

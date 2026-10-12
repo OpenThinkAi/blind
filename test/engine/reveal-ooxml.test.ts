@@ -238,7 +238,7 @@ const DOCX_SPEC: Spec = {
 
 /** Each unit (a paragraph's text, its instructions, a single value) as one text, and every whole value. */
 function docxText(bytes: Uint8Array): { units: string[]; wholes: string[] } {
-  const plan = planDocx(bytes);
+  const plan = planDocx(bytes, "keep");
   return {
     units: plan.units.map((u) => u.items.map((i) => ("node" in i ? `${i.node.role}:${i.node.value}` : i.sep)).join("")),
     wholes: plan.wholes.map((n) => n.value),

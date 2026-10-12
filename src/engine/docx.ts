@@ -337,9 +337,10 @@ export const thumbnailReason = (name: string): string => `${name} is a picture o
 /**
  * Read the package and collect its text units. Throws DocxError when the package
  * must not be written. Matching waits for scanDocx, once every column in the
- * corpus is decided.
+ * corpus is decided. `images` is required: apply says whether pictures are replaced or kept;
+ * profile, reveal and bench only read, so they pass "keep".
  */
-export function planDocx(bytes: Uint8Array, images: ImageMode = "keep"): DocxPlan {
+export function planDocx(bytes: Uint8Array, images: ImageMode): DocxPlan {
   let members;
   try {
     members = readOoxml(bytes);

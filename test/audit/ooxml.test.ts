@@ -294,7 +294,7 @@ describe("Office structural IDs: template ids are structure, linking ids are rew
     expect(new Set(attr(doc, "w14:textId")).size).toBe(1);
     expect(attr(doc, "wp14:anchorId")).toEqual(attr(doc, "wp14:editId"));
     // The package still reads as a DOCX.
-    expect(() => planDocx(bytes)).not.toThrow();
+    expect(() => planDocx(bytes, "keep")).not.toThrow();
     // No leak, no candidate: the theme and style display names ("Office Theme", "Default Paragraph Font") are structure.
     const r = audit([file("memo.docx", bytes)], map);
     expect(findings(r)).toEqual([]);

@@ -396,6 +396,7 @@ function xlsxDamage(f: ScoredFile, matcher: OracleMatcher, items: DamageItem[], 
   for (const m of [...wb.members, ...wa.members]) {
     if (m.kind === "error") unscored.push({ file: report.path, part: m.name, reason: `cannot be read (${m.error}); its damage was not scored` });
   }
+  // Sheets are paired by position; with a different count nothing below can be paired, so stop here.
   if (wa.sheets.length !== wb.sheets.length) {
     items.push({ kind: "structure", file: report.path, where: "sheets", masked: "", detail: `${wb.sheets.length} worksheets in, ${wa.sheets.length} out` });
     return null;
@@ -417,6 +418,7 @@ function xlsxDamage(f: ScoredFile, matcher: OracleMatcher, items: DamageItem[], 
       items.push({ kind: "structure", file: report.path, where: `${label} rows`, masked: "", detail: `${b.length} rows in, ${a.length} out` });
       return;
     }
+    // `sheet.name` is the input's (pre-blinding) name, which is what the report's sheets and column rules carry.
     const headerRow = report.sheets?.find((s) => s.name === sheet.name)?.headerRow ?? 1;
     const allowed = new Set(report.columns.filter((c) => c.sheet === sheet.name && c.treatment !== null && ALLOWED.has(c.treatment)).map((c) => c.index));
     b.forEach((row, r) => {

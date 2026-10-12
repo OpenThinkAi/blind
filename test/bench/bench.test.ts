@@ -8,6 +8,7 @@ import { join } from "node:path";
 import type { AuditReport, TreeEntry } from "../../src/audit/mechanical.ts";
 import { type BenchReport, REPORT_FILE, runBench } from "../../src/bench/command.ts";
 import { OracleError, OracleMatcher, parseOracle, scanLeaks, scoreDamage, scoreHonesty } from "../../src/bench/score.ts";
+import { buildWorkbook } from "../../src/bench/office.ts";
 import { generateKit, type Kit, type KitOptions, writeKit } from "../../src/bench/synth.ts";
 import type { FileReport } from "../../src/engine/apply.ts";
 import type { Spec } from "../../src/schema.ts";
@@ -310,6 +311,54 @@ describe("scoring", () => {
     ]);
     const shorter = scoreDamage([{ report: json, input, output: enc('[{"who": "Person_A"}]') }], oracle, m);
     expect(shorter.damage.map((d) => d.kind)).toEqual(["structure"]);
+  });
+
+  test("damage in XLSX: kept cells per sheet header and rules, sheet and defined names by position, sheet count", () => {
+    const wb = (sheets: { name: string; rows: (string | number)[][] }[], names: string[]) =>
+      buildWorkbook({ sheets, orphans: [], definedNames: names.map((n) => ({ name: n, formula: "1" })), core: { title: "t", creator: "c", modifiedBy: "c" } });
+    const xlsx = report({
+      path: "a.xlsx",
+      outputPath: "a.xlsx",
+      format: "xlsx",
+      encoding: undefined,
+      delimiter: undefined,
+      headerRow: undefined,
+      sheets: [
+        { name: "Sam", outputName: "Person_A", headerRow: 2, noHeader: false },
+        { name: "Plain", outputName: "Value_1", headerRow: 1, noHeader: false },
+      ],
+      columns: [
+        { index: 0, header: "Who", sheet: "Sam", class: "person", treatment: "blind", outcome: "blinded", changed: 2, flagged: 0 },
+        { index: 1, header: "Note", sheet: "Sam", class: "vocabulary", treatment: "keep", outcome: "kept", changed: 0, flagged: 0 },
+        { index: 0, header: "Code", sheet: "Plain", class: "vocabulary", treatment: "keep", outcome: "kept", changed: 0, flagged: 0 },
+      ],
+    });
+    // Sheet "Sam" has a title row above its header (row 2), so its Who rule starts at row 3.
+    const input = wb(
+      [
+        { name: "Sam", rows: [["Team list", ""], ["Who", "Note"], ["Wrexley", "fine"], ["Sam", "ask Wrexley"]] },
+        { name: "Plain", rows: [["Code"], ["x1"]] },
+      ],
+      ["Sam_Total", "Plain_Total"],
+    );
+    const output = wb(
+      [
+        { name: "Person_A", rows: [["Team list", ""], ["Person_B", "Note"], ["Person_B", "FINE"], ["Person_C", "ask Person_B"]] },
+        { name: "Value_1", rows: [["Code"], ["x2"]] },
+      ],
+      ["Person_A_Total", "Value_1_Total"],
+    );
+    const { damage, unscored } = scoreDamage([{ report: xlsx, input, output }], oracle, m);
+    expect(unscored).toEqual([]);
+    expect(damage.map((d) => `${d.kind} ${d.where} ${d.masked}`)).toEqual([
+      "rename defined name 2 Pl***11",
+      "cell sheet 1, row 2, column 1 W***3",
+      "cell sheet 1, row 3, column 2 fi***4",
+      "rename sheet 2 name Pl***5",
+      "cell sheet 2, row 2, column 1 x***2",
+    ]);
+    const fewer = scoreDamage([{ report: xlsx, input, output: wb([{ name: "Person_A", rows: [["Who"]] }], []) }], oracle, m);
+    expect(fewer.damage.map((d) => `${d.kind} ${d.where}`)).toEqual(["structure sheets"]);
   });
 
   test("honesty: only files the audit called clean that leak", () => {

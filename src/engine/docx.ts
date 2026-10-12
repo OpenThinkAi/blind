@@ -287,8 +287,9 @@ function hasCharacterData(xml: string): boolean {
   return /[^ \t\r\n﻿]/.test(stripped);
 }
 
-const IMAGE = /\.(png|jpe?g|gif|bmp|tiff?|emf|wmf|svg|ico|webp)$/i;
-const FONT = /\.(odttf|ttf|otf|fntdata)$/i;
+/** Package members copied unchanged and reported: images (never blinded) and embedded fonts. Any other non-XML member stops the package. */
+export const IMAGE = /\.(png|jpe?g|gif|bmp|tiff?|emf|wmf|svg|ico|webp)$/i;
+export const FONT = /\.(odttf|ttf|otf|fntdata)$/i;
 
 /**
  * Read the package and collect its text units. Throws DocxError when the package

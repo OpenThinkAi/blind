@@ -377,7 +377,9 @@ is an error). The column table above applies to every cell, with these workbook 
   values; one found there stops the
   workbook (listed and not written, exit 1), naming the part and element but never the value. So
   does a member that cannot be parsed, a cell without a reference, and a zip that is not a workbook.
-  Members that are not XML (images, printer settings) are copied unread and listed in the report.
+  Members that are not XML are copied unread and listed in the report when they are images, fonts
+  or printer settings; any other (an embedded file or workbook, a macro, an ActiveX part) stops the
+  workbook (listed and not written, exit 1), as in a DOCX.
 
 **Office structural IDs.** Word and Excel write IDs of their own into a package. They name no
 person, but two kinds are treated differently:

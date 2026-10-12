@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { CONTEXT_KINDS, type ContextTriggerSpec } from "./engine/context.ts";
 import type { EntityClassName, PatternName, Spec, Treatment } from "./schema.ts";
 
 /** The policy file `blind init` writes and every later command reads. */
@@ -80,7 +81,7 @@ export interface Policy {
   /** `[[columns]]`, in file order. */
   columns: ColumnPolicyRule[];
   /** `[context]`: redaction of the value after a keyword such as "gate code" or "password" (engine/context.ts). */
-  context: { enabled: boolean; triggers: string[] };
+  context: { enabled: boolean; triggers: ContextTriggerSpec[] };
 }
 
 /** The spec with blind.toml's `[patterns]` switches laid over its own: the patterns apply and audit use. */
@@ -190,7 +191,10 @@ export function renderPolicy(p: Policy): string {
     "# gate code, password / pw, combo, routing, account / acct, card, CVV, policy #. Secrets that no name or",
     "# pattern finder targets. enabled = false turns it off. triggers adds words: the next token after each is redacted.",
     p.context.enabled ? "# enabled = true" : "enabled = false",
-    p.context.triggers.length === 0 ? '# triggers = ["locker code"]' : `triggers = ${list(p.context.triggers)}`,
+    "# A trigger may name the kind of value it expects: { word = \"license\", kind = \"number\" } (secret | number | date).",
+    p.context.triggers.length === 0
+      ? '# triggers = ["locker code", { word = "license", kind = "number" }, { word = "born", kind = "date" }]'
+      : `triggers = [${p.context.triggers.map((t) => (typeof t === "string" ? str(t) : `{ word = ${str(t.word)}, kind = ${str(t.kind)} }`)).join(", ")}]`,
     "",
     "# Column rules, applied by `blind plan` before the analyst and the heuristic; the first match wins.",
     "# header: header globs (* and ?, any case); a JSON key matches by its name. file: optional path glob",
@@ -392,8 +396,21 @@ function readContext(r: Reader, doc: Table): Policy["context"] {
   const t = r.table(doc, "context", "context", ["enabled", "triggers"]);
   if (t.enabled !== undefined) out.enabled = r.boolean(t, "enabled", "context.enabled");
   if (t.triggers !== undefined) {
-    out.triggers = r.strings(t, "triggers", "context.triggers");
-    if (out.triggers.some((w) => w.trim() === "")) r.fail("context.triggers", "an array of non-blank words or phrases", out.triggers);
+    const v = t.triggers;
+    const expected = 'an array of non-blank words or phrases, or { word = "...", kind = "secret" | "number" | "date" } tables';
+    if (!Array.isArray(v)) r.fail("context.triggers", expected, v);
+    out.triggers = (v as unknown[]).map((x, i): ContextTriggerSpec => {
+      const path = `context.triggers[${i}]`;
+      if (typeof x === "string") {
+        if (x.trim() === "") r.fail(path, expected, x);
+        return x;
+      }
+      if (!isTable(x)) r.fail(path, expected, x);
+      r.noExtra(x, path, ["word", "kind"]);
+      const word = r.string(x, "word", `${path}.word`);
+      if (word.trim() === "") r.fail(`${path}.word`, "a non-blank word or phrase", word);
+      return { word, kind: r.oneOf(x, "kind", `${path}.kind`, CONTEXT_KINDS) };
+    });
   }
   return out;
 }

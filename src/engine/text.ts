@@ -24,7 +24,7 @@
 import { PSEUDO_CLASSES, phoneDigits, type PseudoClass, type RealPseudoClass } from "./canonical.ts";
 import { type Entities, type PatternName, type Patterns, patternOn } from "../schema.ts";
 import { inDateContext, isDateWord } from "./datecontext.ts";
-import { type ContextOptions, findContextSpans } from "./context.ts";
+import { type CellRule, cellValueSpan, type ContextOptions, findContextSpans } from "./context.ts";
 import { findSpelledDigits, findSpokenEmails } from "./spelled.ts";
 
 export interface Span {
@@ -384,4 +384,16 @@ export function findSpans(
   const p = shapeSpans(text, patterns, keep, context);
   const e = matcher.find(text, p);
   return [...p, ...e].sort((a, b) => a.start - b.start);
+}
+
+/**
+ * `spans` (found in `text`) with the value of a table cell redacted: `rule` is the label in the
+ * neighbouring cell that names it (context.ts, pairCells). Whatever else was found inside the value
+ * is replaced by the placeholder; spans elsewhere in the text stay.
+ */
+export function withCellRedaction(spans: readonly Span[], text: string, rule: CellRule): Span[] {
+  const v = cellValueSpan(text, rule);
+  if (v === null) return [...spans];
+  const redact: Span = { start: v[0], end: v[1], cls: "redact", value: text.slice(v[0], v[1]), source: "pattern" };
+  return [...spans.filter((s) => s.end <= v[0] || s.start >= v[1]), redact].sort((a, b) => a.start - b.start);
 }

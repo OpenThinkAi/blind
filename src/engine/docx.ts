@@ -47,7 +47,8 @@ import { accountSegments } from "../formats/paths.ts";
 import type { PseudoClass } from "./canonical.ts";
 import { type HexNamer, rewriteOfficeId } from "./officeid.ts";
 import type { Pseudonymizer } from "./pseudonym.ts";
-import type { ExtraForm, Span } from "./text.ts";
+import { type CellRule, type ContextOptions, pairCells } from "./context.ts";
+import { type ExtraForm, type Span, withCellRedaction } from "./text.ts";
 import { customPartRefusal } from "./customxml.ts";
 import { refuseUnrewritten } from "./unrewritten.ts";
 
@@ -66,6 +67,8 @@ export interface DocxPlan {
   wholes: Node[];
   /** Paragraph text, field instructions and single values, in document order. */
   units: Unit[];
+  /** Every table (WordprocessingML or DrawingML), as rows of cells, for label and value pairing. */
+  tables: TableCell[][][];
   /** Host matches kept because they are under a keep-list domain. */
   keptHosts: number;
   /** The main document part (the package's officeDocument relationship), when it names one. */
@@ -132,6 +135,13 @@ interface Unit {
   items: Item[];
   /** Set on a paragraph's run text (not its field instructions): the member it is in. */
   paragraph?: string;
+  /** Set by scanDocx on a paragraph in a table cell that holds the value of a label in another cell (context.ts). */
+  cell?: CellRule;
+}
+
+/** A table cell: the paragraphs that sit directly in it (a nested table's are in its own cells). */
+interface TableCell {
+  units: Unit[];
 }
 
 const W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
@@ -330,7 +340,7 @@ export function planDocx(bytes: Uint8Array): DocxPlan {
   } catch (e) {
     throw new DocxError(`not a readable DOCX package (${(e as Error).message})`);
   }
-  const plan: DocxPlan = { bytes, nodes: new Map(), kinds: new Map(), edits: [], wholes: [], units: [], keptHosts: 0, requests: [], values: [], hexIds: [], accounts: [], warnings: [] };
+  const plan: DocxPlan = { bytes, nodes: new Map(), kinds: new Map(), edits: [], wholes: [], units: [], tables: [], keptHosts: 0, requests: [], values: [], hexIds: [], accounts: [], warnings: [] };
 
   const images: string[] = [];
   for (const m of members) {
@@ -369,6 +379,13 @@ export function planDocx(bytes: Uint8Array): DocxPlan {
 
     // Per paragraph: its run text and its field instructions, matched separately.
     const paragraphs = new Map<Frame, { text: Unit; instr: Unit }>();
+    const tableRows = new Map<Frame, TableCell[][]>();
+    const rowCells = new Map<Frame, TableCell[]>();
+    const cellOfFrame = new Map<Frame, TableCell>();
+    const nearest = (parents: readonly Frame[], name: string): Frame | undefined => {
+      for (let i = parents.length - 1; i >= 0; i--) if (localName((parents[i] as Frame).name) === name) return parents[i];
+      return undefined;
+    };
     const paragraphOf = (parents: readonly Frame[]) => {
       for (let i = parents.length - 1; i >= 0; i--) {
         const f = parents[i] as Frame;
@@ -378,6 +395,8 @@ export function planDocx(bytes: Uint8Array): DocxPlan {
           p = { text: { items: [], paragraph: m.name }, instr: { items: [] } };
           paragraphs.set(f, p);
           units.push(p.text, p.instr);
+          const tc = nearest(parents.slice(0, i), "tc");
+          if (tc !== undefined) cellOfFrame.get(tc)?.units.push(p.text);
         }
         return p;
       }
@@ -389,6 +408,26 @@ export function planDocx(bytes: Uint8Array): DocxPlan {
       return hasAncestor(parents, INSERTED) ? "ins" : "plain";
     };
     const visit = (el: Frame, parents: readonly Frame[]) => {
+      const tag = localName(el.name);
+      if (tag === "tbl") {
+        const rows: TableCell[][] = [];
+        tableRows.set(el, rows);
+        plan.tables.push(rows);
+      } else if (tag === "tr") {
+        const rows = tableRows.get(nearest(parents, "tbl") as Frame);
+        if (rows !== undefined) {
+          const cells: TableCell[] = [];
+          rowCells.set(el, cells);
+          rows.push(cells);
+        }
+      } else if (tag === "tc") {
+        const cells = rowCells.get(nearest(parents, "tr") as Frame);
+        if (cells !== undefined) {
+          const cell: TableCell = { units: [] };
+          cellOfFrame.set(el, cell);
+          cells.push(cell);
+        }
+      }
       const sep = SEPARATORS.get(localName(el.name));
       if (sep === undefined) return;
       const p = paragraphOf(parents);
@@ -498,8 +537,29 @@ export function docxWholes(plan: DocxPlan): ExtraForm[] {
  * Match every unit and record the edits on its nodes. `spanner` finds the spec's patterns, its
  * entities and the corpus's recurring values in a string (TextScanner.free).
  */
-export function scanDocx(plan: DocxPlan, spanner: (s: string) => Span[]): void {
-  for (const unit of plan.units) planUnit(unit, spanner, plan);
+export function scanDocx(plan: DocxPlan, spanner: (s: string) => Span[], context?: ContextOptions): void {
+  // A table cell that holds the value of a label in another cell ("Owner DOB" | "01/02/1960").
+  if (context !== undefined) {
+    for (const rows of plan.tables) {
+      const grid = rows.map((row) => row.map((cell) => cell.units.map(unitText).join("\n")));
+      for (const m of pairCells(grid, context, 0)) for (const u of (rows[m.row]?.[m.col] as TableCell).units) u.cell ??= m.rule;
+    }
+  }
+  for (const unit of plan.units) {
+    const rule = unit.cell;
+    planUnit(unit, rule === undefined ? spanner : (t) => withCellRedaction(spanner(t), t, rule), plan);
+  }
+}
+
+/** The accepted text of a unit (deletions left out). */
+function unitText(unit: Unit): string {
+  let text = "";
+  for (const item of unit.items) {
+    if ("node" in item) {
+      if (item.node.role !== "del") text += item.node.value;
+    } else if (item.role !== "del") text += item.sep;
+  }
+  return text;
 }
 
 /**

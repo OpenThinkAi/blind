@@ -338,7 +338,8 @@ how the form is written:
 
 **Context keywords.** Free text is also searched for secrets said after a keyword (`gate code
 4471`, `pw: hunter2`, `acct ending 0042`, `DOB: 04/12/1980`): the value becomes `REDACTED` and the
-keyword stays. It is not a pattern and not in the spec; `[context]` in `blind.toml` switches it and
+keyword stays; the value may follow a few ordinary words (`combo changed to 47-11-09`) or sit in the
+next table cell (`| Owner DOB | 01/02/1960 |`). It is not a pattern and not in the spec; `[context]` in `blind.toml` switches it and
 adds keywords ([policy.md](policy.md#context)). A redaction is written the same way a `redact`
 column is, and is not recorded in the map.
 

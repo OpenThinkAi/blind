@@ -5,6 +5,7 @@
 // policy calls people sensitive. No model, no other entities, no questions.
 
 import type { Policy, SensitiveClass } from "../policy.ts";
+import { isHonorificOrRole, isOnlyHonorificsOrRoles } from "../engine/honorifics.ts";
 import { DICTIONARY } from "../profile/words.ts";
 import type { ColumnRule, DetectorName, Entity, Location, PatternName, Profile, Spec, ValueStats } from "../schema.ts";
 
@@ -55,7 +56,8 @@ const fold = (s: string): string => s.normalize("NFKC").toLowerCase().replace(/\
 
 /**
  * One person entity per distinct transcript speaker (folded), sorted, leaving out keep-list terms.
- * Parts are the name's capitalised words of two or more letters that are not dictionary words.
+ * Parts are the name's capitalised words of two or more letters that are not dictionary words, honorifics or
+ * roles; a speaker made only of those ("Front Desk") is no person.
  */
 export function speakerEntities(profile: Profile, keep: readonly string[] = []): Entity[] {
   const kept = new Set(keep.map(fold));
@@ -64,14 +66,14 @@ export function speakerEntities(profile: Profile, keep: readonly string[] = []):
     for (const raw of t.speakers) {
       const name = raw.trim().replace(/\s+/g, " ");
       const key = fold(name);
-      if (name === "" || name.endsWith("…") || kept.has(key)) continue;
+      if (name === "" || name.endsWith("…") || kept.has(key) || isOnlyHonorificsOrRoles(name)) continue;
       const prior = byKey.get(key);
       if (prior === undefined || name < prior) byKey.set(key, name);
     }
   }
   return [...byKey.values()].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).map((canonical) => {
     const words = /\p{N}/u.test(canonical) ? [] : canonical.split(/[\s,]+/).map((w) => w.replace(/\.$/, ""));
-    const parts = [...new Set(words.filter((w) => /^\p{Lu}/u.test(w) && (w.match(/\p{L}/gu) ?? []).length >= 2 && !DICTIONARY.has(w.toLowerCase()) && fold(w) !== fold(canonical)))];
+    const parts = [...new Set(words.filter((w) => /^\p{Lu}/u.test(w) && (w.match(/\p{L}/gu) ?? []).length >= 2 && !DICTIONARY.has(w.toLowerCase()) && !isHonorificOrRole(w) && fold(w) !== fold(canonical)))];
     return { canonical, aliases: [], parts };
   });
 }

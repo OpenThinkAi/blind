@@ -21,6 +21,7 @@
 
 import { DICTIONARY } from "../profile/words.ts";
 import { isDateWord } from "./datecontext.ts";
+import { isOnlyHonorificsOrRoles } from "./honorifics.ts";
 import { nameParts, recurrenceExclusion } from "./recur.ts";
 import type { ExtraForm, Span } from "./text.ts";
 
@@ -334,10 +335,10 @@ export function speakersOf(entries: readonly Entry[]): string[] {
   return [...new Set(entries.flatMap((e) => (e.speaker === null ? [] : [e.speaker])))];
 }
 
-/** The keep test for speaker tags: keep-list terms and spec vocabulary forms, folded. */
+/** The keep test for speaker tags: keep-list terms, spec vocabulary forms (folded), and roles like "Front Desk" (AGT-1823). */
 export function keptSpeakers(keepTerms: readonly string[], vocabulary: readonly string[]): (name: string) => boolean {
   const kept = new Set([...keepTerms, ...vocabulary].map(fold));
-  return (name) => kept.has(fold(name));
+  return (name) => kept.has(fold(name)) || isOnlyHonorificsOrRoles(name);
 }
 
 /**

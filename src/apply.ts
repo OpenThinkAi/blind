@@ -207,6 +207,9 @@ export function renderReport(result: ApplyResult): string {
     if ((f.proseNames ?? 0) > 0) {
       lines.push(`  ${f.proseNames} name${f.proseNames === 1 ? "" : "s"} of people found only in prose replaced`);
     }
+    if ((f.joinedNames ?? 0) > 0) {
+      lines.push(`  ${f.joinedNames} name${f.joinedNames === 1 ? "" : "s"} replaced whole as a different person (a given name stood right before a known surname)`);
+    }
     if (f.transcript !== undefined) {
       const t = f.transcript;
       const how = t.kind === "vtt" ? "WebVTT" : t.kind === "srt" ? "SRT" : "timestamped speaker paragraphs";

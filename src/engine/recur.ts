@@ -42,7 +42,7 @@ import { identityOf, type PersonAliases } from "./identity.ts";
 import { looksLikePersonName } from "./prose.ts";
 import type { BlindMap } from "./map.ts";
 import type { ContextOptions } from "./context.ts";
-import { EntityMatcher, type ExtraForm, findPatternSpans, findSpans, type Span } from "./text.ts";
+import { EntityMatcher, type ExtraForm, findPatternSpans, findSpans, type JoinOptions, type Span } from "./text.ts";
 
 /** A recurring value needs at least this many letters and digits; the audit's MIN_LEAK_LENGTH agrees. */
 export const MIN_RECUR_LENGTH = 3;
@@ -241,9 +241,35 @@ export function personPartForms(values: Iterable<ExtraForm>, map: BlindMap | und
   for (const v of list) if (v.cls === "person") persons.add(identityOf(opts.aliases, canonicalize("person", v.value)));
   for (const e of map?.entries ?? []) if (e.kind === "person") persons.add(identityOf(opts.aliases, canonicalize("person", e.value)));
   const clsOf = (value: string): PseudoClass => (persons.has(identityOf(opts.aliases, canonicalize("person", value))) ? "person" : "value");
-  return nameParts(personValues(list, map), opts.speakers ?? [], vocabulary, keepForms(opts.keep), opts.aliases)
+  const people = personValues(list, map);
+  const surnames = surnameSet(people);
+  return nameParts(people, opts.speakers ?? [], vocabulary, keepForms(opts.keep), opts.aliases)
     .filter((p) => p.exclusion === null)
-    .map((p) => ({ cls: p.shared ? "person" : clsOf(p.value), value: p.value, form: p.form, ...(isDateWord(p.form) ? { datePart: true } : {}) }));
+    .map((p) => ({
+      cls: p.shared ? "person" : clsOf(p.value),
+      value: p.value,
+      form: p.form,
+      ...(isDateWord(p.form) ? { datePart: true } : {}),
+      ...(surnames.has(fold(p.form)) ? { surname: true } : {}),
+    }));
+}
+
+/**
+ * The surnames of `people`, folded: the last word of each full name as canonical form gives it
+ * ("Dana Quillfeather" and "Quillfeather, Dana" both end in Quillfeather), and the pieces of a
+ * hyphenated one. A one-word name has none. A given name right before one of these makes another
+ * person's name (text.ts joinGivenNames, AGT-1854).
+ */
+function surnameSet(people: readonly string[]): Set<string> {
+  const out = new Set<string>();
+  for (const v of people) {
+    const w = canonicalize("person", v).match(NAME_WORD_RE) ?? [];
+    if (w.length < 2) continue;
+    const last = w[w.length - 1] as string;
+    out.add(fold(last));
+    for (const piece of last.split("-")) if (piece !== "") out.add(fold(piece));
+  }
+  return out;
 }
 
 /**
@@ -274,9 +300,11 @@ export class TextScanner {
     forms: readonly ExtraForm[],
     /** Context-keyword redaction (context.ts); absent = off. */
     private readonly context?: ContextOptions,
+    /** The policy keep terms and spec vocabulary a joined given name may not be (text.ts joinGivenNames), folded. */
+    names: JoinOptions = {},
   ) {
     this.spec = new EntityMatcher(entities);
-    this.all = new EntityMatcher(entities, forms);
+    this.all = new EntityMatcher(entities, forms, names);
   }
 
   /**

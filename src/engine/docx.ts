@@ -97,6 +97,7 @@ export interface DocxRender {
   speakerReplacements: number;
   /** People named only in prose, or parts of their names (see prose.ts). */
   proseReplacements: number;
+  joinedReplacements: number;
   keptHosts: number;
   /** Identity metadata values replaced as a whole. */
   metadataReplacements: number;
@@ -127,6 +128,8 @@ interface Edit {
   value: string;
   /** `account`: an account name in a path (src/formats/paths.ts). */
   source: Span["source"] | "account";
+  /** Span.joined: a given name joined to a known surname. */
+  joined?: boolean;
 }
 
 type Item = { node: Node } | { sep: string; role: Role };
@@ -607,7 +610,7 @@ function planUnit(unit: Unit, spanner: (s: string) => Span[], plan: DocxPlan): v
         if (span.source === "pattern") plan.keptHosts++;
         continue;
       }
-      const edit: Edit = { cls: span.cls, value: span.value, source: span.source };
+      const edit: Edit = { cls: span.cls, value: span.value, source: span.source, ...(span.joined === true ? { joined: true } : {}) };
       plan.edits.push(edit);
       plan.requests.push({ cls: span.cls, value: span.value });
       // A match in text both readings share that an earlier match already removed gets no second
@@ -675,6 +678,7 @@ export function renderDocx(plan: DocxPlan, pz: Pseudonymizer, ids: HexNamer): Do
     removedReplacements: plan.edits.filter((e) => e.source === "removed").length,
     speakerReplacements: plan.edits.filter((e) => e.source === "speaker").length,
     proseReplacements: plan.edits.filter((e) => e.source === "prose").length,
+    joinedReplacements: plan.edits.filter((e) => e.joined === true).length,
     keptHosts: plan.keptHosts,
     metadataReplacements,
   };

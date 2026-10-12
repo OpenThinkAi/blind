@@ -1,12 +1,36 @@
 // Byte-faithful decoding: a file is decoded to a string and later re-encoded
 // the same way, so untouched text round-trips to the original bytes. UTF-8
 // (with or without BOM) and BOM-marked UTF-16 are decoded as such; anything
-// else is decoded as Latin-1, which maps every byte to one code unit and back.
+// else is read as windows-1252 (AGT-1854): 0x80-0x9F become their cp1252 characters (en/em dash,
+// curly quotes, ellipsis), so the scanners see punctuation, not C1 controls. Every other byte keeps
+// its Latin-1 code unit, and the five bytes cp1252 leaves undefined (0x81, 0x8D, 0x8F, 0x90, 0x9D)
+// stay C1 controls, so the mapping is a bijection on bytes: one byte is one code unit, offsets in
+// the text are offsets in the bytes, and untouched text re-encodes to the original bytes.
 
 export type Encoding = "utf8" | "utf8-bom" | "utf16le" | "utf16be" | "latin1";
 
 export class EncodingError extends Error {
   override name = "EncodingError";
+}
+
+// cp1252 characters of bytes 0x80-0x9F; null where cp1252 defines none.
+const CP1252_HIGH: readonly (number | null)[] = [
+  0x20ac, null, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021, 0x02c6, 0x2030, 0x0160, 0x2039, 0x0152, null, 0x017d, null,
+  null, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014, 0x02dc, 0x2122, 0x0161, 0x203a, 0x0153, null, 0x017e, 0x0178,
+];
+const FROM_CP1252 = new Map<number, number>();
+CP1252_HIGH.forEach((cp, i) => {
+  if (cp !== null) FROM_CP1252.set(cp, 0x80 + i);
+});
+
+function latin1View(b: Buffer): string {
+  let out = b.toString("latin1");
+  if (!/[\x80-\x9f]/.test(out)) return out;
+  out = out.replace(/[\x80-\x9f]/g, (c) => {
+    const cp = CP1252_HIGH[c.charCodeAt(0) - 0x80];
+    return cp === null || cp === undefined ? c : String.fromCharCode(cp);
+  });
+  return out;
 }
 
 export interface Decoded {
@@ -24,7 +48,7 @@ export function decode(bytes: Uint8Array): Decoded {
   try {
     return { encoding: "utf8", text: new TextDecoder("utf-8", { fatal: true }).decode(b) };
   } catch {
-    return { encoding: "latin1", text: b.toString("latin1") };
+    return { encoding: "latin1", text: latin1View(b) };
   }
 }
 
@@ -56,11 +80,16 @@ export function encode(text: string, encoding: Encoding): Uint8Array {
     case "utf16be":
       return Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from(text, "utf16le").swap16()]);
     case "latin1": {
-      // Replacements are ASCII, so every code unit stays a single byte.
+      // Replacements are ASCII, so every code unit stays a single byte; the cp1252 characters decode put
+      // in place of 0x80-0x9F go back to their bytes.
+      const bytes = Buffer.alloc(text.length);
       for (let i = 0; i < text.length; i++) {
-        if (text.charCodeAt(i) > 0xff) throw new EncodingError("replacement does not fit the file's 8-bit encoding");
+        const c = text.charCodeAt(i);
+        const b = c <= 0xff ? c : FROM_CP1252.get(c);
+        if (b === undefined) throw new EncodingError("replacement does not fit the file's 8-bit encoding");
+        bytes[i] = b;
       }
-      return Buffer.from(text, "latin1");
+      return bytes;
     }
   }
 }

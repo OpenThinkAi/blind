@@ -99,7 +99,7 @@ describe("recurrence rules", () => {
       { cls: "org", value: "Brightwater Mills, Inc.", form: "brightwater mills" },
       // A person's name parts recur on their own, with the person's value (AGT-1803).
       { cls: "person", value: "Quill, Avery", form: "Avery" },
-      { cls: "person", value: "Quill, Avery", form: "Quill" },
+      { cls: "person", value: "Quill, Avery", form: "Quill", surname: true },
       { cls: "person", value: "Quill, Avery", form: "Quill, Avery" },
       { cls: "person", value: "Quill, Avery", form: "avery quill" },
     ]);

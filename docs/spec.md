@@ -303,6 +303,16 @@ dotted initial right before or after such a span that is the initial of another 
 person's name is taken in too (`Quill A.` is one span). Two different people (`Avery, Bea`), a
 repeated word (`Quill Quill`) and a sentence break (`Avery. Quill`) are not joined.
 
+**A given name before a known surname.** A surname that recurs alone (`Quillfeather`, from the
+column person `Dana Quillfeather`) with a capitalised word right before it, on the same line and
+separated by spaces only, is a different person's full name: `Sam Quillfeather (sister)` is
+replaced whole, as a new person with a pseudonym of its own, never `Dana Quillfeather`'s, so the
+given name does not survive. A name particle between them stays inside the span (`Ann O' Quillfeather`;
+particles: `O'`, `Ó`, `Ní`, `Mac`, `Mc`, `de`, `del`, `van`, `von`, `bin`, `al-`). The word must not be
+a dictionary word, honorific or role word, month or weekday, keep term or vocabulary form, and must
+not already be part of another match. The apply report counts these per file (`names replaced whole
+as a different person`; `joinedNames` in the JSON report).
+
 **Titles and initials.** A person's canonical form leaves out leading honorifics and role words
 (`Dr`, `Mrs`, `Nurse`, ...) when two or more words are left, and the dot of an initial: `Dr. Avery
 Quill`, `Avery Quill` and `Quill, Avery` are one person, as are `Dr. A. Quill` and `A Quill`. Two
@@ -594,7 +604,9 @@ person, but two kinds are treated differently:
   GUIDs), and `val` on `w:tmpl` (a list template's code).
 
 **Output.** Delimiter, quoting, line endings and encoding (UTF-8 with or without BOM, UTF-16 with
-BOM, otherwise 8-bit bytes) are preserved, and a file with nothing to replace is copied byte for
+BOM, otherwise 8-bit bytes) are preserved (8-bit text is scanned as windows-1252, so the dashes, curly
+quotes and ellipsis of bytes 0x80-0x9F count as punctuation; the five bytes cp1252 leaves undefined
+are read as Latin-1; untouched bytes are written back exactly, and replacements are ASCII), and a file with nothing to replace is copied byte for
 byte. The reversal map goes to `.blind/map.json`, or to `--map-out <path>`, created with mode 0600.
 It may not sit inside the output or an input. An existing map at that path is reused, so earlier
 pseudonyms stay the same.

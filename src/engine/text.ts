@@ -36,6 +36,8 @@ import { inDateContext, isDateWord } from "./datecontext.ts";
 import { type CellRule, cellValueSpan, type ContextOptions, findContextSpans } from "./context.ts";
 import { findSecretSpans, type SecretCarry, type SecretOptions, type SecretSpan } from "./secret.ts";
 import { findSpelledDigits, findSpokenEmails } from "./spelled.ts";
+import { DICTIONARY } from "./words.ts";
+import { isHonorificOrRole } from "./honorifics.ts";
 
 export interface Span {
   start: number;
@@ -57,6 +59,13 @@ export interface Span {
    * `removed`: a value of a dropped or redacted column, found again here (AGT-1835).
    */
   source: "pattern" | "entity" | "map" | "speaker" | "prose" | "removed";
+  /**
+   * A known person's surname that a capitalised given name stood right before: the span covers both
+   * and is a new person (joinGivenNames, AGT-1854). Counted in the report.
+   */
+  joined?: true;
+  /** Internal to find(): the span is a lone surname part of a known person. Never present in its result. */
+  surname?: true;
 }
 
 /** Code-unit order, never locale order. */
@@ -211,6 +220,8 @@ interface Form {
   datePart: boolean;
   /** Leading words matched but not replaced (ExtraForm.lead). */
   lead: number;
+  /** A surname part of a known person (ExtraForm.surname). */
+  surname: boolean;
 }
 
 const WORDCHAR_RE = /[\p{L}\p{N}]/u;
@@ -242,6 +253,17 @@ export interface ExtraForm {
    * titled form resolves to one person (identity.ts). The span covers the words after them.
    */
   lead?: number;
+  /**
+   * A surname part of a known person (recur.ts personPartForms): a capitalised given name right
+   * before it makes a different person's full name, not the known person's lone surname (AGT-1854).
+   */
+  surname?: boolean;
+}
+
+/** What a joined given name may not be: the policy's keep terms and the spec's vocabulary forms, folded. */
+export interface JoinOptions {
+  keep?: ReadonlySet<string>;
+  vocabulary?: ReadonlySet<string>;
 }
 
 /** An index of every entity form in the spec, ready to scan text with. */
@@ -254,9 +276,9 @@ export class EntityMatcher {
    * same case rules, give spans with source `map`, and rank after every spec entity class when
    * lengths tie. Of two extras with the same class and form, the first is kept: pass them sorted.
    */
-  constructor(entities: Entities, extra: readonly ExtraForm[] = []) {
+  constructor(entities: Entities, extra: readonly ExtraForm[] = [], private readonly joinOpts: JoinOptions = {}) {
     const seen = new Set<string>();
-    const add = (key: string, cls: PseudoClass | null, raw: string, value: string, rank: number, source: Form["source"], datePart = false, lead = 0): void => {
+    const add = (key: string, cls: PseudoClass | null, raw: string, value: string, rank: number, source: Form["source"], datePart = false, lead = 0, surname = false): void => {
       const words = raw.trim().split(/\s+/).filter((w) => w !== "");
       if (words.length === 0 || lead >= words.length) return;
       const dedupe = `${key}\0${lead}\0${words.join(" ")}`;
@@ -274,6 +296,7 @@ export class EntityMatcher {
         source,
         datePart: datePart && words.length === 1 && isDateWord(raw.trim()),
         lead,
+        surname: surname && words.length === 1 && lead === 0,
       };
       const first = (words[0] as string)[0]?.toLowerCase() as string;
       const list = this.byFirst.get(first) ?? [];
@@ -286,7 +309,7 @@ export class EntityMatcher {
         for (const raw of [e.canonical, ...e.aliases, ...e.parts]) add(key, cls, raw, raw, rank, "entity");
       }
     }
-    for (const x of extra) add(`extra:${x.cls}`, x.cls, x.form ?? x.value, x.value, ENTITY_CLASSES.length + PSEUDO_CLASSES.indexOf(x.cls as RealPseudoClass), x.source ?? "map", x.datePart === true, x.lead ?? 0);
+    for (const x of extra) add(`extra:${x.cls}`, x.cls, x.form ?? x.value, x.value, ENTITY_CLASSES.length + PSEUDO_CLASSES.indexOf(x.cls as RealPseudoClass), x.source ?? "map", x.datePart === true, x.lead ?? 0, x.surname === true);
     // Longest first; at equal length a vocabulary form wins (so "SAM" listed as vocabulary is not
     // taken for the person part "Sam"); then class order, then text, so the scan is order-independent.
     for (const list of this.byFirst.values()) {
@@ -347,14 +370,15 @@ export class EntityMatcher {
         const end = this.matchAt(text, pos, form, caseless, starts);
         if (end < 0 || (block !== undefined && end > block.start)) continue;
         if (form.datePart && inDateContext(text, pos, end)) continue;
-        out.push({ start: starts[form.lead] as number, end, cls: form.cls, value: form.value, source: form.source });
+        out.push({ start: starts[form.lead] as number, end, cls: form.cls, value: form.value, source: form.source, ...(form.surname ? { surname: true as const } : {}) });
         pos = end;
         matched = true;
         break;
       }
       if (!matched) pos++;
     }
-    return joinPersonSpans(text, out, taken);
+    const joined = joinPersonSpans(text, out, taken);
+    return caseless ? joined.map(({ surname: _s, ...rest }) => rest) : joinGivenNames(text, joined, taken, this.joinOpts);
   }
 }
 
@@ -365,6 +389,61 @@ const nameWords = (s: string): string[] => s.normalize("NFKC").toLowerCase().mat
 
 /** Whether two spans may stand for one person: the same person-like class and value. */
 const samePerson = (a: Span, b: Span): boolean => a.cls === b.cls && (a.cls === "person" || a.cls === "value") && a.value === b.value;
+
+// Name particles that sit inside a surname: Irish and Scottish ("O'", "Ó", "Ní", "Mac", "Mc"), Romance and
+// Germanic ("de", "del", "van", "von") and Arabic ("bin", "al-"). A lone particle is never a given name.
+const PARTICLE = "(?:O['\u2019]|Ó|Ní|Mac|Mc|de|del|van|von|bin|al-)";
+const GIVEN_BEFORE_RE = new RegExp(
+  `(?<![\\p{L}\\p{N}'\u2019-])(\\p{Lu}[\\p{L}\\p{M}]*(?:['\u2019-][\\p{L}\\p{M}]+)*)(?:[ \\t\u00a0]+${PARTICLE}[ \\t\u00a0]*|[ \\t\u00a0]+)$`,
+  "u",
+);
+
+/**
+ * A lone surname part of a known person with a capitalised given name right before it (optionally a
+ * name particle between) is another person's full name, not the known person's surname alone
+ * (AGT-1854): "Sam Quillfeather" next to "Dana Quillfeather". The span grows to cover both and is a new
+ * person, so the known person's pseudonym is not reused and the given name does not survive. The word
+ * must be capitalised and not a dictionary word, honorific or role, month or weekday, keep term or
+ * vocabulary form, nor already part of a span. Marked `joined`; the internal `surname` mark is dropped.
+ */
+function joinGivenNames(text: string, spans: Span[], taken: readonly Span[], opts: JoinOptions): Span[] {
+  let lowerTaken = 0;
+  let prevEnd = 0;
+  const out: Span[] = [];
+  for (const span of spans) {
+    const { surname, ...s } = span;
+    const lowest = (): number => {
+      lowerTaken = 0;
+      for (const t of taken) if (t.end <= s.start && t.end > lowerTaken) lowerTaken = t.end;
+      return Math.max(prevEnd, lowerTaken);
+    };
+    if (surname === true && s.cls === "person" && nameWords(text.slice(s.start, s.end)).length === 1) {
+      const lo = lowest();
+      const m = GIVEN_BEFORE_RE.exec(text.slice(lo, s.start));
+      if (m !== null) {
+        const given = m[1] as string;
+        const folded = given.normalize("NFKC").toLowerCase();
+        const eligible =
+          (given.match(/\p{L}/gu) ?? []).length >= 2 &&
+          !DICTIONARY.has(folded) &&
+          !isHonorificOrRole(given) &&
+          !isDateWord(folded) &&
+          !(opts.keep?.has(folded) ?? false) &&
+          !(opts.vocabulary?.has(folded) ?? false);
+        if (eligible) {
+          const start = lo + m.index;
+          const full = text.slice(start, s.end).replace(/[ \t\u00a0]+/g, " ");
+          out.push({ ...s, start, value: full, joined: true });
+          prevEnd = s.end;
+          continue;
+        }
+      }
+    }
+    out.push(s);
+    prevEnd = s.end;
+  }
+  return out;
+}
 
 /**
  * Adjacent spans of one person joined (see the header), and a dotted initial of that person taken in.

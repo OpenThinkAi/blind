@@ -234,6 +234,12 @@ same blinded output tree. No model is called.
 | `--reject c1` | a `vocabulary` entity with `source: "human"`, so the mechanical and semantic layers do not raise it again |
 | neither | nothing; the next audit raises it again |
 
+- **Values are masked in the output.** `plan`, `run` and `apply` print a value from a document
+  (candidates, entity names, sheet names, column headers, question text, the values in a
+  `--accept-leaks` listing) as `blind audit` does: the first two characters, `***`, the length
+  (`Qu***12`), so a CI log keeps no real names. They print whole on a terminal, or with
+  `--show-values` (on `plan`, `run` and `apply`). File paths are not values and always print.
+  `plan --json` is data for tools and keeps the originals.
 - **`--accept-leaks`** decides the leaks without asking: every candidate with a `leak` finding (a
   spec entity, a map value or an enabled pattern match that survives, all from the mechanical
   layer) is accepted at its suggested class, or `id` when it suggests none (a map value a column

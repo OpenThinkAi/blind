@@ -18,6 +18,7 @@ import {
 } from "../../src/analyst/fromaudit.ts";
 import { type PlanIO, runPlan } from "../../src/analyst/plan.ts";
 import { runApply } from "../../src/apply.ts";
+import { maskValue } from "../../src/mask.ts";
 import { collectTree, runAudit } from "../../src/audit/command.ts";
 import { auditTree } from "../../src/audit/mechanical.ts";
 import { addSemanticLayer } from "../../src/audit/semantic.ts";
@@ -66,7 +67,7 @@ async function run(fn: (argv: string[], io: PlanIO) => Promise<number>, argv: st
   return { code, out: out.text(), err: err.text() };
 }
 
-const plan = (argv: string[], extra: Partial<PlanIO> = {}) => run(runPlan, argv, extra);
+const plan = (argv: string[], extra: Partial<PlanIO> = {}) => run(runPlan, [...argv, "--show-values"], extra);
 const apply = (argv: string[]) => run((a, io) => runApply(a, io), argv);
 const audit = (argv: string[]) => run((a, io) => runAudit(a, io), argv);
 
@@ -521,5 +522,78 @@ describe("convergence on the synthetic kit", () => {
     }
     expect((final.entities.vocabulary ?? []).map((e) => e.canonical)).toContain("Quarterly Planning Review");
     expect(existsSync(join(dir, ".blind", "spec.json.tmp"))).toBe(false);
+  });
+});
+
+// AGT-1866: every print of an original value is masked unless the reviewer is on a terminal or
+// passes --show-values. The sink here is a PassThrough, so it is never a terminal.
+describe("masking original values in plan --from-audit (AGT-1866)", () => {
+  const SITE_NAMES = ["Quillhaven Annex", "Marrowdale Depot"];
+  const masked = (s: string) => maskValue(s);
+
+  async function leaky(): Promise<void> {
+    const spec: Spec = { ...SPEC, columns: [...SPEC.columns, { file: "sites.csv", header: "Site", class: "unknown", treatment: "blind", confidence: 1, source: "human" }] };
+    writeFileSync(join(dir, ".blind", "spec.json"), JSON.stringify(spec), { mode: 0o600 });
+    writeFileSync(join(dir, "in", "sites.csv"), "Site\nQuillhaven Annex\nMarrowdale Depot\nOrchard Point\n");
+    writeFileSync(join(dir, "in", "visit.txt"), "Met at Quillhaven Annex, then Marrowdale Depot.\n");
+    const first = await round("out", () => appendFileSync(join(dir, "out", "visit.txt"), "Again: Quillhaven Annex and Marrowdale Depot.\n"));
+    expect(first.code).toBe(2);
+  }
+
+  test("the candidate list and the changes show masked values; --show-values shows the originals", async () => {
+    await leaky();
+    const r = await run(runPlan, ["--from-audit", "report.json", "-o", "out", "--accept-leaks"]);
+    expect(r.code).toBe(0);
+    for (const v of [...SITE_NAMES, "Harbour Lane Partners", "Quarterly Planning Review", "ZX-4471-Q"]) expect(r.out + r.err).not.toContain(v);
+    for (const v of SITE_NAMES) expect(r.out).toContain(`accepted ${masked(v)}: added id entity`);
+    expect(r.out).toContain(`  c1  ${masked("Harbour Lane Partners")}`);
+    // File paths are not values.
+    expect(r.out).toContain("notes.md");
+
+    await leaky();
+    const shown = await run(runPlan, ["--from-audit", "report.json", "-o", "out", "--accept-leaks", "--show-values"]);
+    expect(shown.out).toContain('accepted "Quillhaven Annex": added id entity');
+    expect(shown.out).toContain('"Harbour Lane Partners"');
+  });
+
+  test("the list without decisions is masked too, and quoted values in refusals are masked", async () => {
+    expect((await round("out")).code).toBe(1);
+    const r = await run(runPlan, ["--from-audit", "report.json", "-o", "out"]);
+    expect(r.out).not.toContain("Harbour Lane");
+    expect(r.out).toContain(`c1  ${masked("Harbour Lane Partners")}`);
+    const shown = await run(runPlan, ["--from-audit", "report.json", "-o", "out", "--show-values"]);
+    expect(shown.out).toContain('c1  "Harbour Lane Partners"');
+    // accepting a vocabulary form is refused; the message names it masked
+    writeFileSync(
+      join(dir, ".blind", "spec.json"),
+      JSON.stringify({ ...SPEC, entities: { ...SPEC.entities, vocabulary: [{ canonical: "Harbour Lane Partners", aliases: [], parts: [] }] } }),
+      { mode: 0o600 },
+    );
+    const refused = await run(runPlan, ["--from-audit", "report.json", "-o", "out", "--accept", "c1=org"]);
+    expect(refused.code).toBe(2);
+    expect(refused.err).not.toContain("Harbour Lane");
+    expect(refused.err).toContain(masked("Harbour Lane Partners"));
+  });
+
+  test("leaks --accept-leaks left undecided are listed masked", async () => {
+    await leaky();
+    // "Orchard Point" survives in the output, but the owner keeps it by policy: left undecided, with why.
+    const policy = defaultPolicy();
+    policy.keep.terms = ["Orchard Point"];
+    writeFileSync(join(dir, "blind.toml"), renderPolicy(policy));
+    appendFileSync(join(dir, "out", "visit.txt"), "Also Orchard Point.\n");
+    const audited = await audit(["out", "--json", "--no-model"]);
+    writeFileSync(join(dir, "report.json"), audited.out);
+    const r = await run(runPlan, ["--from-audit", "report.json", "-o", "out", "--accept-leaks"]);
+    expect(r.out).toContain("leaks --accept-leaks left undecided");
+    expect(r.out).not.toContain("Orchard Point");
+    expect(r.out).toContain(`${masked("Orchard Point")}: a [keep].terms entry`);
+    const shown = await run(runPlan, ["--from-audit", "report.json", "-o", "out", "--accept-leaks", "--show-values"]);
+    expect(shown.out).toContain('"Orchard Point": a [keep].terms entry');
+  });
+
+  test("--help documents --show-values", async () => {
+    const r = await run(runPlan, ["--help"]);
+    expect(r.out).toContain("--show-values");
   });
 });

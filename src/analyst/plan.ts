@@ -9,6 +9,7 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { MAP_FILE, SPEC_FILE } from "../apply.ts";
 import { MapError, readMap } from "../engine/map.ts";
+import { isTerminal, maskQuoted, maskValue, shownValue } from "../mask.ts";
 import { BLIND_DIR } from "../init.ts";
 import { type AskOptions, ModelError, modelsEnabled } from "../model.ts";
 import { loadKeepTerms, loadPolicy, POLICY_FILE, PolicyError, type PolicyPatterns, withPolicyPatterns } from "../policy.ts";
@@ -51,9 +52,9 @@ export interface PlanIO {
 }
 
 const PLAN_HELP = [
-  "Usage: blind plan <inputs...> [--no-model] [--quiet] [--force] [--json]",
-  "       blind plan --answer <id>=<option> [--answer ...]",
-  "       blind plan --from-audit <report.json> -o <out> [--accept <ids>] [--reject <ids>] [--accept-leaks] [--map <path>] [--json]",
+  "Usage: blind plan <inputs...> [--no-model] [--quiet] [--force] [--json] [--show-values]",
+  "       blind plan --answer <id>=<option> [--answer ...] [--show-values]",
+  "       blind plan --from-audit <report.json> -o <out> [--accept <ids>] [--reject <ids>] [--accept-leaks] [--map <path>] [--json] [--show-values]",
   "",
   "Profiles the inputs, asks the analyst model (models.analyst in blind.toml) for a spec, saves it as",
   ".blind/spec.json (mode 0600) and prints it for review: questions first, then columns by class,",
@@ -91,6 +92,12 @@ const PLAN_HELP = [
   "vocabulary form) or is not sensitive (dictionary or field-label words only, a value kept by a",
   "keep column or [keep].terms, a measure, a number under 5 digits) is listed with why and left undecided.",
   "",
+  "Values from the documents (entity names, sheet names, column headers, question text, candidate",
+  "values) are printed masked, as `blind audit` does: the first two characters, ***, the length",
+  "(Qu***12). They are shown whole when the output is a terminal or with --show-values, which is",
+  "for a reviewer at the keyboard and not for CI logs. File paths are always shown. --json is data",
+  "for tools and keeps the originals.",
+  "",
   "Options:",
   "  --answer <id>=<option>  Answer a question in the saved spec and print it again (repeatable)",
   "  --no-model              Heuristic analyst only: classify a column only when an email, ip, host,",
@@ -100,6 +107,7 @@ const PLAN_HELP = [
   "  --force                 Ignore the saved .blind/spec.json and plan from scratch (its edits and",
   "                          answers are lost)",
   "  --json                  Print what changed (added, classified, dropped) as JSON instead of the spec",
+  "  --show-values           Print original values instead of masked ones, even when the output is not a terminal",
   "  --from-audit <report>   Turn a `blind audit --json` report into spec changes (see above)",
   "  -o, --out <out>         With --from-audit: the blinded output tree the report audited",
   "  --accept <ids>          With --from-audit: accept candidates, e.g. c1,c2=org,c3=pattern (repeatable)",
@@ -114,7 +122,9 @@ const PLAN_HELP = [
 ].join("\n");
 
 const q = (s: string): string => JSON.stringify(s);
-const where = (l: Location): string => `${q(l.file)}${l.sheet === undefined ? "" : ` [${q(l.sheet)}]`} ${q(l.header ?? l.jsonPath ?? "")}`;
+/** A sheet name, header or key as the report prints it: masked unless `show`. File paths are not values. */
+const val = (s: string, show: boolean): string => (s === "" ? '""' : shownValue(s, show));
+const where = (l: Location, show: boolean): string => `${q(l.file)}${l.sheet === undefined ? "" : ` [${val(l.sheet, show)}]`} ${val(l.header ?? l.jsonPath ?? "", show)}`;
 
 const CLASS_ORDER: EntityClassName[] = ["unknown", "person", "org", "host", "email", "id", "location", "secret", "vocabulary"];
 
@@ -157,14 +167,14 @@ export function patternWarnings(profile: Profile, spec: Spec, policy: { patterns
 }
 
 /** The spec as a review table: questions first, then columns grouped by class, entities, patterns. */
-export function renderSpec(spec: Spec, policyPatterns: PolicyPatterns = {}): string {
+export function renderSpec(spec: Spec, policyPatterns: PolicyPatterns = {}, show = false): string {
   const out: string[] = [];
   const open = spec.questions.filter((x) => x.answer === null).length;
   out.push(spec.questions.length === 0 ? "questions: none" : `questions (${open} unanswered of ${spec.questions.length}):`);
   for (const x of spec.questions) {
-    out.push(`  ${x.id}  ${q(x.text)}`);
+    out.push(`  ${x.id}  ${show ? q(x.text) : maskValue(x.text)}`);
     out.push(`      options: ${x.options.join(" | ")}   answer: ${x.answer === null ? "(unanswered)" : x.answer}`);
-    if (x.about !== undefined) out.push(`      about: ${where(x.about)}${x.answer === null ? " (unknown until answered)" : ""}`);
+    if (x.about !== undefined) out.push(`      about: ${where(x.about, show)}${x.answer === null ? " (unknown until answered)" : ""}`);
   }
   if (open > 0) out.push("  answer with: blind plan --answer <id>=<option>");
   out.push("");
@@ -182,7 +192,7 @@ export function renderSpec(spec: Spec, policyPatterns: PolicyPatterns = {}): str
   for (const [label, rules] of sections) {
     if (rules.length === 0) continue;
     out.push(`  ${label}`);
-    const rows = rules.map((c: ColumnRule) => [where(c), c.treatment, c.confidence.toFixed(2), c.source]);
+    const rows = rules.map((c: ColumnRule) => [where(c, show), c.treatment, c.confidence.toFixed(2), c.source]);
     const widths = [0, 1, 2].map((i) => Math.max(...rows.map((r) => (r[i] ?? "").length)));
     for (const r of rows) out.push(`    ${r.map((cell, i) => (i < 3 ? cell.padEnd(widths[i] ?? 0) : cell)).join("  ")}`);
   }
@@ -193,8 +203,8 @@ export function renderSpec(spec: Spec, policyPatterns: PolicyPatterns = {}): str
   for (const [cls, list] of groups) {
     out.push(`  ${cls}`);
     for (const e of list ?? []) {
-      const extra = [e.aliases.length > 0 ? `aliases ${e.aliases.map(q).join(", ")}` : "", e.parts.length > 0 ? `parts ${e.parts.map(q).join(", ")}` : ""];
-      out.push(`    ${q(e.canonical)}${extra.filter((x) => x !== "").map((x) => `; ${x}`).join("")}`);
+      const extra = [e.aliases.length > 0 ? `aliases ${e.aliases.map((a) => shownValue(a, show)).join(", ")}` : "", e.parts.length > 0 ? `parts ${e.parts.map((a) => shownValue(a, show)).join(", ")}` : ""];
+      out.push(`    ${shownValue(e.canonical, show)}${extra.filter((x) => x !== "").map((x) => `; ${x}`).join("")}`);
     }
   }
   out.push("");
@@ -253,36 +263,36 @@ function readMapIfAny(cwd: string): ReturnType<typeof readMap> | undefined {
   }
 }
 
-const dropLabel = (d: Dropped): string => {
+const dropLabel = (d: Dropped, show: boolean): string => {
   switch (d.kind) {
     case "column":
-      return `column ${where(d.location)}`;
+      return `column ${where(d.location, show)}`;
     case "question":
       return `question ${d.id}`;
     case "entity":
-      return `${d.class} entity ${q(d.canonical)}`;
+      return `${d.class} entity ${shownValue(d.canonical, show)}`;
     case "pattern":
       return `pattern ${d.name}`;
     case "vocabulary":
-      return `analyst vocabulary ${q(d.canonical)}`;
+      return `analyst vocabulary ${shownValue(d.canonical, show)}`;
   }
 };
 
 /** What a re-plan changed in the saved spec. */
-export function renderDiff(diff: PlanDiff): string {
+export function renderDiff(diff: PlanDiff, show = false): string {
   const out: string[] = ["changes to the saved spec:"];
   const { columns, entities, questions } = diff.added;
   if (columns.length + entities.length + questions.length + diff.classified.length + diff.dropped.length === 0) out.push("  none");
-  for (const c of columns) out.push(`  added column ${where(c)}  ${c.class} ${c.treatment} ${c.source}`);
-  for (const e of entities) out.push(`  added ${e.class} entity ${q(e.canonical)}`);
+  for (const c of columns) out.push(`  added column ${where(c, show)}  ${c.class} ${c.treatment} ${c.source}`);
+  for (const e of entities) out.push(`  added ${e.class} entity ${shownValue(e.canonical, show)}`);
   for (const id of questions) out.push(`  added question ${id}`);
-  for (const c of diff.classified) out.push(`  classified ${where(c.location)}  ${c.from} -> ${c.to}`);
+  for (const c of diff.classified) out.push(`  classified ${where(c.location, show)}  ${c.from} -> ${c.to}`);
   const saved = diff.dropped.filter((d) => d.kind !== "vocabulary");
   const shielding = diff.dropped.filter((d) => d.kind === "vocabulary");
   if (saved.length > 0) out.push(`  dropped (${saved.length}), because the analyst may not change a saved entry:`);
-  for (const d of saved) out.push(`    ${dropLabel(d)}: ${d.reason}`);
+  for (const d of saved) out.push(`    ${dropLabel(d, show)}: ${maskQuoted(d.reason, show)}`);
   if (shielding.length > 0) out.push(`  dropped (${shielding.length}), because the analyst's vocabulary may not keep a blinded value in clear:`);
-  for (const d of shielding) out.push(`    ${dropLabel(d)}: ${d.reason}`);
+  for (const d of shielding) out.push(`    ${dropLabel(d, show)}: ${maskQuoted(d.reason, show)}`);
   return `${out.join("\n")}\n`;
 }
 
@@ -293,7 +303,7 @@ function checked(spec: Spec): Spec {
   return spec;
 }
 
-function answer(raw: string[], io: PlanIO): number {
+function answer(raw: string[], io: PlanIO, show: boolean): number {
   const policy = loadPolicy(io.cwd);
   let spec = readSaved(io.cwd);
   if (spec === undefined) throw new Refusal(`${join(io.cwd, BLIND_DIR, SPEC_FILE)} not found; run \`blind plan <inputs>\` first`);
@@ -303,7 +313,7 @@ function answer(raw: string[], io: PlanIO): number {
     spec = answerQuestion(spec, a.slice(0, eq), a.slice(eq + 1), policy);
   }
   const written = writeSpec(io.cwd, checked(spec));
-  io.out.write(renderSpec(spec, policy.patterns));
+  io.out.write(renderSpec(spec, policy.patterns, show));
   io.out.write(`\nwrote ${written} (mode 0600). Nothing is changed until you run \`blind apply\`.\n`);
   return 0;
 }
@@ -320,6 +330,7 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
         quiet: { type: "boolean", default: false },
         force: { type: "boolean", default: false },
         json: { type: "boolean", default: false },
+        "show-values": { type: "boolean", default: false },
         "from-audit": { type: "string" },
         out: { type: "string", short: "o" },
         accept: { type: "string", multiple: true },
@@ -339,6 +350,7 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
     return 0;
   }
   const answers = values.answer ?? [];
+  const show = values["show-values"] || isTerminal(io.out);
   const fromAuditOnly =
     values.out !== undefined || values.accept !== undefined || values.reject !== undefined || values["accept-leaks"] || values.map !== undefined;
   if (values["from-audit"] !== undefined) {
@@ -351,10 +363,10 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
       return 2;
     }
     try {
-      return await fromAudit(values["from-audit"], values.out, { ...values, acceptLeaks: values["accept-leaks"] }, io);
+      return await fromAudit(values["from-audit"], values.out, { ...values, acceptLeaks: values["accept-leaks"], show }, io);
     } catch (e) {
       if (e instanceof Refusal || e instanceof FromAuditError || e instanceof SchemaError || e instanceof MapError || e instanceof AnalystError) {
-        io.err.write(`blind plan: ${e.message}\nno spec was written\n`);
+        io.err.write(`blind plan: ${maskQuoted(e.message, show)}\nno spec was written\n`);
         return 2;
       }
       throw e;
@@ -374,7 +386,7 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
   }
 
   try {
-    if (answers.length > 0) return answer(answers, io);
+    if (answers.length > 0) return answer(answers, io, show);
 
     const policy = loadPolicy(io.cwd);
     // Read (and validate) before profiling or any model call: an invalid saved spec stops here.
@@ -424,23 +436,23 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
     ruledOut.forEach((d, i) => {
       remarks.push(
         d.why === "identifying"
-          ? `analyst rule ${i + 1} of ${ruledOut.length} dropped: ${d.treatment} for ${where(d.at)}, an identifying column; only ${POLICY_FILE} or a human may keep one, so it is ruled as if the analyst had left it out`
-          : `analyst rule ${i + 1} of ${ruledOut.length} dropped: ${d.treatment} for ${where(d.at)}; only ${POLICY_FILE} or a human may drop, redact or scan a column, so it is ruled as if the analyst had left it out`,
+          ? `analyst rule ${i + 1} of ${ruledOut.length} dropped: ${d.treatment} for ${where(d.at, true)}, an identifying column; only ${POLICY_FILE} or a human may keep one, so it is ruled as if the analyst had left it out`
+          : `analyst rule ${i + 1} of ${ruledOut.length} dropped: ${d.treatment} for ${where(d.at, true)}; only ${POLICY_FILE} or a human may drop, redact or scan a column, so it is ruled as if the analyst had left it out`,
       );
     });
     for (const name of patternsRestored) remarks.push(`analyst turned pattern ${name} off; it is on, because only ${POLICY_FILE} or a human may switch a pattern off`);
-    for (const l of filled) remarks.push(`the analyst left out ${where(l)}; the heuristic rule was used`);
+    for (const l of filled) remarks.push(`the analyst left out ${where(l, show)}; the heuristic rule was used`);
     // blind.toml's column rules ([[columns]], and headers that are [keep] terms) decide ahead of everything else.
     const overlay = applyColumnPolicy(spec, profile, policy);
     spec = overlay.spec;
     if (overlay.decided.length > 0) remarks.push(`${overlay.decided.length} column(s) and key(s) decided by ${POLICY_FILE} (source policy)`);
     for (const id of overlay.removedQuestions) remarks.push(`question ${id} removed: ${POLICY_FILE} decides its column`);
-    for (const l of overlay.human) remarks.push(`${where(l)}: the spec's human rule is kept over the ${POLICY_FILE} rule for it`);
-    for (const l of overlay.reverted) remarks.push(`${where(l)}: no ${POLICY_FILE} rule matches it any more; the heuristic rule was used`);
+    for (const l of overlay.human) remarks.push(`${where(l, show)}: the spec's human rule is kept over the ${POLICY_FILE} rule for it`);
+    for (const l of overlay.reverted) remarks.push(`${where(l, show)}: no ${POLICY_FILE} rule matches it any more; the heuristic rule was used`);
     // Rules that disagree on one column: name them (globs only, never a value) and say which won and why.
     for (const o of overlay.overlaps) {
       const win = o.matches[0] as RuleMatch;
-      remarks.push(`${where(o.loc)}: ${o.matches.length} ${POLICY_FILE} rules match: ${o.matches.map(describeMatch).join("; ")}; columns[${win.index}] wins (${o.reason})`);
+      remarks.push(`${where(o.loc, show)}: ${o.matches.length} ${POLICY_FILE} rules match: ${o.matches.map(describeMatch).join("; ")}; columns[${win.index}] wins (${o.reason})`);
     }
     for (const k of overlay.shadowedKeeps) {
       const globs = [...(k.rule.header ?? []).map((h) => `header ${JSON.stringify(h)}`), ...(k.rule.path === undefined ? [] : [`path ${JSON.stringify(k.rule.path)}`])].join(", ");
@@ -458,14 +470,14 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
       // A birth-date column no rule decides is redacted at apply time (fail closed), not exempted as a date measure.
       const decided = ruled.get(locationKey(loc));
       if (isBirthDateName(loc.header ?? (loc.jsonPath === undefined ? undefined : lastKey(loc.jsonPath))) && (decided === undefined || (decided.class === "unknown" && decided.treatment === "value"))) {
-        remarks.push(`${where(loc)}: redact, birth-date header, no rule`);
+        remarks.push(`${where(loc, show)}: redact, birth-date header, no rule`);
       }
       const pattern = heuristic.has(locationKey(loc)) ? heuristicReason(stats, policy, loc) : undefined;
-      if (pattern !== undefined) remarks.push(`${where(loc)}: blind, because policy pattern ${pattern} on (its class is not in [sensitive].classes)`);
+      if (pattern !== undefined) remarks.push(`${where(loc, show)}: blind, because policy pattern ${pattern} on (its class is not in [sensitive].classes)`);
       const rule = shaped.get(locationKey(loc));
       const shape = rule === undefined ? undefined : heuristicShape(loc, stats, policy);
       if (rule !== undefined && shape !== undefined) {
-        remarks.push(`${where(loc)}: ${rule.class} ${rule.treatment}, shape: ${shape.shape}, ${Math.round(shape.rate * 100)}%${shape.named ? " (its header names the shape)" : ""}`);
+        remarks.push(`${where(loc, show)}: ${rule.class} ${rule.treatment}, shape: ${shape.shape}, ${Math.round(shape.rate * 100)}%${shape.named ? " (its header names the shape)" : ""}`);
       }
     }
 
@@ -474,8 +486,8 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
     if (values.json) {
       io.out.write(`${JSON.stringify({ spec: written, ...diff, notes: [...notes, ...remarks], warnings }, null, 2)}\n`);
     } else {
-      io.out.write(renderSpec(spec, policy.patterns));
-      if (diff.reused || diff.dropped.length > 0) io.out.write(`\n${renderDiff(diff)}`);
+      io.out.write(renderSpec(spec, policy.patterns, show));
+      if (diff.reused || diff.dropped.length > 0) io.out.write(`\n${renderDiff(diff, show)}`);
       for (const w of warnings) io.out.write(`${w}\n`);
       for (const n of [...notes, ...remarks]) io.out.write(n.startsWith("warning: ") ? `${n}\n` : `note: ${n}\n`);
       io.out.write(`\nwrote ${written} (mode 0600). Nothing is changed until you run \`blind apply\`.\n`);
@@ -489,7 +501,7 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
   } catch (e) {
     // ModelError covers ModelRefusal: a call the privacy mode, endpoint or key setting refused before sending.
     if (e instanceof Refusal || e instanceof PolicyError || e instanceof InputError || e instanceof SchemaError || e instanceof ModelError || e instanceof AnalystError) {
-      io.err.write(`blind plan: ${e.message}\nno spec was written\n`);
+      io.err.write(`blind plan: ${maskQuoted(e.message, show)}\nno spec was written\n`);
       return 2;
     }
     throw e;
@@ -501,7 +513,7 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
 const placeLabel = (p: { file: string; part: string; in: string; line: number | null }): string =>
   `${p.part === "" ? p.file : `${p.file}!${p.part}`}${p.in === "content" ? "" : ` [${p.in}]`}${p.line === null ? "" : ` line ${p.line}`}`;
 
-function renderCandidate(c: Candidate): string[] {
+function renderCandidate(c: Candidate, show: boolean): string[] {
   const shown = c.places.slice(0, 3).map(placeLabel).join("; ");
   const more = c.places.length > 3 ? `; and ${c.places.length - 3} more` : "";
   const traits = [
@@ -511,27 +523,27 @@ function renderCandidate(c: Candidate): string[] {
     ...(c.pattern === null ? [] : [`shape: ${c.pattern}`]),
     ...(c.known ? ["cannot be rejected (the spec or map already treats it as sensitive)"] : []),
   ];
-  return [`  ${c.id}  ${q(c.value)}  ${traits.join("  ")}`, `      at ${shown}${more}`];
+  return [`  ${c.id}  ${shownValue(c.value, show)}  ${traits.join("  ")}`, `      at ${shown}${more}`];
 }
 
-function renderChange(x: Change): string {
+function renderChange(x: Change, show: boolean): string {
   switch (x.result) {
     case "entity":
-      return `  ${x.id}  accepted ${q(x.value)}: added ${x.class} entity (source human)`;
+      return `  ${x.id}  accepted ${shownValue(x.value, show)}: added ${x.class} entity (source human)`;
     case "pattern":
-      return `  ${x.id}  accepted ${q(x.value)}: turned pattern ${x.pattern} on`;
+      return `  ${x.id}  accepted ${shownValue(x.value, show)}: turned pattern ${x.pattern} on`;
     case "vocabulary":
-      return `  ${x.id}  rejected ${q(x.value)}: added to the vocabulary (source human)`;
+      return `  ${x.id}  rejected ${shownValue(x.value, show)}: added to the vocabulary (source human)`;
     case "unchanged":
-      return `  ${x.id}  ${q(x.value)}: no change, ${x.note}`;
+      return `  ${x.id}  ${shownValue(x.value, show)}: no change, ${maskQuoted(x.note ?? "", show)}`;
   }
 }
 
 /** Asks about each candidate on the terminal. Returns the decisions made; skipped ones are left out. */
-async function promptDecisions(collected: Collected, saved: Spec, map: ReturnType<typeof readMap>, io: PlanIO & { prompt: NonNullable<PlanIO["prompt"]> }): Promise<Decision[]> {
+async function promptDecisions(collected: Collected, saved: Spec, map: ReturnType<typeof readMap>, io: PlanIO & { prompt: NonNullable<PlanIO["prompt"]> }, show: boolean): Promise<Decision[]> {
   const decisions: Decision[] = [];
   for (const c of collected.candidates) {
-    io.out.write(`\n${renderCandidate(c).join("\n")}\n`);
+    io.out.write(`\n${renderCandidate(c, show).join("\n")}\n`);
     const opts = [`a = accept as ${c.suggested ?? "(name a class)"}`, `<class> = accept as ${ACCEPT_CLASSES.join("|")}`];
     if (c.pattern !== null) opts.push(`pattern = turn pattern ${c.pattern} on`);
     if (!c.known) opts.push("r = reject (vocabulary)");
@@ -553,7 +565,7 @@ async function promptDecisions(collected: Collected, saved: Spec, map: ReturnTyp
         applyDecisions(saved, collected.candidates, [...decisions, d], map);
       } catch (e) {
         if (!(e instanceof FromAuditError)) throw e;
-        io.out.write(`  ${e.message}\n`);
+        io.out.write(`  ${maskQuoted(e.message, show)}\n`);
         continue;
       }
       decisions.push(d);
@@ -570,6 +582,8 @@ export interface FromAuditOptions {
   acceptLeaks?: boolean;
   map?: string;
   json: boolean;
+  /** Print original values, not masked ones (--show-values, or the output is a terminal). */
+  show?: boolean;
 }
 
 async function fromAudit(reportPath: string, out: string, values: FromAuditOptions, io: PlanIO): Promise<number> {
@@ -613,6 +627,7 @@ export async function decideFromReport(
   // Checked before anything is printed or asked: a bad id or a refused decision writes nothing.
   let decisions = parseDecisions(values.accept ?? [], values.reject ?? []);
   applyDecisions(saved, collected.candidates, decisions, map);
+  const show = values.show === true;
   let leaksSkipped: ReturnType<typeof leakDecisions>["skipped"] = [];
   if (values.acceptLeaks) ({ decisions, skipped: leaksSkipped } = leakDecisions(saved, collected.candidates, decisions, map, keptValues(resolve(io.cwd, out), saved, loadKeepTerms(io.cwd))));
   let applied = applyDecisions(saved, collected.candidates, decisions, map);
@@ -620,14 +635,14 @@ export async function decideFromReport(
 
   if (!values.json) {
     io.out.write(collected.candidates.length === 0 ? "audit candidates: none to decide\n" : `audit candidates (${collected.candidates.length}):\n`);
-    if (!interactive) for (const c of collected.candidates) io.out.write(`${renderCandidate(c).join("\n")}\n`);
+    if (!interactive) for (const c of collected.candidates) io.out.write(`${renderCandidate(c, show).join("\n")}\n`);
     if (collected.other.length > 0) {
       io.out.write(`\nnot one value, so not turned into spec changes (${collected.other.length}); \`blind plan <inputs>\` and --answer decide columns and questions:\n`);
       for (const f of collected.other) io.out.write(`  ${placeLabel(f)}  ${f.class}  ${f.reason}\n`);
     }
   }
   if (interactive) {
-    decisions = await promptDecisions(collected, saved, map, { ...io, prompt: io.prompt as NonNullable<PlanIO["prompt"]> });
+    decisions = await promptDecisions(collected, saved, map, { ...io, prompt: io.prompt as NonNullable<PlanIO["prompt"]> }, show);
     applied = applyDecisions(saved, collected.candidates, decisions, map);
   }
 
@@ -641,8 +656,8 @@ export async function decideFromReport(
     const other = collected.other.map((f: ReportFinding) => ({ file: f.file, part: f.part, in: f.in, class: f.class, reason: f.reason }));
     io.out.write(`${JSON.stringify({ spec: written, candidates: collected.candidates, changes: applied.changes, undecided, leaksSkipped, other, unmapped }, null, 2)}\n`);
   } else {
-    if (applied.changes.length > 0) io.out.write(`\nchanges to the saved spec:\n${applied.changes.map(renderChange).join("\n")}\n`);
-    if (leaksSkipped.length > 0) io.out.write(`\nleaks --accept-leaks left undecided (${leaksSkipped.length}):\n${leaksSkipped.map((x) => `  ${x.id}  ${q(x.value)}: ${x.why}`).join("\n")}\n`);
+    if (applied.changes.length > 0) io.out.write(`\nchanges to the saved spec:\n${applied.changes.map((c) => renderChange(c, show)).join("\n")}\n`);
+    if (leaksSkipped.length > 0) io.out.write(`\nleaks --accept-leaks left undecided (${leaksSkipped.length}):\n${leaksSkipped.map((x) => `  ${x.id}  ${shownValue(x.value, show)}: ${maskQuoted(x.why, show)}`).join("\n")}\n`);
     if (undecided.length > 0) {
       io.out.write(`\nundecided (${undecided.length}): ${undecided.join(", ")}. Nothing was added for them; the audit will raise them again.\n`);
       if (!flagged && !interactive) io.out.write("decide with: blind plan --from-audit <report> -o <out> --accept <ids> --reject <ids>\n");

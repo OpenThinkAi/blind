@@ -123,7 +123,7 @@ async function plan(argv: string[], fetch: AskOptions["fetch"] = fakeFetch(propo
   out.on("data", (d) => (o += d));
   err.on("data", (d) => (e += d));
   const io: PlanIO = { out, err, cwd: dir, model: { fetch, env: {} } };
-  const code = await runPlan(argv, io);
+  const code = await runPlan([...argv, "--show-values"], io);
   return { code, out: o, err: e };
 }
 

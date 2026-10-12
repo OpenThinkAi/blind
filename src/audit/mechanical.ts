@@ -61,6 +61,9 @@ import { valueStats } from "../profile/stats.ts";
 import { isHandle, isPlate, shapeHolds } from "../engine/shapes.ts";
 import { DICTIONARY } from "../engine/words.ts";
 import { fold, foldWithMap, stringView, type View, viewsOf, xmlBaseView } from "./views.ts";
+import { maskValue } from "../mask.ts";
+
+export { maskValue };
 import { accountSegments } from "../formats/paths.ts";
 import { CONTENT_TYPES_PART, localName, looksLikeXml, officeIdAttribute, ooxmlUriAttribute, walkXml } from "./xml.ts";
 import { looksLikeZip, readZip, type ZipBudget, ZipError, zipBudget } from "./zip.ts";
@@ -166,13 +169,6 @@ const STATUS_RANK: Record<Status, number> = { clean: 0, candidates: 1, leak: 2 }
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 const cps = (s: string): string[] => [...s];
-
-/** First characters (at most 2, never more than half), `***`, length. Control characters show as `?`. */
-export function maskValue(s: string): string {
-  const chars = cps(s);
-  const show = Math.min(2, Math.floor(chars.length / 2));
-  return `${chars.slice(0, show).join("").replace(/[\p{C}\s]/gu, "?")}***${chars.length}`;
-}
 
 type CaseRule = "exact" | "capital" | "fold";
 

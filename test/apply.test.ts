@@ -41,7 +41,7 @@ async function apply(...argv: string[]) {
   let e = "";
   out.on("data", (d) => (o += d));
   err.on("data", (d) => (e += d));
-  const code = await runApply(argv, { out, err, cwd: dir });
+  const code = await runApply([...argv, "--show-values"], { out, err, cwd: dir });
   return { code, out: o, err: e };
 }
 

@@ -17,7 +17,7 @@
 
 import { lstatSync, readFileSync, readlinkSync } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
-import { maskValue } from "../audit/mechanical.ts";
+import { maskValue } from "../mask.ts";
 import { keptCells } from "../audit/keptcells.ts";
 import { decode, EncodingError } from "../engine/encoding.ts";
 import { isMeasure } from "../engine/stats.ts";

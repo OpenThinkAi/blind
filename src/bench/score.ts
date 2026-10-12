@@ -13,7 +13,8 @@
 //
 // What cannot be scored is listed (`unscored`), never assumed clean.
 
-import { maskValue, type AuditReport, type TreeEntry } from "../audit/mechanical.ts";
+import type { AuditReport, TreeEntry } from "../audit/mechanical.ts";
+import { maskValue } from "../mask.ts";
 import { xmlViews } from "../audit/semantic.ts";
 import { stringView, type View, viewsOf } from "../audit/views.ts";
 import { looksLikeZip, readZip, type ZipBudget, ZipError, zipBudget } from "../audit/zip.ts";

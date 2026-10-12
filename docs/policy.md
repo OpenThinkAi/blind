@@ -56,7 +56,7 @@ secret = true
 ```
 
 `[sensitive]`, `[keep]`, `[models.analyst]`, `[profile]` and `[privacy]` must be present.
-`[models.auditor]`, `profile.samples`, `[patterns]`, [`[context]`](#context), [`[defaults]`](#defaults) and [`[[columns]]`](#columns) rules are optional.
+`[models.auditor]`, `profile.samples`, `[patterns]`, [`[context]`](#context), [`[defaults]`](#defaults), [`[images]`](#images) and [`[[columns]]`](#columns) rules are optional.
 
 ## `[sensitive]`
 
@@ -264,6 +264,23 @@ columns = "scan"
 analyst's or heuristic's classified rules (an email, numeric-ID, licence-plate, username or phone
 column, say; [spec.md](spec.md#re-planning-with-a-saved-spec)) still decide their
 columns. The apply report shows such a column as `unknown → scanned (the [defaults] columns setting)`.
+
+## `[images]`
+
+```toml
+[images]
+keep = true
+```
+
+| Key | Values | Default | Meaning |
+|---|---|---|---|
+| `keep` | `true` or `false` | `false` | What happens to pictures inside a DOCX or XLSX (`word/media/*`, `xl/media/*`). blind cannot read a picture, and one can hold a scanned ID, a face, a signature or EXIF metadata (GPS position, device owner). By default each raster image (PNG, JPEG, GIF, BMP) and SVG is replaced with a neutral 1x1 placeholder of the same format under the same part name, so content types, relationships and layout stay valid and the original bytes and EXIF are gone. `true` copies them unchanged. |
+
+The apply report says `N images replaced with placeholders (images are not blinded; set [images] keep = true to keep them)`.
+A picture in a format blind has no placeholder for (TIFF, EMF, WMF, ICO, WebP) stops its file, which is
+reported as not written, unless `keep = true`. With `keep = true` the report warns `N images copied
+unchanged (images are not blinded)` and `blind audit` lists each picture as an `unscanned` candidate;
+the placeholders blind writes are not listed.
 
 ## `[models.analyst]` and `[models.auditor]`
 

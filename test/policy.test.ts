@@ -164,3 +164,20 @@ describe("[patterns]", () => {
     expect(s.patterns.ip).toBe(false);
   });
 });
+
+describe("[images]", () => {
+  test("keep defaults to false and is optional", () => {
+    expect(parsePolicy(valid()).images).toEqual({ keep: false });
+  });
+
+  test("keep = true round-trips through render and parse", () => {
+    const p = { ...defaultPolicy(), images: { keep: true } };
+    expect(renderPolicy(p)).toContain("keep = true");
+    expect(parsePolicy(renderPolicy(p)).images).toEqual({ keep: true });
+  });
+
+  test("a non-boolean keep and an unknown key are refused, naming the key", () => {
+    expect(errorOf(`${valid()}\n[images]\nkeep = "yes"\n`)).toContain("images.keep must be true or false");
+    expect(errorOf(`${valid()}\n[images]\nresize = true\n`)).toContain("unknown key images.resize");
+  });
+});

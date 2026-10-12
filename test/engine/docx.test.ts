@@ -237,7 +237,7 @@ describe("DOCX: every location (AC2, AC4)", () => {
     }
   });
 
-  test("the report counts the replacements and lists the copied image", () => {
+  test("the report counts the replacements and lists the replaced image", () => {
     const f = res.files[0]!;
     expect(f.format).toBe("docx");
     expect(f.changed).toBe(true);
@@ -247,7 +247,7 @@ describe("DOCX: every location (AC2, AC4)", () => {
     const report = renderReport(res);
     expect(report).toContain("contract.docx (docx, utf8)");
     expect(report).toContain("metadata: 10 author, creator, company or account-name values replaced");
-    expect(report).toContain("warning: 1 image copied unchanged (images are not blinded): word/media/image1.png");
+    expect(report).toContain("warning: 1 image replaced with placeholders (images are not blinded; set [images] keep = true to keep them)");
     expect(res.skipped).toEqual([]);
   });
 });
@@ -258,9 +258,9 @@ describe("DOCX: round trip (AC3)", () => {
   const before = new Map(readZip(input.bytes).map((e) => [e.name, e]));
   const after = readZip(res.outputs[0]!.bytes);
 
-  test("same members in the same order, with the same compression and timestamps; the image is byte-identical", () => {
+  test("same members in the same order, with the same compression and timestamps; the image keeps its part name and is replaced by a placeholder (see images.test.ts)", () => {
     expect(after.map((e) => [e.name, e.method, e.time, e.date])).toEqual([...before.values()].map((e) => [e.name, e.method, e.time, e.date]));
-    expect(after.find((e) => e.name === "word/media/image1.png")!.text).toBe(before.get("word/media/image1.png")!.text);
+    expect(after.find((e) => e.name === "word/media/image1.png")!.text).not.toBe(before.get("word/media/image1.png")!.text);
   });
 
   test("every Word part is well formed, with paragraph count, run count and run formatting unchanged", () => {
@@ -283,7 +283,8 @@ describe("DOCX: round trip (AC3)", () => {
     const plain = docx(entries({ body: p(r("Nothing to see here.")) }).filter((e) => !e.name.startsWith("docProps/") && e.name !== "word/people.xml" && e.name !== "word/comments.xml" && e.name !== "word/_rels/document.xml.rels"));
     const empty: Spec = { ...SPEC, entities: {} };
     // The footer names a person in prose (AGT-1830); the keep list keeps her, so nothing changes.
-    const rr = applySpec([plain], empty, { salt: SALT, keep: ["Dana Pell"] });
+    // Images are kept here: the default would replace the fixture's picture, which is a change.
+    const rr = applySpec([plain], empty, { salt: SALT, keep: ["Dana Pell"], images: "keep" });
     const doc = shape(readZip(rr.outputs[0]!.bytes).find((e) => e.name === "word/footer1.xml")!.text);
     expect(doc.text).toBe("Dana Pell, confidential");
     expect(rr.files[0]!.changed).toBe(false);

@@ -68,7 +68,7 @@ import { type EntityEntry, Pseudonymizer } from "./pseudonym.ts";
 import { lastKey } from "./birthdate.ts";
 import { type ColumnDefault, type ColumnOutcome, decide, holdsWhole, isFallback, removedForms } from "./columns.ts";
 import { type ContextOptions, type ContextTriggerSpec, pairCells } from "./context.ts";
-import { DocxError, type DocxPlan, docxParagraphs, docxWholes, FONT, IMAGE, planDocx, THUMBNAIL, thumbnailReason, refuseDocxUnrewritten, renderDocx, scanDocx } from "./docx.ts";
+import { DocxError, type DocxPlan, docxParagraphs, docxWholes, FONT, planDocx, THUMBNAIL, thumbnailReason, refuseDocxUnrewritten, renderDocx, scanDocx } from "./docx.ts";
 import { OfficeIds } from "./officeid.ts";
 import { NameRewriter, rewriteSpans } from "./names.ts";
 import { canonicalize } from "./canonical.ts";
@@ -81,6 +81,7 @@ import { EntityMatcher, type ExtraForm, keepDomains, type Span } from "./text.ts
 import { entrySpans, keptSpeakers, planTranscript, shapeParagraphs, speakerForms, speakersOf, type TranscriptPlan, transcriptSpans } from "./transcript.ts";
 import { unrewrittenSpans } from "./unrewritten.ts";
 import { pseudoCell, pseudoWrite } from "./shapes.ts";
+import { IMAGE, type ImageMode, imageWarning } from "./images.ts";
 import { type Env, planXlsx, prepareXlsx, renderXlsx, settleXlsx, XlsxError, type XlsxPlan, XlsxSpecError, xlsxValues, ZipError } from "./xlsx.ts";
 
 /** XLSX members that are not XML but are copied unchanged and listed as unread. */
@@ -254,6 +255,11 @@ export interface ApplyOptions {
   columns?: ColumnDefault;
   /** The built-in placeholder allowlist (John Doe, 123 Main St, 999-9999, user@example.com) is kept as written unless false. */
   placeholders?: boolean;
+  /**
+   * Embedded pictures in DOCX and XLSX (blind.toml `[images]`): `replace` (the default) writes a neutral
+   * placeholder of the same format under the same part name; `keep` copies them unchanged, with a warning.
+   */
+  images?: ImageMode;
 }
 
 /** The spec does not fit the inputs (a rule names a column that is not there, or a shape this engine cannot apply). */
@@ -817,7 +823,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         throw new ApplyError(`${input.path}: the spec has column rules for a DOCX file; column rules apply to tables only`);
       }
       try {
-        const docx = planDocx(input.bytes);
+        const docx = planDocx(input.bytes, opts.images ?? "replace");
         const plan: DocxFilePlan = { kind: "docx", input, docx };
         if (shapeParagraphs(docxParagraphs(docx, docx.main === undefined ? "all" : "main")).shaped) {
           // Speakers come from every part's entries, so a speaker named only in a header is found too.
@@ -1158,7 +1164,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     if (p.kind === "xlsx") {
       let r;
       try {
-        r = renderXlsx(p.input.path, p.input.bytes, p.plan, xlsxEnv, pz, officeIds);
+        r = renderXlsx(p.input.path, p.input.bytes, p.plan, xlsxEnv, pz, officeIds, opts.images ?? "replace");
       } catch (e) {
         if (e instanceof XlsxSpecError) throw new ApplyError(e.message);
         throw e;
@@ -1177,7 +1183,13 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         skipped.push({ path: p.input.path, reason: `${why}; not written` });
         continue;
       }
-      const changed = r.members.some((m) => m.kind === "xml" && m.changed);
+      const pictures = r.members.filter((m) => m.kind === "other" && !m.name.endsWith("/") && IMAGE.test(m.name)).map((m) => m.name);
+      const pictureNote = imageWarning(pictures, opts.images ?? "replace");
+      if (pictureNote.refusal !== null) {
+        skipped.push({ path: p.input.path, reason: `${pictureNote.refusal}; not written` });
+        continue;
+      }
+      const changed = r.members.some((m) => (m.kind === "xml" && m.changed) || (m.kind === "other" && m.replaced === true));
       const report: FileReport = {
         path: p.input.path,
         outputPath: names.renamePath(p.input.path, pz),
@@ -1193,7 +1205,8 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         ...(r.removedReplacements > 0 ? { removedReplacements: r.removedReplacements } : {}),
         ...(r.metadataReplacements > 0 ? { metadataReplacements: r.metadataReplacements } : {}),
         sheets: p.plan.sheets.map((s) => ({ ...s, outputName: r.sheetNames.find((n) => n.from === s.name)?.to ?? s.name })),
-        unread: r.members.filter((m) => m.kind === "other" && !m.name.endsWith("/")).map((m) => m.name),
+        unread: r.members.filter((m) => m.kind === "other" && m.replaced !== true && !m.name.endsWith("/")).map((m) => m.name),
+        ...(pictureNote.line !== null && (opts.images ?? "replace") === "replace" ? { warnings: [pictureNote.line] } : {}),
         changed,
       };
       outputs.push({ path: report.outputPath, bytes: changed ? r.bytes : p.input.bytes });

@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { auditTree } from "../../src/audit/mechanical.ts";
-import { ApplyError, type ApplyResult, applySpec } from "../../src/engine/apply.ts";
+import { ApplyError, type ApplyOptions, type ApplyResult, applySpec } from "../../src/engine/apply.ts";
 import { NameError } from "../../src/engine/names.ts";
 import type { ColumnRule, Spec } from "../../src/schema.ts";
 import { buildWorkbook, STAFF_ROWS, workbookEntries } from "../formats/xlsxfixture.ts";
@@ -35,7 +35,7 @@ const SPEC: Spec = {
   questions: [],
 };
 
-const run = (bytes: Uint8Array = buildWorkbook(), spec: Spec = SPEC): ApplyResult => applySpec([{ path: FILE, bytes }], spec, { salt: SALT });
+const run = (bytes: Uint8Array = buildWorkbook(), spec: Spec = SPEC, opts: Partial<ApplyOptions> = {}): ApplyResult => applySpec([{ path: FILE, bytes }], spec, { salt: SALT, ...opts });
 
 function members(r: ApplyResult): Record<string, string> {
   const o = r.outputs.find((x) => x.path === FILE);
@@ -406,7 +406,9 @@ describe("XLSX apply: fail closed", () => {
     expect(thumb.skipped[0]?.reason).toBe("docProps/thumbnail.wmf is a picture of the original document and cannot be blinded; save the file without a thumbnail; not written");
     const ok = run(buildWorkbook({ extra: [{ name: "xl/media/image1.png", data: new Uint8Array([0x89, 0x50]) }] }));
     expect(ok.skipped).toEqual([]);
-    expect(ok.files[0]?.unread).toEqual(["xl/media/image1.png"]);
+    // The default replaces the picture with a placeholder, so nothing is left unread; `keep` copies it (images.test.ts).
+    expect(ok.files[0]?.unread).toEqual([]);
+    expect(run(buildWorkbook({ extra: [{ name: "xl/media/image1.png", data: new Uint8Array([0x89, 0x50]) }] }), SPEC, { images: "keep" }).files[0]?.unread).toEqual(["xl/media/image1.png"]);
   });
 
   test("spec rules must name an existing sheet and header", () => {

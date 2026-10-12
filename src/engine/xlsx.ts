@@ -56,6 +56,7 @@ import type { ExtraForm, Span } from "./text.ts";
 import { customDataPart, customPartRefusal } from "./customxml.ts";
 import { isLabelCell, isLabelColumn } from "./labels.ts";
 import { refuseUnrewritten } from "./unrewritten.ts";
+import { IMAGE, type ImageMode, placeholderFor } from "./images.ts";
 import { pseudoCell, pseudoWrite } from "./shapes.ts";
 
 /** The spec does not fit the workbook; the caller turns this into its ApplyError (exit 2). */
@@ -485,8 +486,8 @@ export function prepareXlsx(path: string, bytes: Uint8Array, p: XlsxPlan, env: E
 }
 
 /** Step 3. Throws XlsxSpecError when blinded names would collide. */
-export function renderXlsx(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer, ids: HexNamer): Rendered {
-  return walk(path, bytes, p, env, pz, ids, true);
+export function renderXlsx(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer, ids: HexNamer, images: ImageMode = "keep"): Rendered {
+  return walk(path, bytes, p, env, pz, ids, true, images);
 }
 
 function digitsOf(v: string): { sign: string; int: string; frac: string; exp: string } {
@@ -501,7 +502,7 @@ function renumber(v: string, pz: Namer): string {
   return `${sign}${d.slice(0, int.length)}${frac === "" ? "" : `.${d.slice(int.length)}`}${exp}`;
 }
 
-function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer, ids: HexNamer, render: boolean): Rendered {
+function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer, ids: HexNamer, render: boolean, images: ImageMode = "keep"): Rendered {
   let entityReplacements = 0;
   let patternReplacements = 0;
   let mappedReplacements = 0;
@@ -758,6 +759,8 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
         },
       });
     },
+    // Pictures become placeholders at render time only (the default); the plan pass leaves them alone.
+    render && images === "replace" ? (member) => (IMAGE.test(member) ? placeholderFor(member) : null) : undefined,
   );
   return {
     bytes: result.bytes,

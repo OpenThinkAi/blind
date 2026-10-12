@@ -313,7 +313,7 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
       if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw new Refusal(`${mapPath}: cannot read the map`);
     }
 
-    const result = applySpec(files, spec, { salt, map, keep, placeholders: policy?.keep.placeholders ?? true, ...(policy === null || policy === undefined ? {} : { context: policy.context, columns: policy.defaults.columns }) });
+    const result = applySpec(files, spec, { salt, map, keep, placeholders: policy?.keep.placeholders ?? true, ...(policy === null || policy === undefined ? {} : { context: policy.context, columns: policy.defaults.columns, images: policy.images.keep ? "keep" as const : "replace" as const }) });
 
     // Never write through a symbolic link already inside the output tree: it could lead outside it.
     // (The output directory itself is the user's to name, link or not.) Checked before anything is written.

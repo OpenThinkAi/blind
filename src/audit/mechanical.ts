@@ -48,6 +48,7 @@ import { CsvError, parseCsv, sniffDelimiter } from "../engine/csv.ts";
 import { inDateContext, isDateWord } from "../engine/datecontext.ts";
 import { decode, EncodingError, isEightBit } from "../engine/encoding.ts";
 import type { BlindMap } from "../engine/map.ts";
+import { isPlaceholderImage } from "../engine/images.ts";
 import { isPseudonym } from "../engine/pseudonym.ts";
 import { nameWordExcluded, onNameTokens } from "../engine/names.ts";
 import { findPatternSpans, keepDomains, secretSpans, type Span } from "../engine/text.ts";
@@ -629,7 +630,8 @@ function scanName(sink: PartSink, part: string, where: Finding["in"], name: stri
 function scanBytes(sink: PartSink, part: string, bytes: Uint8Array, depth: number, ctx: Context, budget: ZipBudget) {
   if (!looksLikeZip(bytes)) {
     const kind = binaryKind(bytes);
-    if (kind !== null) {
+    // A placeholder blind wrote in place of a picture (engine/images.ts) holds nothing to check.
+    if (kind !== null && !isPlaceholderImage(bytes)) {
       unscanned(sink, part, `${kind} content: raw bytes and text encodings were scanned, but compressed or otherwise encoded content inside it cannot be checked`);
     }
     pushHits(sink, part, "content", scanViews(viewsOf(bytes), ctx));

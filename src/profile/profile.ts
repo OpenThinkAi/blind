@@ -353,9 +353,9 @@ export function forPrivacyMode(result: ProfileResult, mode: PrivacyMode): Profil
   if (outlines > 0) notes.push(`privacy.mode is profile-only: the outline of ${outlines} document(s) is left out`);
   if (speakers > 0) notes.push(`privacy.mode is profile-only: the speaker list of ${speakers} transcript(s) is left out`);
   const { counts } = tokeniseProfile(profile);
-  if (counts.paths + counts.sheets + counts.tables + counts.keys > 0) {
+  if (counts.paths + counts.sheets + counts.headers + counts.keys > 0) {
     notes.push(
-      `privacy.mode is profile-only: a model is sent ${counts.paths} file path(s), ${counts.sheets} sheet name(s), the headers of ${counts.tables} table(s) ` +
+      `privacy.mode is profile-only: a model is sent ${counts.paths} file path(s), ${counts.sheets} sheet name(s), ${counts.headers} header(s) in ${counts.tables} table(s) ` +
         `and ${counts.keys} JSON key segment(s) as opaque tokens (file_1, sheet_1, col_1, key_1), mapped back to the real names locally`,
     );
   }

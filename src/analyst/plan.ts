@@ -333,7 +333,7 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
       const part = unseenPart(profile, saved);
       let proposal: Spec | null = null;
       if (useModel && isEmptyPart(part)) remarks.push(`${join(BLIND_DIR, SPEC_FILE)} already covers every column, key and document excerpt here, so no model was called`);
-      else if (useModel) proposal = await proposeSpec(part, profile, policy, modelOpts);
+      else if (useModel) proposal = await proposeSpec(part, profile, policy, modelOpts, saved.entities);
       const merged = mergeProposal(saved, proposal, part, policy, { profile, map: readMapIfAny(io.cwd) });
       spec = merged.spec;
       diff = merged.diff;

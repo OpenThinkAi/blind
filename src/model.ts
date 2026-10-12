@@ -75,6 +75,11 @@ export interface AskOptions {
   env?: Record<string, string | undefined>;
   stderr?: (line: string) => void;
   timeoutMs?: number;
+  /**
+   * Under profile-only, the spec's entity forms (entityForms in src/profile/tokens.ts): a header or
+   * key segment that carries one must have been tokenised, or the call is refused.
+   */
+  entityForms?: readonly string[];
 }
 
 export class ModelError extends Error {
@@ -246,8 +251,12 @@ export function policyView(policy: Pick<Policy, "sensitive" | "keep">): PolicyVi
   };
 }
 
-/** Refuses data that is not exactly a profile payload: other keys, an invalid profile, or an invalid policy view. */
-export function assertProfilePayload(data: unknown): asserts data is ProfilePayload {
+/**
+ * Refuses data that is not exactly a profile payload: other keys, an invalid profile, an invalid
+ * policy view, or a name the profile should carry as a token. Name-likeness uses the payload's own
+ * keep terms and `entityForms` (the spec's entities, AGT-1808).
+ */
+export function assertProfilePayload(data: unknown, entityForms: readonly string[] = []): asserts data is ProfilePayload {
   const refuse = (why: string): never => {
     throw new ModelRefusal(`privacy.mode is profile-only: only the profile and the policy may be sent, ${why}`);
   };
@@ -272,9 +281,9 @@ export function assertProfilePayload(data: unknown): asserts data is ProfilePayl
   if (unbounded.length > 0) {
     refuse(`but the profile carries document text that sampleCount does not bound (${unbounded.join(", ")}); re-run blind profile or blind plan under profile-only`);
   }
-  // Names that are document text: paths, sheet names, value-like headers and flagged JSON key
-  // segments go out only as tokens (tokeniseProfile in src/profile/tokens.ts).
-  const named = untokenised(profile as Profile);
+  // Names that are document text: paths, sheet names, value-like header rows, name-like headers and
+  // flagged JSON key segments go out only as tokens (tokeniseProfile in src/profile/tokens.ts).
+  const named = untokenised(profile as Profile, { keep: (policy as PolicyView).keep, entities: entityForms });
   if (named.length > 0) {
     refuse(`but the profile carries names that must be sent as tokens (${named.join(", ")}); tokenise it with tokeniseProfile first`);
   }
@@ -515,7 +524,7 @@ export async function ask<T>(role: Role, system: string, prompt: Prompt, schema:
   const cfg = opts.policy.models[role];
   const mode = opts.policy.privacy.mode;
   const url = resolveEndpoint(role, cfg, mode);
-  if (mode === "profile-only") assertProfilePayload(prompt.data);
+  if (mode === "profile-only") assertProfilePayload(prompt.data, opts.entityForms);
   assertShortStrings(prompt.data);
   const samples = mode === "profile-only" ? (prompt.data as ProfilePayload).profile.sampleCount : undefined;
   const key = readKey(role, cfg, opts.env ?? process.env);

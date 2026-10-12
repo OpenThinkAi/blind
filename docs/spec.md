@@ -778,7 +778,7 @@ WebVTT (`.vtt`) and SRT (`.srt`) transcripts, and DOCX (`.docx`) files, writes `
 
 - **Paths.** Directories are walked recursively in sorted order; `path` is relative to the input
   directory, or the file name for a file named directly. Hidden entries, symbolic links, files in
-  other formats, files that are not valid UTF-8 and CSV or JSON files that do not parse are left out of the
+  other formats, files whose declared encoding (a UTF-8 or UTF-16 byte-order mark) is malformed and CSV or JSON files that do not parse are left out of the
   profile, listed under "not profiled", and the command exits 1. blind's own `.blind/` and
   `blind.toml` are skipped without comment.
 - **Long paths.** `path` is never truncated, because the spec and the engine need it exact. A file

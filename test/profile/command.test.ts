@@ -126,7 +126,7 @@ describe("buildProfile", () => {
     put("kit/b.bin", "x");
     put("kit/broken.json", '{"a": ');
     put("kit/.hidden.csv", "a\n1\n");
-    put("kit/latin1.txt", new Uint8Array([0x63, 0x61, 0x66, 0xe9]));
+    put("kit/bad16.txt", new Uint8Array([0xff, 0xfe, 0x41]));
     put("kit/broken.csv", 'a,b\n"open\n');
     put("kit/ok.txt", "Fine.");
     symlinkSync(join(dir, "kit", "ok.txt"), join(dir, "kit", "link.txt"));
@@ -136,11 +136,18 @@ describe("buildProfile", () => {
       { path: ".hidden.csv", reason: "hidden" },
       { path: "a.vtt", reason: "not a WebVTT transcript (no cue timing found)" },
       { path: "b.bin", reason: "unsupported file type .bin" },
+      { path: "bad16.txt", reason: "cannot decode: marked UTF-16LE but has an odd number of bytes" },
       { path: "broken.csv", reason: "cannot parse: unterminated quoted field starting on line 2" },
       { path: "broken.json", reason: "cannot parse: unexpected end of input at line 1, column 7" },
-      { path: "latin1.txt", reason: "not valid UTF-8" },
       { path: "link.txt", reason: "symbolic link (not followed)" },
     ]);
+  });
+
+  test("a non-UTF-8 text file is profiled through the shared decode, not skipped (AGT-1816)", () => {
+    put("kit/cp1252.txt", new Uint8Array(Buffer.from("Contact \xd3scar Example today.\n", "latin1")));
+    const { profile, skipped } = buildProfile(["kit"], 5, dir);
+    expect(skipped).toEqual([]);
+    expect(profile.files.map((f) => f.path)).toEqual(["cp1252.txt"]);
   });
 
   test("each worksheet of a workbook is a table with its sheet, header row and columns", () => {

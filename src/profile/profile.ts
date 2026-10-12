@@ -4,6 +4,7 @@ import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { basename, extname, join, relative, resolve, sep } from "node:path";
 import { BLIND_DIR } from "../init.ts";
 import { POLICY_FILE, type PrivacyMode } from "../policy.ts";
+import { decode, EncodingError } from "../engine/encoding.ts";
 import { DocxError, docxParagraphs, planDocx } from "../engine/docx.ts";
 import { type Entry, planTranscript, shapeParagraphs, speakersOf } from "../engine/transcript.ts";
 import { type Cooccurrence, type Location, MAX_EXCERPT, type Profile, type ProfileDocument, type ProfileFile, type ProfileJsonKey, type ProfileTable, type ProfileTranscript } from "../schema.ts";
@@ -122,8 +123,6 @@ function collect(inputs: readonly string[], cwd: string, skipped: Skipped[]): Fo
   const unique = [...new Map(found.map((f) => [f.path, f])).values()];
   return unique.sort((a, b) => byCodeUnit(a.path, b.path));
 }
-
-const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
 
 interface TableColumns {
   table: ProfileTable;
@@ -259,9 +258,12 @@ export function buildProfile(inputs: readonly string[], k: number, cwd: string):
     }
     let text: string;
     try {
-      text = utf8.decode(bytes);
-    } catch {
-      skipped.push({ path: f.path, reason: "not valid UTF-8" });
+      // The same decode() apply uses (UTF-8, BOM-marked UTF-8/16, else Latin-1), so a file the
+      // engine will rewrite is never one the profile skipped.
+      text = decode(bytes).text;
+    } catch (e) {
+      if (!(e instanceof EncodingError)) throw e;
+      skipped.push({ path: f.path, reason: `cannot decode: ${e.message}` });
       continue;
     }
     if (format === "csv" || format === "tsv") {

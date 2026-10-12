@@ -403,7 +403,10 @@ restore it. The table and both keys are optional; with no `[context]`, the built
 | `enabled` | `true` or `false` (default `true`) | `false` turns the keywords off, built-in and extra |
 | `triggers` | array of strings and `{ word, kind }` tables | extra keywords or phrases, matched whole-word in any case; the value after each is redacted. A bare string expects a `secret`; a table names the `kind`: `secret`, `number` or `date` |
 
-Built-in keywords: `DOB` / `date of birth`; `DL` / `driver's license`; `plate`; `gate code` (also
+Built-in keywords: `DOB` / `date of birth` / `birthday`; `DL` / `driver's license`; `plate`;
+`username` / `user name` / `login` / `handle` / `screen name`; `badge` / `employee id` /
+`member id` / `staff id`; `spare key` / `house key` / `door key` / `key` followed by a place
+(`under`, `in`, `inside`, `behind`, `above`, `on top of`, `beneath`); `gate code` (also
 door, garage, alarm, entry, access, keypad and lockbox `code`/`pin`); `password` / `passcode` /
 `passphrase` / `pw`; `combo` / `combination`; `routing`; `account` / `acct`; `card` / `visa` /
 `mastercard` / `amex`; `CVV` / `CVC`; `policy`.
@@ -416,13 +419,36 @@ What counts as the value, after the keyword and any separators or filler (`:`, `
   plain lowercase or capitalised word straight after the keyword with nothing between
   (`its password rotated yet` redacts nothing; `password: dragon` and `password is dragon` do). A
   quoted value is taken to its closing quote.
-- The others (`account`, `card`, `routing`, `plate`, `DL`, `CVV`) take the next token only if it
-  holds a digit and is at least three characters, so `account manager` and `plate 2` stay.
-  `policy` also needs a number marker (`policy #AB-77123`, `policy number: 99120344`), so
+- The others (`account`, `card`, `routing`, `DL`, `CVV`, `badge`, `employee id`, `member id`,
+  `staff id`) take the next token only if it holds a digit and is at least three characters, so
+  `account manager` and `badge of honour` stay.
+- `plate` takes a plate of up to three tokens: an optional uppercase two-letter region code, then
+  one or two groups of 2-4 letters or digits (a space or dash between) that together hold a digit,
+  and the whole plate, region included, is redacted: `plate ST 7AB C12`, `plate ST 12-3456`,
+  `plate 7ABC123`. A second group needs a digit or capitals, so `plate 7AB was blue` takes
+  `7AB`. `plate 2` and `plate of food` stay.
+- `username`, `user name`, `login`, `handle` and `screen name` take one token of three or more
+  characters that mixes letters and digits or is dotted or underscored (`dana42`, `d.quill`,
+  `dana_42`, `@dana42`). After a separator or filler (`login: admin`, `username is root`) a plain
+  word of three or more letters counts too. Straight after the keyword, `login page` and
+  `please handle it` stay.
+- A key's hiding place: after `spare key`, `house key`, `door key` or a bare `key` (optionally
+  `is`/`are` and `kept`/`left`/`hidden`) a place that starts with `under`, `in`, `inside`,
+  `behind`, `above`, `on top of` or `beneath` is redacted from that word to the end of the clause
+  (a comma, full stop, semicolon, `!`, `?` or the line end), at most eight words:
+  `Spare key under the green mat by the back door.` becomes `Spare key REDACTED.` Abstract
+  places (`key under review`, `key in the report`) and compounds such as `primary key in` stay,
+  and so do `keyboard` and `key findings`.
+- `policy` also needs a number marker (`policy #AB-77123`, `policy number: 99120344`), so
   `the policy 2024 update` stays.
 - Card, account and routing numbers and combinations take following digit groups too:
   `card number 4111 1111 1111 1111`, `safe combo 12 34 56`.
-- A date after `DOB` may be numeric, `April 12, 1980` or `12 April 1980`.
+- A date after `DOB` (or `date of birth`, `birthday`) may be numeric, `April 12, 1980`,
+  `12 April 1980` or spoken: a month name with a day as an ordinal or cardinal word or number
+  (`third`, `the third`, `3rd`, `twenty-first`, `12`) and an optional year (`forty-two`,
+  `nineteen forty-two`, `two thousand five`, `'42`, `1942`): `June third forty-two`,
+  `the third of June nineteen forty-two`. A spoken year needs two parts (`forty-two`, or a century
+  word and one more), so `June third forty people` takes `June third`.
 - A value spelled out in digits right after the keyword (`gate code four four seven one`) is taken whole.
 - Up to four ordinary words may sit between the keyword and the value: `combo changed to 47-11-09`,
   `the gate code is now 9182#`, `password was reset to Example!42`, `license on file is ST 123`. A
@@ -446,7 +472,9 @@ is. An unknown `kind`, a blank `word` or any other key in the table is an error.
 01/02/1960 |`). In a DOCX table (also a DrawingML table), a CSV or an XLSX sheet, a cell that ends
 in a keyword (`DOB`, `Owner DOB:`, `Driver license`, `Account number`; at most four words, no
 sentence) marks the cell to its right as the value, which must fit the keyword's rule (a date for
-`DOB`, a digit and three characters for a number keyword, any non-prose text for a secret). A label
+`DOB`, a digit and three characters for a number keyword, any non-prose text for a secret, a handle for `username`). The `spare key`,
+`house key` and `door key` labels (also `key location`) take the place in the next cell; a bare
+`Key` header is not a label. A label
 in the first row of a table whose right neighbour is no value, or is a plain word beside a secret
 keyword (so it reads as the next column header), heads a column instead: every cell below it that
 fits the rule is the value. A cell that is itself a label is never a value. In a CSV or XLSX the

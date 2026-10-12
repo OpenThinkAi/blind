@@ -32,7 +32,7 @@ const NOTES =
   "Deploy key for the build box: q7k2m9x4z8p1w6n3b5c0r2t8\n" +
   "Invoice AB-2026-0001 for v2.10.3 of HelloWorld; Amoxi500mg for Person_1A2B, ref INC0012345.\n" +
   "Commit 3f9a2b1c4d5e6f708192a3b4c5d6e7f809a1b2c3 at 2026-10-12T10:02:11Z, weight 38.6lb, total $1,250.00.\n";
-const CSV = "Ticket,Memo\nT-1,router login aB3xY9qL until Friday\nT-2,nothing to report\n";
+const CSV = "Ticket,Memo\nT-1,router sign-in aB3xY9qL until Friday\nT-2,nothing to report\n";
 const JSON_DOC = `${JSON.stringify({ items: [{ memo: "please use P@ssw0rd!9 for the new account this week" }, { memo: "the Windows11 rollout is done for this month" }] }, null, 2)}\n`;
 const DOCX = makeZip(docxMembers({ body: "Portal sign-in: Zx9Qw7Lp2 (do not share)." }));
 // Mostly ordinary words, so the column pass leaves the cell as free text.
@@ -67,7 +67,7 @@ describe("secret pattern, end to end", () => {
     expect(text(r, "notes.md")).toContain("wifi: ExampleNet / REDACTED\n");
     expect(text(r, "notes.md")).toContain("Deploy key for the build box: REDACTED\n");
     // The Ticket column is identifier-like, so the column pass pseudonymises it; Memo is free text.
-    expect(text(r, "tickets.csv")).toMatch(/^Ticket,Memo\nValue_[0-9A-F]{4},router login REDACTED until Friday\nValue_[0-9A-F]{4},nothing to report\n$/);
+    expect(text(r, "tickets.csv")).toMatch(/^Ticket,Memo\nValue_[0-9A-F]{4},router sign-in REDACTED until Friday\nValue_[0-9A-F]{4},nothing to report\n$/);
     expect(text(r, "items.json")).toContain('"memo": "please use REDACTED for the new account this week"');
     expect(docxText(out(r, "portal.docx"))).toContain("Portal sign-in: REDACTED (do not share).");
     expect(memberText(out(r, "panel.xlsx"), "xl/worksheets/sheet1.xml")).toContain("<t>please use REDACTED for the alarm this month</t>");
@@ -91,7 +91,7 @@ describe("secret pattern, end to end", () => {
   test("off, nothing is redacted", () => {
     const off = applySpec(INPUTS, specWith({ ...OFF, secret: false }), { salt: SALT });
     expect(dec(out(off, "notes.md"))).toBe(NOTES);
-    expect(dec(out(off, "tickets.csv"))).toContain("router login aB3xY9qL until Friday");
+    expect(dec(out(off, "tickets.csv"))).toContain("router sign-in aB3xY9qL until Friday");
   });
 
   test("a spec without the field has it off (older specs keep their output)", () => {

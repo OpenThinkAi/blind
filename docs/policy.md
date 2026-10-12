@@ -135,7 +135,9 @@ Unset, `samples` follows the privacy mode: **5** under `local-only` and `none`, 
 `profile-only`, where the profile goes to a remote model. Setting it overrides the mode. `--samples
 N` on `blind profile` overrides the file for one run. Each sample is cut to 120 characters, ending
 in `…`. Samples are the only document text a profile carries (apart from the outlines and speaker
-names that `local-only` also sends, and which `profile-only` leaves out).
+names that `local-only` also sends, and which `profile-only` leaves out: there a transcript sample
+line's speaker label goes as `speaker_N`, and a transcript with more speakers than the profile lists
+sends no sample lines).
 
 ## `[privacy]`
 

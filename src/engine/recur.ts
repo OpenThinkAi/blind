@@ -47,6 +47,7 @@ import { identityOf, type PersonAliases } from "./identity.ts";
 import { looksLikePersonName } from "./prose.ts";
 import type { BlindMap } from "./map.ts";
 import type { ContextOptions } from "./context.ts";
+import type { Shield } from "./shield.ts";
 import { EntityMatcher, type ExtraForm, findPatternSpans, findSpans, type JoinOptions, type Span } from "./text.ts";
 
 /** A recurring value needs at least this many letters and digits; the audit's MIN_LEAK_LENGTH agrees. */
@@ -398,6 +399,8 @@ export class TextScanner {
     private readonly context?: ContextOptions,
     /** The policy keep terms and spec vocabulary a joined given name may not be (text.ts joinGivenNames), folded. */
     names: JoinOptions = {},
+    /** Kept values and placeholders (shield.ts): spans inside one are dropped. */
+    private readonly shield?: Shield,
   ) {
     this.spec = new EntityMatcher(entities);
     this.all = new EntityMatcher(entities, forms, names);
@@ -409,7 +412,8 @@ export class TextScanner {
    * password named in one turn boosts the secret pattern in the next two (secret.ts).
    */
   free(text: string, carry?: SecretCarry): Span[] {
-    return findSpans(text, this.all, this.patterns, this.keep, this.context, carry);
+    const spans = findSpans(text, this.all, this.patterns, this.keep, this.context, carry);
+    return this.shield === undefined ? spans : this.shield.filter(text, spans);
   }
 
   /**
@@ -419,7 +423,8 @@ export class TextScanner {
    */
   kept(text: string): Span[] {
     const shields = findPatternSpans(text, this.patterns, this.keep).filter((s) => s.cls === null);
-    return this.all.find(text, shields).filter((s) => s.source === "map" || s.source === "removed" || s.source === "speaker");
+    const spans = this.all.find(text, shields).filter((s) => s.source === "map" || s.source === "removed" || s.source === "speaker");
+    return this.shield === undefined ? spans : this.shield.filter(text, spans);
   }
 
   /** Whether a kept cell holds a spec entity or a pattern match, which `keep` leaves as written. */

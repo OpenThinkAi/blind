@@ -60,11 +60,12 @@ describe("a cell of a column the spec keeps", () => {
   const s = spec({ columns: [rule("clinic.csv", "clinic_phone", "keep", "vocabulary")], entities: { person: [{ canonical: "Dana Quill", aliases: [], parts: [] }] } });
   const csv = 'name,clinic_phone\nAnn,(206) 555-0199\n"Q, R",Dana Quill\n';
 
-  test("a phone number or an entity in it is a candidate saying it was kept by rule", () => {
+  test("a kept phone is shielded (no finding); an entity in the column is a candidate saying it was kept by rule", () => {
     const r = auditTree([entry("clinic.csv", csv)], s, mapOf());
     const hits = all(r).filter((f) => f.source === "pattern" || f.source === "entity");
-    expect(hits.length).toBe(2);
+    expect(hits.length).toBe(1);
     for (const f of hits) {
+      expect(f.source).toBe("entity");
       expect(f.severity).toBe("candidate");
       expect(f.reason).toContain("kept by rule");
     }
@@ -78,12 +79,10 @@ describe("a cell of a column the spec keeps", () => {
     expect(leaks.map((f) => f.file).sort()).toEqual(["clinic.csv", "clinic.csv", "handbook.txt", "handbook.txt"]);
   });
 
-  test("a BOM, a quoted cell and a tab-separated table are placed exactly", () => {
+  test("a BOM, a quoted cell and a tab-separated table are read exactly: both kept phones are shielded", () => {
     const tsv = spec({ columns: [rule("c.tsv", "phone", "keep", "vocabulary")] });
     const text = '﻿name\tphone\n"é, ü"\t(206) 555-0199\nx\t"(206) 555-0198"\n';
     const r = auditTree([entry("c.tsv", text)], tsv, mapOf());
-    const phones = all(r).filter((f) => f.source === "pattern");
-    expect(phones.length).toBe(2);
-    expect(phones.every((f) => f.severity === "candidate")).toBe(true);
+    expect(all(r).filter((f) => f.source === "pattern")).toEqual([]);
   });
 });

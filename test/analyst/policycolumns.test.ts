@@ -96,7 +96,7 @@ describe("matching", () => {
         { header: ["notes"], file: "private/*.csv", treatment: "drop", class: "unknown" },
         { header: ["note*"], treatment: "redact", class: "unknown" },
       ],
-      keep: { terms: ["Species", "Notes"] },
+      keep: { terms: ["Species", "Notes"], placeholders: true },
     });
     expect(cp.ruleFor({ file: "private/a.csv", header: "Notes" })).toMatchObject({ treatment: "drop", source: "policy" });
     expect(cp.ruleFor({ file: "public/a.csv", header: "Notes" })).toMatchObject({ treatment: "redact" });

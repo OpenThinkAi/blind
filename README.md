@@ -103,8 +103,10 @@ documents ------------ engine (deterministic) ---------------+--> blinded docume
   pseudonymised, not passed through; dates, amounts, quantities with units and small repeating
   categories (species, status) are not identifiers, and pass. People named only in prose are
   found without a model (an honorific, or a common given name and a surname) and blinded too; pet
-  names, places, breeds, keep-list terms and names in kept columns are left alone
-  ([docs/spec.md](docs/spec.md#how-blind-apply-uses-the-spec)).
+  names, places, breeds, keep-list terms and names in kept columns are left alone. A value held in
+  a `keep` column, and textbook placeholders (`John Doe`, `123 Main St`, `user@example.com`), are
+  kept wherever else they appear ([docs/policy.md](docs/policy.md#kept-columns-shield-their-values-everywhere);
+  [docs/spec.md](docs/spec.md#how-blind-apply-uses-the-spec)).
 - **Auditor** (independent of the engine): reads the output as it is on disk and reports leaks and
   candidates. Its rule-based layers never depend on a model.
 

@@ -18,6 +18,7 @@ import type { PseudoClass } from "./canonical.ts";
 import type { Pseudonymizer } from "./pseudonym.ts";
 import type { PatternName, Patterns } from "../schema.ts";
 import { partExclusion } from "./recur.ts";
+import type { Shield } from "./shield.ts";
 import { type EntityMatcher, findSpans, type Span } from "./text.ts";
 
 export type NameSlot = "file" | "folder" | "sheet" | "definedName";
@@ -156,6 +157,8 @@ export class NameRewriter {
     private readonly keep: readonly string[] = [],
     /** Spec vocabulary forms and policy keep terms, folded (recur.ts vocabularyForms, keepForms): a lone word among them is never replaced in another case. */
     private readonly terms: { vocabulary: ReadonlySet<string>; keep: ReadonlySet<string> } = { vocabulary: new Set(), keep: new Set() },
+    /** Kept values and placeholders (shield.ts): a span inside one is not replaced in a name either. */
+    private readonly shield?: Shield,
   ) {
     // Names are never searched for secrets: every match would become the same REDACTED, and two
     // files could end up with one name. The audit does not read names for secrets either.
@@ -189,10 +192,11 @@ export class NameRewriter {
       const { lone: _lone, ...span } = s;
       candidates.push(span);
     }
-    candidates.sort((a, b) => a.start - b.start || b.end - a.end);
+    const shielded = this.shield === undefined ? candidates : this.shield.filter(name, candidates, false);
+    shielded.sort((a, b) => a.start - b.start || b.end - a.end);
     const out: Span[] = [];
     let taken = 0;
-    for (const s of candidates) {
+    for (const s of shielded) {
       if (s.start < taken) continue;
       out.push(s);
       taken = s.end;

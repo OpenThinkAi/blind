@@ -241,7 +241,7 @@ describe("assertProfilePayload refuses anything but statistics and tokens (AGT-1
     transcripts: [{ file: "d.vtt", speakers: [], sampleLines: [] }],
     cooccurrence: [],
   });
-  const policy = { sensitive: { classes: ["person" as const], description: "", examples: [] }, keep: { terms: ["Species"] } };
+  const policy = { sensitive: { classes: ["person" as const], description: "", examples: [] }, keep: { terms: ["Species"], placeholders: true } };
   const send = (x: Profile) => () => assertProfilePayload(profilePayload(x, policy));
 
   test("tokenised and value-free, it passes; a real header or key is refused, naming each", () => {

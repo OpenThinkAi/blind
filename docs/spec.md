@@ -816,6 +816,7 @@ One entry per table (a CSV/TSV file or a worksheet).
 | `file` | string, non-empty | yes | The file the table is in. |
 | `sheet` | string, at most 120 characters | no | Worksheet name, for workbooks. |
 | `headerRow` | integer, 1 or more | yes | 1-based row number of the header row. |
+| `overflowRows` | integer, 1 or more | no | CSV/TSV only: data rows wider than the header (a stray delimiter). Their extra cells are counted in the last column. Absent when 0. |
 | `columns` | array of `{ header, stats }` | yes | `header` (string, at most 120 characters, may be `""`) and its statistics. |
 
 ### `jsonKeys`

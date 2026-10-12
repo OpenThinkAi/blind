@@ -48,20 +48,30 @@ export function sniffDelimiter(text: string, preferred?: string): string {
 }
 
 /**
- * A row below the header must be as wide as the header; a mismatch means a stray or unclosed quote
- * swallowed rows or the file is corrupt. Rows above the header (title lines) and blank lines are exempt.
- * `headerIndex` is 0-based.
+ * Checks the rows below the header and returns how many are wider than it (overflow rows). A row of
+ * a different width is a stray delimiter (an empty cell, a tab typed into a notes field), which is
+ * accepted: a short row's missing cells are empty, and a wide row's extra cells continue the last
+ * column. It is refused only when a quoted field spans a line break, the signature of an unclosed
+ * quote that swallowed rows (a quote closed by a later quote is refused by `parseCsv`). Rows above
+ * the header (title lines) and blank lines are exempt. `headerIndex` is 0-based. The profiler and
+ * the engine both call this, so they always agree.
  */
-export function assertRowWidths(rows: readonly (readonly (Cell | string)[])[], headerIndex: number): void {
+export function assertRowWidths(rows: readonly (readonly (Cell | string)[])[], headerIndex: number): number {
   const width = rows[headerIndex]?.length;
-  if (width === undefined) return;
+  if (width === undefined) return 0;
+  let overflow = 0;
   for (let r = headerIndex + 1; r < rows.length; r++) {
     const row = rows[r] as readonly (Cell | string)[];
-    const blank = row.length === 1 && (typeof row[0] === "string" ? row[0] : (row[0] as Cell).raw) === "";
-    if (row.length !== width && !blank) {
+    const text = (c: Cell | string): string => (typeof c === "string" ? c : c.value);
+    const blank = row.length === 1 && text(row[0] as Cell | string) === "";
+    if (row.length === width || blank) continue;
+    // Only a quoted field can hold a line break, so a break in a cell value means a quoted field spans lines.
+    if (row.some((c) => /[\r\n]/.test(text(c)))) {
       throw new CsvError(`row ${r + 1} has ${row.length} cells but the header has ${width}; a quote is probably unclosed`);
     }
+    if (row.length > width) overflow++;
   }
+  return overflow;
 }
 
 export function parseCsv(text: string, delim: string): Row[] {

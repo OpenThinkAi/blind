@@ -62,18 +62,27 @@ export interface TableResult {
 
 export const fold = (v: string): string => v.normalize("NFKC").trim().toLowerCase();
 
-/** Profiles one parsed table. Rows above the header are skipped; blank rows below it are ignored. */
-export function profileTable(file: string, rows: readonly string[][], k: number): TableResult {
+/**
+ * Profiles one parsed table. Rows above the header are skipped; blank rows below it are ignored.
+ * With `foldOverflow` (CSV/TSV), a data row's cells past the header's width count in the last column,
+ * as `blind apply` treats them, and the rows are tallied in `overflowRows`.
+ */
+export function profileTable(file: string, rows: readonly string[][], k: number, foldOverflow = false): TableResult {
   const detected = detectHeaderRow(rows);
   const headerRow = detected ?? 1;
   const header = rows[headerRow - 1] ?? [];
   const data = rows.slice(headerRow).filter((r) => filled(r).length > 0);
-  const width = Math.max(header.length, ...data.map((r) => r.length));
-  const cells = Array.from({ length: width }, (_, c) => data.map((r) => r[c] ?? ""));
+  const fold_ = foldOverflow && header.length > 0;
+  const width = fold_ ? header.length : Math.max(header.length, ...data.map((r) => r.length));
+  const overflowRows = fold_ ? data.filter((r) => r.length > width).length : 0;
+  const cells = Array.from({ length: width }, (_, c) =>
+    fold_ && c === width - 1 ? data.flatMap((r) => (r.length > c ? r.slice(c) : [""])) : data.map((r) => r[c] ?? ""),
+  );
   return {
     table: {
       file,
       headerRow,
+      ...(overflowRows > 0 ? { overflowRows } : {}),
       columns: cells.map((values, c) => ({ header: excerpt(header[c] ?? ""), stats: valueStats(values, k) })),
     },
     noHeader: detected === null && rows.length > 0,

@@ -34,6 +34,7 @@
           "file": { "$ref": "#/$defs/nonEmpty" },
           "sheet": { "$ref": "#/$defs/excerpt" },
           "headerRow": { "type": "integer", "minimum": 1 },
+          "overflowRows": { "type": "integer", "minimum": 1 },
           "columns": {
             "type": "array",
             "items": {

@@ -147,6 +147,8 @@ export interface FileReport {
   headerRow?: number;
   /** CSV/TSV only: no row looked like a header, so row 1 was used, as the profiler does. */
   noHeader?: boolean;
+  /** CSV/TSV only: data rows wider than the header (a stray delimiter); their extra cells continue the last column. Absent when 0. */
+  overflowRows?: number;
   columns: ColumnReport[];
   /** Free-text replacements (text files, and header, preamble and kept cells of tables). */
   entityReplacements: number;
@@ -255,6 +257,8 @@ interface TablePlan {
   columns: ColumnReport[];
   /** 0-based indices of `drop` columns, removed from every row (preamble and header too) on render. */
   dropped: Set<number>;
+  /** Data rows wider than the header; their extra cells continue the last column. */
+  overflowRows: number;
 }
 
 interface TextPlan {
@@ -344,9 +348,12 @@ function planTable(
   // 0-based; like the profiler, row 1 stands in when no row looks like a header.
   const detected = detectHeaderRow(rows.map((r) => r.cells.map((c) => c.value)));
   const headerRow = rows.length === 0 ? -1 : (detected ?? 1) - 1;
-  assertRowWidths(rows.map((r) => r.cells), headerRow);
+  const overflowRows = assertRowWidths(rows.map((r) => r.cells), headerRow);
   const headerCells = headerRow >= 0 ? (rows[headerRow] as Row).cells : [];
-  const width = Math.max(0, ...rows.map((r) => r.cells.length));
+  // The header sets the columns. A data row's extra cells (a stray delimiter) continue the last column.
+  const width = headerCells.length;
+  const lastCol = width - 1;
+  const maxCells = Math.max(width, ...rows.slice(headerRow + 1).map((r) => r.cells.length));
   const headers = Array.from({ length: width }, (_, i) => headerCells[i]?.value ?? "");
 
   for (const rule of rules) {
@@ -369,7 +376,10 @@ function planTable(
   for (let col = 0; col < width; col++) {
     const header = headers[col] as string;
     const rule = rules.find((r) => (r.header as string).trim() === header.trim());
-    const { action, stats } = decide(rule, data.map((r) => r.cells[col]?.value ?? ""));
+    // The cells of this column in a row, with their positions: the last column also owns the overflow.
+    const owned = (row: Row): { cell: Cell; at: number }[] =>
+      (col === lastCol ? row.cells.slice(col) : row.cells.slice(col, col + 1)).map((cell, i) => ({ cell, at: col + i }));
+    const { action, stats } = decide(rule, data.flatMap((r) => (col === lastCol ? owned(r).map((o) => o.cell.value) : [r.cells[col]?.value ?? ""])));
     const column: ColumnReport = {
       index: col,
       header,
@@ -382,18 +392,20 @@ function planTable(
     columns.push(column);
     if (action.kind === "drop") {
       dropped.add(col);
-      column.changed = data.filter((row) => isFilled(row.cells[col])).length;
+      if (col === lastCol) for (let c = width; c < maxCells; c++) dropped.add(c);
+      column.changed = data.filter((row) => owned(row).some((o) => isFilled(o.cell))).length;
       continue;
     }
     data.forEach((row, i) => {
-      const cell = row.cells[col];
-      if (!isFilled(cell)) return;
-      const key = `${headerRow + 1 + i}:${col}`;
-      if (action.kind === "redact") edits.set(key, { kind: "fixed", value: REDACTED_VALUE });
-      else if (action.kind === "pseudo") {
-        edits.set(key, { kind: "pseudo", cls: action.cls });
-        if (rule?.class !== "vocabulary") mapped.push({ cls: action.cls, value: cell.value });
-      } else pending.push({ key, value: cell.value, keep: action.kind === "keep", column });
+      for (const { cell, at } of owned(row)) {
+        if (!isFilled(cell)) continue;
+        const key = `${headerRow + 1 + i}:${at}`;
+        if (action.kind === "redact") edits.set(key, { kind: "fixed", value: REDACTED_VALUE });
+        else if (action.kind === "pseudo") {
+          edits.set(key, { kind: "pseudo", cls: action.cls });
+          if (rule?.class !== "vocabulary") mapped.push({ cls: action.cls, value: cell.value });
+        } else pending.push({ key, value: cell.value, keep: action.kind === "keep", column });
+      }
     });
   }
   // Preamble rows and the header row are free text. A dropped column leaves with its header; a
@@ -418,6 +430,7 @@ function planTable(
     mapped,
     columns,
     dropped,
+    overflowRows,
   };
 }
 
@@ -1003,7 +1016,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         if (value === cell.value) continue;
         cell.raw = renderCell(value, cell.quoted, p.delim);
         cell.value = value;
-        if (r > p.headerRow) (p.columns[c] as ColumnReport).changed++;
+        if (r > p.headerRow) (p.columns[Math.min(c, p.columns.length - 1)] as ColumnReport).changed++;
       }
       if (p.dropped.size > 0) {
         for (let r = Math.max(0, p.headerRow); r < p.rows.length; r++) {
@@ -1021,6 +1034,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         noHeader: p.noHeader,
         outputPath: p.input.path,
         columns: p.columns,
+        ...(p.overflowRows > 0 ? { overflowRows: p.overflowRows } : {}),
         entityReplacements,
         patternReplacements,
         mappedReplacements,

@@ -96,6 +96,8 @@ export interface ProfileTable {
   sheet?: string;
   /** 1-based row number of the header. */
   headerRow: number;
+  /** CSV/TSV: data rows wider than the header, whose extra cells are counted in the last column. Absent when 0. */
+  overflowRows?: number;
   columns: { header: string; stats: ValueStats }[];
 }
 

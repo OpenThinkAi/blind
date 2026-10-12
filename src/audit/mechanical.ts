@@ -746,7 +746,8 @@ function columnFindings(sink: PartSink, bytes: Uint8Array, rules: readonly Colum
   if (rows.length === 0) return;
   const headerRow = (detectHeaderRow(rows.map((r) => r.cells.map((c) => c.value))) ?? 1) - 1;
   const headers = (rows[headerRow]?.cells ?? []).map((c) => c.value);
-  const width = Math.max(0, ...rows.map((r) => r.cells.length));
+  // The header sets the columns; a data row's extra cells continue the last column, as the engine reads them.
+  const width = headers.length;
   const named = new Set(rules.filter((r) => r.header !== undefined).map((r) => (r.header as string).trim()));
   for (const r of rules) {
     if (r.header === undefined || (r.treatment !== "drop" && r.treatment !== "redact")) continue;
@@ -757,8 +758,8 @@ function columnFindings(sink: PartSink, bytes: Uint8Array, rules: readonly Colum
       continue;
     }
     const left = rows.slice(headerRow + 1).filter((row) => {
-      const v = row.cells[col]?.value ?? "";
-      return v.trim() !== "" && v !== REDACTED_VALUE;
+      const owned = col === width - 1 ? row.cells.slice(col) : row.cells.slice(col, col + 1);
+      return owned.some((c) => c.value.trim() !== "" && c.value !== REDACTED_VALUE);
     }).length;
     if (left > 0) breach(r, `the spec redacts ${columnLabel(r)}, but ${left} cell(s) in it are not ${REDACTED_VALUE}`);
   }

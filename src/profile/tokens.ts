@@ -153,7 +153,8 @@ export function tokeniseProfile(profile: Profile): Tokenised {
       link(makeLocation(t.file, t.sheet, c.header, undefined), makeLocation(file, sh, header, undefined));
       return { ...c, header };
     });
-    return sh === undefined ? { file, headerRow: t.headerRow, columns } : { file, sheet: sh, headerRow: t.headerRow, columns };
+    const overflow = t.overflowRows === undefined ? {} : { overflowRows: t.overflowRows };
+    return sh === undefined ? { file, headerRow: t.headerRow, ...overflow, columns } : { file, sheet: sh, headerRow: t.headerRow, ...overflow, columns };
   });
   const jsonOut = profile.jsonKeys.map((j) => {
     const sent = { ...j, file: path(j.file), path: keyPath(j.path) };

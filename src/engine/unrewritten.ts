@@ -24,6 +24,20 @@ export function unrewrittenSpans(entities: (text: string) => Span[], keep: reado
 const URI_ELEMENTS = new Set(["ext", "compatSetting", "graphicData", "schemaRef"]);
 
 /**
+ * Worksheet attributes that address or format a row, column or cell: references, spans, styles,
+ * types, sizes and counts. They are numbers and cell references, never document text, yet a
+ * renumbered id of three digits equals a row number (`<row r="123">`). Text-bearing worksheet
+ * attributes (hyperlink and data-validation text, filter values) are rewritten by the handler, and
+ * any other attribute is still scanned.
+ */
+const WORKSHEET_STRUCTURE = new Set([
+  "r", "spans", "ref", "sqref", "s", "t", "ht", "hidden", "collapsed", "outlineLevel", "customHeight", "customFormat",
+  "thickBot", "thickTop", "min", "max", "width", "customWidth", "style", "bestFit", "count", "uniqueCount", "cm", "vm", "ph", "dyDescent",
+  "x", "y", "i", "si", "zoomScale", "zoomScaleNormal", "topLeftCell", "activeCell", "tabSelected", "workbookViewId",
+]);
+const WORKSHEET_PART = /^xl\/(worksheets|chartsheets|dialogsheets|macrosheets)\/[^/]+\.xml$/i;
+
+/**
  * Attribute positions that hold OOXML format structure, never document text: namespace
  * declarations, content-type and relationship-type URIs, extension URIs, a property set's format
  * id, and the fixed template ids. Matched by position, never by value. These mirror the positions
@@ -39,7 +53,9 @@ export function structuralAttribute(member: string, element: string, attr: strin
   if (at === "uri") return URI_ELEMENTS.has(el);
   if (attr === "fmtid") return el === "property" && member === "docProps/custom.xml";
   if (el === "themeFamily" && (attr === "id" || attr === "vid")) return /(^|\/)theme\/theme\d*\.xml$/i.test(member);
-  return el === "tmpl" && at === "val";
+  if (el === "tmpl" && at === "val") return true;
+  // Worksheet addressing: an unprefixed attribute (or Excel's own dyDescent), never a name or a link.
+  return WORKSHEET_PART.test(member) && WORKSHEET_STRUCTURE.has(at) && (!attr.includes(":") || attr === "x14ac:dyDescent");
 }
 
 /**

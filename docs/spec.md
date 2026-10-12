@@ -418,7 +418,9 @@ is an error). The column table above applies to every cell, with these workbook 
   query tables, custom XML) is scanned for spec entities, recurring values and every pattern shape
   (email, host, IP, GUID, MAC), including a pattern switched off in the spec; blind does not rewrite
   these parts, so it refuses rather than rewrites. Namespace, content-type and relationship-type
-  URIs and Office's template IDs are format structure and are not scanned. One found there stops the
+  URIs, Office's template IDs and worksheet addressing attributes (a row's or cell's `r`, `spans`, `ref`,
+  `s`, `t`, `ht` and the like, which are references and sizes, never text) are format structure and are
+  not scanned. One found there stops the
   workbook (listed and not written, exit 1), naming the part and element but never the value. So
   does a member that cannot be parsed, a cell without a reference, and a zip that is not a workbook.
   Members that are not XML are copied unread and listed in the report when they are images, fonts

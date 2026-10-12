@@ -246,7 +246,7 @@ describe("DOCX: every location (AC2, AC4)", () => {
     expect(f.metadataReplacements).toBe(10);
     const report = renderReport(res);
     expect(report).toContain("contract.docx (docx, utf8)");
-    expect(report).toContain("metadata: 10 author, creator or company values replaced");
+    expect(report).toContain("metadata: 10 author, creator, company or account-name values replaced");
     expect(report).toContain("warning: 1 image copied unchanged (images are not blinded): word/media/image1.png");
     expect(res.skipped).toEqual([]);
   });

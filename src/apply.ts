@@ -168,7 +168,7 @@ export function renderReport(result: ApplyResult): string {
       lines.push(`  ${f.mappedReplacements} value${f.mappedReplacements === 1 ? "" : "s"} blinded in a column replaced again where ${f.mappedReplacements === 1 ? "it recurs" : "they recur"} outside it`);
     }
     if ((f.metadataReplacements ?? 0) > 0) {
-      lines.push(`  metadata: ${f.metadataReplacements} author, creator or company value${f.metadataReplacements === 1 ? "" : "s"} replaced`);
+      lines.push(`  metadata: ${f.metadataReplacements} author, creator, company or account-name value${f.metadataReplacements === 1 ? "" : "s"} replaced`);
     }
     if ((f.speakerMentions ?? 0) > 0) {
       lines.push(`  ${f.speakerMentions} transcript speaker name${f.speakerMentions === 1 ? "" : "s"} replaced`);

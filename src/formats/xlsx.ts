@@ -11,6 +11,7 @@
 
 import { officeLinkAttribute, officeLinkText } from "./officeids.ts";
 import { type Frame, localName, type MemberResult, rewriteOoxml, type RewriteRules, ZipError } from "./ooxml.ts";
+import { accountSegments } from "./paths.ts";
 
 /** The workbook cannot be read as a spreadsheet (as opposed to a malformed zip or XML member). */
 export class XlsxError extends Error {
@@ -50,10 +51,31 @@ export type Slot =
   /** One of Office's own linking IDs (src/formats/officeids.ts): `xr:uid`, threaded comment ids, `x14:id`. */
   | "officeId"
   /** `documentId` on `xr:revisionPtr`: a version prefix, then linking IDs. */
-  | "documentId";
+  | "documentId"
+  /**
+   * Identity metadata, replaced as a whole whatever the spec says (as DOCX does): `dc:creator`,
+   * `cp:lastModifiedBy`, app.xml Manager (person) and Company (org), comment authors, threaded-comment
+   * person names and user IDs, the workbook's reserved-by user name. `wholeClass` gives the class.
+   */
+  | "whole"
+  /**
+   * A path (`x15ac:absPath`, app.xml Template and HyperlinkBase, an external link's target, and any
+   * other attribute holding a path, src/formats/paths.ts): its account-name segments are replaced
+   * whole, the rest is free text.
+   */
+  | "path";
 
-const CORE_TEXT = new Set(["title", "subject", "creator", "keywords", "description", "lastModifiedBy", "category", "contentStatus", "identifier", "version"]);
-const APP_TEXT = new Set(["Application", "Company", "Manager", "HyperlinkBase", "Template"]);
+const CORE_TEXT = new Set(["title", "subject", "keywords", "description", "category", "contentStatus", "identifier", "version"]);
+const APP_TEXT = new Set(["Application"]);
+const CORE_WHOLE = new Set(["creator", "lastModifiedBy"]);
+const APP_WHOLE = new Set(["Company", "Manager"]);
+const APP_PATH = new Set(["HyperlinkBase", "Template"]);
+
+/** The pseudonym class of a `whole` slot, by its element (a text node) or attribute local name; the same classes DOCX uses. */
+export function wholeClass(el: Frame, attribute?: string): "person" | "org" | "id" {
+  const name = attribute === undefined ? local(el) : localName(attribute);
+  return name === "Company" ? "org" : name === "userId" ? "id" : "person";
+}
 const HEADER_FOOTER = new Set(["oddHeader", "oddFooter", "evenHeader", "evenFooter", "firstHeader", "firstFooter"]);
 const FORMULA = new Set(["formula", "formula1", "formula2", "calculatedColumnFormula", "totalsRowFormula"]);
 const VALIDATION_TEXT = new Set(["prompt", "error", "promptTitle", "errorTitle"]);
@@ -67,6 +89,16 @@ const within = (parents: readonly Frame[], name: string): boolean => parents.som
  * it. `member` is the zip member path; the root element decides the part's type.
  */
 export function classify(member: string, el: Frame, parents: readonly Frame[], attribute?: string): Slot | null {
+  const slot = classifyPart(member, el, parents, attribute);
+  if (attribute === undefined || (slot !== null && slot !== "text")) return slot;
+  // Any other attribute that holds a path with an account name in it, except a part's own name or an
+  // internal relationship's target (renaming those would break the package).
+  const n = localName(el.name);
+  if ((n === "Relationship" && attribute === "Target") || attribute === "PartName") return slot;
+  return accountSegments(el.attrs.get(attribute) ?? "").length > 0 ? "path" : slot;
+}
+
+function classifyPart(member: string, el: Frame, parents: readonly Frame[], attribute?: string): Slot | null {
   const root = local(parents[0] ?? el);
   const name = local(el);
   const parent = local(parents[parents.length - 1]);
@@ -81,7 +113,8 @@ export function classify(member: string, el: Frame, parents: readonly Frame[], a
       if (attr === undefined) return name === "definedName" ? "formula" : null;
       if (name === "sheet" && attr === "name") return "sheetName";
       if (name === "definedName" && attr === "name") return "definedName";
-      if ((name === "fileSharing" && attr === "userName") || (name === "absPath" && attr === "url")) return "text";
+      if (name === "fileSharing" && attr === "userName") return "whole";
+      if (name === "absPath" && attr === "url") return "path";
       return null;
     case "worksheet":
       if (attr === undefined) {
@@ -99,16 +132,20 @@ export function classify(member: string, el: Frame, parents: readonly Frame[], a
     case "sst":
       return attr === undefined && name === "t" ? "sharedRun" : null;
     case "comments":
-      return attr === undefined && (name === "t" || name === "author") ? "text" : null;
+      if (attr !== undefined) return null;
+      return name === "author" ? "whole" : name === "t" ? "text" : null;
     case "ThreadedComments":
       return attr === undefined && name === "text" ? "text" : null;
     case "personList":
-      return name === "person" && (attr === "displayName" || attr === "userId") ? "text" : null;
+      return name === "person" && (attr === "displayName" || attr === "userId") ? "whole" : null;
     case "coreProperties":
-      return attr === undefined && parents.length === 1 && CORE_TEXT.has(name) ? "text" : null;
+      if (attr !== undefined || parents.length !== 1) return null;
+      return CORE_WHOLE.has(name) ? "whole" : CORE_TEXT.has(name) ? "text" : null;
     case "Properties":
       if (/(^|\/)app\.xml$/i.test(member)) {
         if (attr !== undefined) return null;
+        if (parents.length === 1 && APP_WHOLE.has(name)) return "whole";
+        if (parents.length === 1 && APP_PATH.has(name)) return "path";
         if (parents.length === 1 && APP_TEXT.has(name)) return "text";
         if (name === "lpstr") return within(parents, "TitlesOfParts") ? "display" : "text";
         return null;
@@ -146,7 +183,7 @@ export function classify(member: string, el: Frame, parents: readonly Frame[], a
       if (attr === undefined) return name === "t" ? "text" : null;
       return name === "cNvPr" && (attr === "name" || attr === "descr" || attr === "title") ? "text" : null;
     case "Relationships":
-      return name === "Relationship" && attr === "Target" && el.attrs.get("TargetMode") === "External" ? "text" : null;
+      return name === "Relationship" && attr === "Target" && el.attrs.get("TargetMode") === "External" ? "path" : null;
     default:
       return null;
   }

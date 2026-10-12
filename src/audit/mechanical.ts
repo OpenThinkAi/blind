@@ -17,7 +17,10 @@
 //   that case is a `leak`, in another case a `candidate`. A part that is also an
 //   ordinary word (src/profile/words.ts) or a keep term is never a leak: in its
 //   rule's case it is a candidate, otherwise not reported;
-// - every match of an enabled spec pattern that is not a pseudonym.
+// - every match of an enabled spec pattern that is not a pseudonym;
+// - in an OOXML package, an account name in a path (`C:\Users\avery\`, `/Users/avery/`:
+//   src/formats/paths.ts) that is not a pseudonym, in any attribute and in the
+//   app.xml Template and HyperlinkBase text: the engine replaces every one.
 //
 // In an OOXML package, namespace, content-type and relationship-type URIs and
 // fixed template IDs are format structure and are blanked before scanning, by
@@ -45,7 +48,8 @@ import { findPatternSpans, keepDomains, type Span } from "../engine/text.ts";
 import { detectHeaderRow } from "../profile/table.ts";
 import { DICTIONARY } from "../profile/words.ts";
 import { fold, foldWithMap, stringView, type View, viewsOf, xmlBaseView } from "./views.ts";
-import { CONTENT_TYPES_PART, looksLikeXml, officeIdAttribute, ooxmlUriAttribute, walkXml } from "./xml.ts";
+import { accountSegments } from "../formats/paths.ts";
+import { CONTENT_TYPES_PART, localName, looksLikeXml, officeIdAttribute, ooxmlUriAttribute, walkXml } from "./xml.ts";
 import { looksLikeZip, readZip, type ZipBudget, ZipError, zipBudget } from "./zip.ts";
 
 export type Status = "clean" | "candidates" | "leak";
@@ -617,7 +621,55 @@ function scanBytes(sink: PartSink, part: string, bytes: Uint8Array, depth: numbe
       continue;
     }
     scanBytes(sink, memberPart, ooxml ? blankOoxmlUris(m.name, m.bytes) : m.bytes, depth + 1, ctx, budget);
+    if (ooxml) accountFindings(sink, memberPart, m.name, m.bytes, ctx);
   }
+}
+
+/** app.xml elements whose text is a path. */
+const PATH_ELEMENTS = new Set(["Template", "HyperlinkBase"]);
+
+/**
+ * Account names left in the paths of an OOXML package member: in any attribute but a namespace,
+ * content-type or relationship-type URI, and in the text of Template and HyperlinkBase. Each one
+ * that is not a pseudonym is a leak (`class` "account"), unless another finding already covers it.
+ */
+function accountFindings(sink: PartSink, part: string, member: string, bytes: Uint8Array, ctx: Context) {
+  if (bytes.length === 0 || looksLikeZip(bytes)) return;
+  const view = xmlBaseView(bytes);
+  if (!looksLikeXml(member, view.text)) return;
+  const found: PlacedHit[] = [];
+  const check = (start: number, end: number) => {
+    for (const seg of accountSegments(view.text.slice(start, end))) {
+      if (isPseudonym(seg.value, ctx.map)) continue;
+      const a = start + seg.start;
+      const b = start + seg.end;
+      const byteStart = view.byteAt(a);
+      const byteEnd = view.byteAt(b);
+      if (sink.findings.some((f) => f.part === part && f.in === "content" && f.offset !== null && f.offset >= byteStart && f.offset < byteEnd)) continue;
+      found.push({
+        start: a,
+        end: b,
+        value: seg.value,
+        encoding: view.encoding,
+        line: lineAt(view.text, undefined, a)[0],
+        class: "account",
+        source: "pattern",
+        severity: "leak",
+        reason: "an account name in a path survives",
+        byteStart,
+        byteEnd,
+      });
+    }
+  };
+  walkXml(view.text, {
+    attribute(element, attr, start, end) {
+      if (!ooxmlUriAttribute(member, element, attr)) check(start, end);
+    },
+    text(start, end, parent) {
+      if (parent !== undefined && PATH_ELEMENTS.has(localName(parent))) check(start, end);
+    },
+  });
+  pushHits(sink, part, "content", found);
 }
 
 /**

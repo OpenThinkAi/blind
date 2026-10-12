@@ -1,6 +1,10 @@
 // The engine for XLSX workbooks: each worksheet is a table with the same column
 // treatments as a CSV file, and every other place identifying text lives in a
-// workbook (src/formats/xlsx.ts `classify`) is rewritten as free text.
+// workbook (src/formats/xlsx.ts `classify`) is rewritten as free text, except
+// identity metadata (authors, creator, last modified by, manager, company,
+// threaded-comment people), which is replaced as a whole whatever the spec says,
+// as DOCX does, and the account names in paths (src/formats/paths.ts), which are
+// replaced as a whole with a person pseudonym.
 //
 // Planned in three steps, like the rest of the engine:
 // 1. planXlsx: read the workbook, decide every column, and give every shared
@@ -23,6 +27,7 @@
 
 import type { ColumnRule } from "../schema.ts";
 import { type Frame, localName, type MemberResult, rewriteOoxml, ZipError } from "../formats/ooxml.ts";
+import { replaceAccounts } from "../formats/paths.ts";
 import {
   cellText,
   classify,
@@ -32,6 +37,7 @@ import {
   sheetRows,
   slotRules,
   tokenizeFormula,
+  wholeClass,
   type XlsxCell,
   XlsxError,
   type XlsxWorkbook,
@@ -99,6 +105,8 @@ export interface XlsxPlan {
   requests: { cls: PseudoClass; value: string }[];
   /** Hex linking IDs the render needs (src/engine/officeid.ts), for the caller to derive in sorted order. */
   hexIds: string[];
+  /** Identity metadata and account names replaced whole, as written; filled by prepareXlsx. */
+  metadata: string[];
 }
 
 const NUMBER = /^(-?)(\d+)(?:\.(\d+))?([Ee][+-]?\d+)?$/;
@@ -219,7 +227,7 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
     }
     return [...list].sort((a, b) => rank(a) - rank(b))[0] as Action;
   });
-  return { wb, cells, strings, columns, sheets, columnValues, mapped, pending, requests: [], hexIds: [] };
+  return { wb, cells, strings, columns, sheets, columnValues, mapped, pending, requests: [], hexIds: [], metadata: [] };
 }
 
 /** Every value in the workbook that no pseudonym may equal. */
@@ -232,6 +240,7 @@ export function xlsxValues(p: XlsxPlan): string[] {
   for (const s of p.wb.sharedStrings) out.push(s.runs.join(""));
   out.push(...p.wb.definedNames);
   for (const t of p.wb.tables) out.push(t.name, t.displayName, ...t.columns);
+  out.push(...p.metadata);
   return out;
 }
 
@@ -257,6 +266,8 @@ export interface Rendered {
   /** Transcript speakers' names (or parts, or misspellings) replaced. */
   speakerReplacements: number;
   keptHosts: number;
+  /** Identity metadata values and account names in paths replaced as a whole. */
+  metadataReplacements: number;
 }
 
 /**
@@ -324,6 +335,17 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
   let mappedReplacements = 0;
   let speakerReplacements = 0;
   let keptHosts = 0;
+  let metadataReplacements = 0;
+  // Replaced whole: an author, creator, company or user ID, or an account name in a path.
+  const wholeValue = (cls: PseudoClass, value: string): string => {
+    const core = value.trim();
+    if (core === "") return value;
+    if (!render) p.metadata.push(core);
+    const to = pz.pseudonym(cls, core);
+    if (to !== core) metadataReplacements++;
+    const lead = value.slice(0, value.indexOf(core));
+    return lead + to + value.slice(lead.length + core.length);
+  };
   const rewrite = (text: string, spans: readonly Span[]): string => {
     let out = "";
     let at = 0;
@@ -531,6 +553,10 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
           return rewriteOfficeId("id", value, pz, ids);
         case "documentId":
           return rewriteOfficeId("documentId", value, pz, ids);
+        case "whole":
+          return wholeValue(wholeClass(ctx.element, ctx.attribute), value);
+        case "path":
+          return replaceAccounts(value, (seg) => wholeValue("person", seg), free);
       }
     },
     (member) => {
@@ -560,6 +586,7 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
     mappedReplacements,
     speakerReplacements,
     keptHosts,
+    metadataReplacements,
   };
 }
 

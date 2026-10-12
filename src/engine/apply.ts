@@ -58,7 +58,7 @@ import { decode, type Encoding, EncodingError, encode } from "./encoding.ts";
 import { isJsonNumber, type JsonFormat, JsonError, type JsonToken, jsonCuts, quote, scanJson, scanJsonl, stringOffsets } from "./json.ts";
 import type { BlindMap } from "./map.ts";
 import { type EntityEntry, Pseudonymizer } from "./pseudonym.ts";
-import { type ColumnOutcome, decide, outcomeOf } from "./columns.ts";
+import { type ColumnOutcome, decide, outcomeOf, removedForms } from "./columns.ts";
 import { DocxError, type DocxPlan, docxParagraphs, docxWholes, FONT, IMAGE, planDocx, THUMBNAIL, thumbnailReason, refuseDocxUnrewritten, renderDocx, scanDocx } from "./docx.ts";
 import { OfficeIds } from "./officeid.ts";
 import { NameRewriter, rewriteSpans } from "./names.ts";
@@ -155,6 +155,8 @@ export interface FileReport {
   patternReplacements: number;
   /** Values pseudonymised by a column rule, replaced whole in Office metadata, or held by an earlier map, found again and replaced elsewhere. */
   mappedReplacements: number;
+  /** Values of dropped or redacted columns, found again and replaced elsewhere (AGT-1835). */
+  removedReplacements?: number;
   /** Host names left as written because they are under a keep-list domain. */
   keptHosts: number;
   /** DOCX and XLSX: identity metadata (authors, initials, creator, company) and account names in paths replaced as a whole. */
@@ -254,6 +256,8 @@ interface TablePlan {
   pending: Pending<string>[];
   /** Values the column pass pseudonymised (columns classed `vocabulary` aside): they recur elsewhere. */
   mapped: ExtraForm[];
+  /** Values of dropped and redacted columns: they recur like `mapped` ones (AGT-1835). */
+  removed: ExtraForm[];
   columns: ColumnReport[];
   /** 0-based indices of `drop` columns, removed from every row (preamble and header too) on render. */
   dropped: Set<number>;
@@ -283,6 +287,8 @@ interface JsonPlan {
   edits: Map<number, CellEdit>;
   pending: Pending<number>[];
   mapped: ExtraForm[];
+  /** Values of dropped and redacted columns: they recur like `mapped` ones (AGT-1835). */
+  removed: ExtraForm[];
   columns: ColumnReport[];
   /** Text ranges removed for `drop` key paths (jsonCuts), and the tokens inside them. */
   cuts: { ranges: [number, number][]; tokens: Set<number> };
@@ -370,6 +376,7 @@ function planTable(
   const edits = new Map<string, CellEdit>();
   const pending: Pending<string>[] = [];
   const mapped: ExtraForm[] = [];
+  const removed: ExtraForm[] = [];
   const columns: ColumnReport[] = [];
   const dropped = new Set<number>();
   const data = rows.slice(headerRow + 1);
@@ -390,6 +397,9 @@ function planTable(
       flagged: 0,
     };
     columns.push(column);
+    if (action.kind === "drop" || action.kind === "redact") {
+      removed.push(...removedForms(rule, data.map((r) => r.cells[col]?.value ?? "")));
+    }
     if (action.kind === "drop") {
       dropped.add(col);
       if (col === lastCol) for (let c = width; c < maxCells; c++) dropped.add(c);
@@ -428,6 +438,7 @@ function planTable(
     edits,
     pending,
     mapped,
+    removed,
     columns,
     dropped,
     overflowRows,
@@ -462,6 +473,7 @@ function planJson(
   const edits = new Map<number, CellEdit>();
   const pending: Pending<number>[] = [];
   const mapped: ExtraForm[] = [];
+  const removed: ExtraForm[] = [];
   const columns: ColumnReport[] = [];
   const dropped: number[] = [];
   for (const [path, indices] of byPath) {
@@ -484,6 +496,7 @@ function planJson(
       flagged: 0,
     };
     columns.push(column);
+    if (action.kind === "drop" || action.kind === "redact") removed.push(...removedForms(rule, valued.map((i) => (tokens[i] as JsonToken).value)));
     if (action.kind === "drop") {
       // The member goes whatever its value, null included.
       dropped.push(...indices);
@@ -508,7 +521,7 @@ function planJson(
   tokens.forEach((t, i) => {
     if (t.kind === "key" && t.column === null && !cuts.tokens.has(i)) pending.push({ key: i, value: t.value, keep: false, column: null });
   });
-  return { kind: "json", format, input, encoding, text, tokens, edits, pending, mapped, columns, cuts };
+  return { kind: "json", format, input, encoding, text, tokens, edits, pending, mapped, removed, columns, cuts };
 }
 
 /** A string literal with the spans replaced; every untouched character keeps its original escaping. */
@@ -744,7 +757,21 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   }
   // The values the column pass pseudonymised (an earlier map's are added by recurrenceForms), and
   // the people among them and in the map, whose name parts are matched alone too.
-  const mapped = [...plans.flatMap((p) => (p.kind === "text" || p.kind === "docx" ? [] : p.kind === "xlsx" ? p.plan.mapped : p.mapped)), ...metadata];
+  const columnMapped = [...plans.flatMap((p) => (p.kind === "text" || p.kind === "docx" ? [] : p.kind === "xlsx" ? p.plan.mapped : p.mapped)), ...metadata];
+  // Values of dropped and redacted columns recur just as a pseudonymised column's do (AGT-1835).
+  // Their spans are reported apart, unless the same value is also pseudonymised in some column.
+  const removedValues = plans.flatMap((p) => (p.kind === "text" || p.kind === "docx" ? [] : p.kind === "xlsx" ? p.plan.removed : p.removed));
+  const formKey = (f: ExtraForm): string => `${f.cls}\0${f.value}`;
+  const mappedKeys = new Set(columnMapped.map(formKey));
+  const removedKeys = new Set(removedValues.map(formKey).filter((k) => !mappedKeys.has(k)));
+  // A name part is the person's, or its own when another person shares it, so it is traced by its form.
+  const partKeys = (values: ExtraForm[]): Set<string> => new Set(personPartForms(values, undefined, vocabularyForms(spec.entities), { keep: opts.keep }).map((f) => `person\0${f.form}`));
+  const columnParts = partKeys(columnMapped);
+  const removedParts = new Set([...partKeys(removedValues.filter((f) => removedKeys.has(formKey(f))))].filter((k) => !columnParts.has(k)));
+  const asRemoved = (f: ExtraForm): ExtraForm =>
+    f.source === undefined && (removedKeys.has(formKey(f)) || (f.cls === "person" && removedParts.has(`person\0${f.form}`))) ? { ...f, source: "removed" } : f;
+  const mapped = [...columnMapped, ...removedValues];
+  columnValues.push(...removedValues);
   const voiceNames = speakers.filter((n) => !kept(n));
   const vocabularySet = vocabularyForms(spec.entities);
   const keepSet = keepForms(opts.keep);
@@ -756,8 +783,8 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   const prosePeople = proseNames(read.free, { keep: keepSet, vocabulary: vocabularySet, kept: read.kept }).filter((v) => !known.has(canonicalize("person", v)));
   // They count as other people for the known people's name parts, so a surname both share is ambiguous.
   const others = [...voiceNames, ...prosePeople];
-  const parts = personPartForms(mapped, opts.map, vocabularySet, { keep: opts.keep, speakers: others });
-  const forms = recurrenceForms(mapped, spec.entities, opts.map, { keep: opts.keep, speakers: others });
+  const parts = personPartForms(mapped, opts.map, vocabularySet, { keep: opts.keep, speakers: others }).map(asRemoved);
+  const forms = recurrenceForms(mapped, spec.entities, opts.map, { keep: opts.keep, speakers: others }).map(asRemoved);
   // A form already matched for a known value or a speaker keeps that value's pseudonym.
   const claimed = new Set([...forms, ...voices, ...parts].map((f) => `${f.cls}\0${f.form ?? f.value}`));
   const prose = proseForms(prosePeople, [...people, ...voiceNames], vocabularySet, keepSet).filter((f) => !claimed.has(`${f.cls}\0${f.form ?? f.value}`));
@@ -928,6 +955,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         keptHosts: r.keptHosts,
         ...(r.speakerReplacements > 0 ? { speakerMentions: r.speakerReplacements } : {}),
         ...(r.proseReplacements > 0 ? { proseNames: r.proseReplacements } : {}),
+        ...(r.removedReplacements > 0 ? { removedReplacements: r.removedReplacements } : {}),
         ...(r.metadataReplacements > 0 ? { metadataReplacements: r.metadataReplacements } : {}),
         sheets: p.plan.sheets.map((s) => ({ ...s, outputName: r.sheetNames.find((n) => n.from === s.name)?.to ?? s.name })),
         unread: r.members.filter((m) => m.kind === "other" && !m.name.endsWith("/")).map((m) => m.name),
@@ -956,6 +984,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
           ? r.speakerReplacements > 0 ? { speakerMentions: r.speakerReplacements } : {}
           : { transcript: transcriptReport("docx", p.transcript.speakers, p.transcript.tags, r.speakerReplacements, kept) }),
         ...(r.proseReplacements > 0 ? { proseNames: r.proseReplacements } : {}),
+        ...(r.removedReplacements > 0 ? { removedReplacements: r.removedReplacements } : {}),
         changed: r.changed,
       });
       outputs.push({ path: outputPath, bytes: r.changed ? r.bytes : p.input.bytes });
@@ -978,6 +1007,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         keptHosts: keptHostCount(p.spans),
         ...textSpeakers(p.spans, t, kept),
         ...(count(p.spans, "prose") > 0 ? { proseNames: count(p.spans, "prose") } : {}),
+        ...(count(p.spans, "removed") > 0 ? { removedReplacements: count(p.spans, "removed") } : {}),
         changed: false,
       };
     } else if (p.kind === "json") {
@@ -1047,6 +1077,8 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       if (mentions > 0) report.speakerMentions = mentions;
       const prose = [...p.edits.values()].reduce((n, e) => n + (e.kind === "spans" ? count(e.spans, "prose") : 0), 0);
       if (prose > 0) report.proseNames = prose;
+      const removedHere = [...p.edits.values()].reduce((n, e) => n + (e.kind === "spans" ? count(e.spans, "removed") : 0), 0);
+      if (removedHere > 0) report.removedReplacements = removedHere;
     }
     report.changed = text !== p.text;
     report.outputPath = names.renamePath(p.input.path, pz);

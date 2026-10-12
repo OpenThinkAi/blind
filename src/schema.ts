@@ -27,6 +27,8 @@ export interface Entity {
   canonical: string;
   aliases: string[];
   parts: string[];
+  /** Who added it: `human` for a candidate accepted or rejected with `blind plan --from-audit`. Absent on analyst entities. */
+  source?: Source;
 }
 
 export type Entities = Partial<Record<Exclude<EntityClassName, "unknown">, Entity[]>>;

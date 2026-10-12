@@ -22,10 +22,17 @@ export const COLUMN_ANSWERS: readonly string[] = ["blind", "keep", "value", "per
 
 /**
  * What the analyst may reply: the spec schema without `seen`, which only blind writes (it
- * records what the analyst has read, so a reply that set it could hide excerpts from later runs).
+ * records what the analyst has read, so a reply that set it could hide excerpts from later runs),
+ * and without an entity's `source`, which only `blind plan --from-audit` writes (a reply could
+ * otherwise pass its entities off as human decisions).
  */
 const { seen: _seen, ...proposalProperties } = specSchema.properties;
-const proposalSchema = { ...specSchema, properties: proposalProperties };
+const { source: _source, ...entityProperties } = specSchema.$defs.entity.properties;
+export const proposalSchema = {
+  ...specSchema,
+  properties: proposalProperties,
+  $defs: { ...specSchema.$defs, entity: { ...specSchema.$defs.entity, properties: entityProperties } },
+};
 
 export const locationKey = (l: Location): string => JSON.stringify([l.file, l.sheet ?? null, l.header ?? null, l.jsonPath ?? null]);
 

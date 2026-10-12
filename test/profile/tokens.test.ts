@@ -134,6 +134,17 @@ describe("headersLookLikeValues", () => {
   });
 });
 
+test("a long header that fails the title-case test fails fast (no catastrophic backtracking)", () => {
+  // A 120-code-point excerpt cut ends in "…", so the match always fails at the end.
+  const long = `Ab${"c".repeat(110)}…`;
+  const t0 = performance.now();
+  expect(headersLookLikeValues([`Avery ${long}`, `Quill ${long}`, "Status"])).toBe(false);
+  expect(performance.now() - t0).toBeLessThan(250);
+  // The same words still count: capitals inside a word, apostrophes and hyphens.
+  expect(headersLookLikeValues(["McAllister Group", "Jean-Luc O'Brien", "x"])).toBe(true);
+  expect(headersLookLikeValues(["Ab cd", "Ef gh", "x"])).toBe(false);
+});
+
 test("isTokenPath", () => {
   expect(isTokenPath("file_1")).toBe(true);
   expect(isTokenPath("dir_1/dir_12/file_3")).toBe(true);

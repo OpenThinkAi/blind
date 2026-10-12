@@ -120,7 +120,7 @@ async function chain(argv: string[], io: RunIO): Promise<number> {
 
   if (needsReview(report)) {
     io.out.write(renderSpec(spec));
-    if (report.reused) io.out.write(`\n${renderDiff(report)}`);
+    if (report.reused || report.dropped.length > 0) io.out.write(`\n${renderDiff(report)}`);
     if (!values.yes) {
       io.out.write(
         `\nstopped for review: ${report.reused ? "the plan changed" : "this is a new"} ${join(BLIND_DIR, SPEC_FILE)}. Nothing was applied.\n` +

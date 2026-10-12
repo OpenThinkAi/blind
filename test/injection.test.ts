@@ -12,7 +12,10 @@ import { dirname, join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import { type PlanIO, runPlan } from "../src/analyst/plan.ts";
 import { runApply } from "../src/apply.ts";
+import { writeMap } from "../src/engine/map.ts";
 import { runAudit } from "../src/audit/command.ts";
+import { AUDITOR_SYSTEM } from "../src/audit/auditor.ts";
+import { runRun } from "../src/run.ts";
 import type { AskOptions, SpawnFn } from "../src/model.ts";
 import { defaultPolicy, type Policy, renderPolicy } from "../src/policy.ts";
 import type { Profile, Spec } from "../src/schema.ts";
@@ -329,6 +332,81 @@ describe("model output can only add: changes to saved human entries are dropped 
     const blinded = readFileSync(join(dir, "out", "staff.csv"), "utf8");
     expect(blinded).not.toContain("avery.quill@example.com");
     expect(blinded).not.toContain("Avery Quill");
+  });
+});
+
+describe("analyst vocabulary that would shield a blinded value is dropped and reported", () => {
+  /** An honest reply plus vocabulary: a column person's name, the same name as a part, an org-free harmless term. */
+  const withVocabulary = (): Spec => ({
+    ...honest(),
+    entities: {
+      ...honest().entities,
+      vocabulary: [
+        { canonical: "Robin Example", aliases: [], parts: [] },
+        { canonical: "Gold Tier", aliases: [], parts: [] },
+      ],
+    },
+  });
+
+  const analystOnly = (reply: Spec): AskOptions["fetch"] =>
+    chatFetch((system) => {
+      if (system === AUDITOR_SYSTEM) throw new Error("no auditor in this test");
+      return JSON.stringify(reply);
+    });
+
+  test("a first plan drops the column person's name from the vocabulary, keeps the harmless term, and says so", async () => {
+    const r = await plan(["in"], { fetch: fixedFetch(JSON.stringify(withVocabulary())) });
+    expect(r.code).toBe(0);
+    expect(savedSpec().entities.vocabulary).toEqual([{ canonical: "Gold Tier", aliases: [], parts: [] }]);
+    expect(r.out).toContain("dropped (1), because the analyst's vocabulary may not keep a blinded value in clear:");
+    expect(r.out).toContain('analyst vocabulary "Robin Example": "Robin Example" is a value blinded in a column of the profile');
+    expect(r.out).not.toContain("Gold Tier\": ");
+  });
+
+  test("a re-plan drops it too: a part of a person entity, a column value and a map value are all refused", async () => {
+    writeFileSync(
+      specPath(),
+      `${JSON.stringify({ version: 1, columns: [{ ...at("Owner"), class: "person", treatment: "blind", confidence: 1, source: "human" }], entities: {}, patterns: PATTERNS_ON, questions: [] }, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+    const reply = withVocabulary();
+    reply.entities = {
+      person: [{ canonical: "Kit Placeholder", aliases: [], parts: ["Placeholder"] }],
+      vocabulary: [
+        { canonical: "Placeholder", aliases: [], parts: [] },
+        { canonical: "Jo Sample", aliases: [], parts: [] },
+        { canonical: "Zed Mapped", aliases: [], parts: [] },
+        { canonical: "Gold Tier", aliases: [], parts: [] },
+      ],
+    };
+    writeMap(join(dir, ".blind", "map.json"), { version: 1, entries: [{ kind: "person", canonical: "Zed Mapped", value: "Zed Mapped", pseudonym: "Person_0001" }] });
+    const r = await plan(["in", "--json"], { fetch: fixedFetch(JSON.stringify(reply)) });
+    expect(r.code).toBe(0);
+    const diff = JSON.parse(r.out) as { dropped: { kind: string; canonical: string }[] };
+    expect(diff.dropped.map((d) => `${d.kind}:${d.canonical}`)).toEqual(["entity:Placeholder", "vocabulary:Jo Sample", "vocabulary:Zed Mapped"]);
+    expect(savedSpec().entities.vocabulary).toEqual([{ canonical: "Gold Tier", aliases: [], parts: [] }]);
+  });
+
+  test("human vocabulary in the saved spec is untouched", async () => {
+    const human: Spec = { version: 1, columns: [], entities: { vocabulary: [{ canonical: "Robin Example", aliases: [], parts: [] }] }, patterns: PATTERNS_ON, questions: [] };
+    writeFileSync(specPath(), `${JSON.stringify(human, null, 2)}\n`, { mode: 0o600 });
+    const r = await plan(["in", "--json"], { fetch: fixedFetch(JSON.stringify(withVocabulary())) });
+    expect(r.code).toBe(0);
+    // The saved form stays; only the analyst's harmless new term is added.
+    expect(savedSpec().entities.vocabulary?.map((e) => e.canonical)).toEqual(["Robin Example", "Gold Tier"]);
+  });
+
+  test("blind run --yes then blinds the name everywhere, including free text", async () => {
+    const out = sink();
+    const err = sink();
+    const code = await runRun(["in", "-o", "out", "--yes"], { out: out.s, err: err.s, cwd: dir, model: { env: {}, fetch: analystOnly(withVocabulary()) } });
+    expect(code).toBeLessThan(3);
+    expect(out.text()).toContain("analyst vocabulary \"Robin Example\"");
+    for (const f of ["staff.csv", "notes.txt"]) {
+      const text = readFileSync(join(dir, "out", f), "utf8");
+      expect(text).not.toContain("Robin Example");
+    }
+    expect(readFileSync(join(dir, "out", "notes.txt"), "utf8")).not.toContain("Robin");
   });
 });
 

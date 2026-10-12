@@ -16,8 +16,8 @@ import { writeProfile } from "../profile/command.ts";
 import { buildProfile, forPrivacyMode, InputError } from "../profile/profile.ts";
 import { type ColumnRule, type EntityClassName, type Location, patternOn, REDACTED_VALUE, type Spec } from "../schema.ts";
 import { parseSpec, SchemaError, validateProfile, validateSpec } from "../validate.ts";
-import { AnalystError, answerQuestion, proposeSpec, runAnalyst } from "./analyst.ts";
-import { heuristicSpec } from "./heuristic.ts";
+import { AnalystError, answerQuestion, locationKey, proposeSpec, runAnalyst } from "./analyst.ts";
+import { heuristicReason, heuristicSpec, profileLocations } from "./heuristic.ts";
 import { applyColumnPolicy } from "./policycolumns.ts";
 import {
   ACCEPT_CLASSES,
@@ -377,6 +377,13 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
     for (const id of overlay.removedQuestions) remarks.push(`question ${id} removed: ${POLICY_FILE} decides its column`);
     for (const l of overlay.human) remarks.push(`${where(l)}: the spec's human rule is kept over the ${POLICY_FILE} rule for it`);
     for (const l of overlay.reverted) remarks.push(`${where(l)}: no ${POLICY_FILE} rule matches it any more; the heuristic rule was used`);
+
+    // A heuristic rule is blind with its class unlisted only because the policy turned that shape's pattern on.
+    const heuristic = new Set(spec.columns.filter((c) => c.source === "heuristic" && c.treatment === "blind").map(locationKey));
+    for (const { loc, stats } of profileLocations(profile)) {
+      const pattern = heuristic.has(locationKey(loc)) ? heuristicReason(stats, policy) : undefined;
+      if (pattern !== undefined) remarks.push(`${where(loc)}: blind, because policy pattern ${pattern} on (its class is not in [sensitive].classes)`);
+    }
 
     const written = writeSpec(io.cwd, checked(spec));
     if (values.json) {

@@ -134,7 +134,7 @@ export function mergeProposal(
   saved: Spec,
   proposal: Spec | null,
   part: Profile,
-  policy: Pick<Policy, "sensitive">,
+  policy: Pick<Policy, "sensitive"> & Partial<Pick<Policy, "patterns">>,
   guard: VocabGuard,
 ): { spec: Spec; diff: PlanDiff; filled: Location[] } {
   const dropped: Dropped[] = [];

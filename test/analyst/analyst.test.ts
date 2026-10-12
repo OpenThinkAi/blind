@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { answerQuestion, checkProposal } from "../../src/analyst/analyst.ts";
-import { HEURISTIC_RATE, heuristicPatterns, heuristicRule } from "../../src/analyst/heuristic.ts";
+import { HEURISTIC_RATE, heuristicPatterns, heuristicReason, heuristicRule } from "../../src/analyst/heuristic.ts";
 import { analystPrompt, systemPrompt } from "../../src/analyst/prompt.ts";
 import { profilePayload } from "../../src/model.ts";
 import { defaultPolicy } from "../../src/policy.ts";
@@ -34,9 +34,11 @@ describe("heuristic analyst", () => {
     expect(r).toEqual({ ...loc, class: cls, treatment: "blind", confidence: HEURISTIC_RATE, source: "heuristic" });
   });
 
-  test("just under the threshold, and a mac column, stay unknown", () => {
+  test("just under the threshold, and a mac column with its pattern off, stay unknown", () => {
     expect(heuristicRule(loc, stats({ email: 0.79 }), policy)).toMatchObject({ class: "unknown", treatment: "value", confidence: 0 });
-    expect(heuristicRule(loc, stats({ mac: 1 }), policy)).toMatchObject({ class: "unknown" });
+    const p = defaultPolicy();
+    p.sensitive.classes = ["person"];
+    expect(heuristicRule(loc, stats({ mac: 1 }), p)).toMatchObject({ class: "unknown" });
   });
 
   test("a class the policy does not call sensitive is kept, and its patterns are off", () => {
@@ -44,6 +46,40 @@ describe("heuristic analyst", () => {
     p.sensitive.classes = ["person", "host"];
     expect(heuristicRule(loc, stats({ email: 1 }), p)).toMatchObject({ class: "email", treatment: "keep" });
     expect(heuristicPatterns(p)).toEqual({ ip: true, email: false, host: true, guid: false, mac: true, phone: false });
+  });
+});
+
+describe("heuristic analyst with [patterns]", () => {
+  const unlisted = (patterns: Record<string, boolean>) => {
+    const p = defaultPolicy();
+    p.sensitive.classes = ["person"];
+    p.patterns = patterns;
+    return p;
+  };
+
+  test.each([
+    ["ip", "ip", "host"],
+    ["email", "email", "email"],
+    ["mac", "mac", "host"],
+  ] as const)("a %s column is blind when [patterns] %s is on and its class is not listed", (detector, pattern, cls) => {
+    const p = unlisted({ [pattern]: true });
+    expect(heuristicRule(loc, stats({ [detector]: 1 }), p)).toMatchObject({ class: cls, treatment: "blind", source: "heuristic" });
+    expect(heuristicReason(stats({ [detector]: 1 }), p)).toBe(pattern);
+  });
+
+  test("it stays keep when neither the class is listed nor the pattern is on", () => {
+    const p = unlisted({ ip: false, email: false });
+    expect(heuristicRule(loc, stats({ ip: 1 }), p)).toMatchObject({ class: "host", treatment: "keep" });
+    expect(heuristicRule(loc, stats({ email: 1 }), p)).toMatchObject({ class: "email", treatment: "keep" });
+    expect(heuristicReason(stats({ ip: 1 }), p)).toBeUndefined();
+  });
+
+  test("an unset pattern follows the heuristic default (on when its class is listed)", () => {
+    const p = defaultPolicy();
+    p.sensitive.classes = ["person", "email"];
+    p.patterns = {};
+    expect(heuristicRule(loc, stats({ email: 1 }), p)).toMatchObject({ treatment: "blind" });
+    expect(heuristicReason(stats({ email: 1 }), p)).toBeUndefined();
   });
 });
 

@@ -76,7 +76,7 @@ export function checkProposal(spec: Spec, profile: Profile): SchemaIssue[] {
  * rule (reported in `filled`), and every column an open question is about is set to
  * `unknown`/`value`, so nothing the analyst asked about is decided until the human answers.
  */
-export function completeProposal(spec: Spec, profile: Profile, policy: Pick<Policy, "sensitive">): { spec: Spec; filled: Location[] } {
+export function completeProposal(spec: Spec, profile: Profile, policy: Pick<Policy, "sensitive"> & Partial<Pick<Policy, "patterns">>): { spec: Spec; filled: Location[] } {
   const byKey = new Map(spec.columns.map((c) => [locationKey(c), c]));
   const open = new Set(spec.questions.filter((q) => q.about !== undefined && q.answer === null).map((q) => locationKey(q.about as Location)));
   const filled: Location[] = [];

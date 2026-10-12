@@ -15,6 +15,7 @@ export const HEURISTIC_RATE = 0.8;
 const DETECTOR_CLASS: [DetectorName, SensitiveClass][] = [
   ["email", "email"],
   ["ip", "host"],
+  ["mac", "host"],
   ["guid", "id"],
   ["host", "host"],
   ["numericId", "id"],
@@ -34,16 +35,44 @@ export function profileLocations(profile: Profile): { loc: Location; stats: Valu
   return out;
 }
 
-/** The heuristic rule for one column. */
-export function heuristicRule(loc: Location, stats: ValueStats, policy: Pick<Policy, "sensitive">): ColumnRule {
+type HeuristicPolicy = Pick<Policy, "sensitive"> & Partial<Pick<Policy, "patterns">>;
+
+/** The free-text pattern for each column shape; numericId has none. */
+const SHAPE_PATTERN: Partial<Record<DetectorName, PatternName>> = { email: "email", ip: "ip", guid: "guid", host: "host", mac: "mac" };
+
+type Shape = { cls: SensitiveClass; rate: number; blind: boolean; pattern: PatternName | undefined };
+
+/**
+ * The first shape that at least HEURISTIC_RATE of the column's values match, and whether it is blinded.
+ * Blinded when its class is listed as sensitive, or when the policy turns its free-text pattern on
+ * (`[patterns]` in blind.toml, else the heuristic default), so a column cannot stay clear while the
+ * same values in prose are replaced. `pattern` is set only when the pattern alone made it blind.
+ * A mac column is only classified when its pattern is on.
+ */
+function shapeOf(stats: ValueStats, policy: HeuristicPolicy): Shape | undefined {
+  const defaults = heuristicPatterns(policy);
   for (const [detector, cls] of DETECTOR_CLASS) {
     const rate = stats.detectorRates[detector];
-    if (rate >= HEURISTIC_RATE) {
-      const treatment = policy.sensitive.classes.includes(cls) ? "blind" : "keep";
-      return { ...loc, class: cls, treatment, confidence: rate, source: "heuristic" };
-    }
+    if (rate < HEURISTIC_RATE) continue;
+    const name = SHAPE_PATTERN[detector];
+    const patternOn = name !== undefined && (policy.patterns?.[name] ?? defaults[name]) === true;
+    if (detector === "mac" && !patternOn) continue;
+    const listed = policy.sensitive.classes.includes(cls);
+    return { cls, rate, blind: listed || patternOn, pattern: !listed && patternOn ? name : undefined };
   }
-  return { ...loc, class: "unknown", treatment: "value", confidence: 0, source: "heuristic" };
+  return undefined;
+}
+
+/** The pattern that made the column blind although its class is not listed as sensitive: the reason `blind plan` reports. */
+export function heuristicReason(stats: ValueStats, policy: HeuristicPolicy): PatternName | undefined {
+  return shapeOf(stats, policy)?.pattern;
+}
+
+/** The heuristic rule for one column. */
+export function heuristicRule(loc: Location, stats: ValueStats, policy: HeuristicPolicy): ColumnRule {
+  const shape = shapeOf(stats, policy);
+  if (shape === undefined) return { ...loc, class: "unknown", treatment: "value", confidence: 0, source: "heuristic" };
+  return { ...loc, class: shape.cls, treatment: shape.blind ? "blind" : "keep", confidence: shape.rate, source: "heuristic" };
 }
 
 /** Patterns on for every shape whose class the policy calls sensitive. */
@@ -78,7 +107,7 @@ export function speakerEntities(profile: Profile, keep: readonly string[] = []):
   });
 }
 
-export function heuristicSpec(profile: Profile, policy: Pick<Policy, "sensitive"> & Partial<Pick<Policy, "keep">>): Spec {
+export function heuristicSpec(profile: Profile, policy: HeuristicPolicy & Partial<Pick<Policy, "keep">>): Spec {
   const people = policy.sensitive.classes.includes("person") ? speakerEntities(profile, policy.keep?.terms) : [];
   return {
     version: 1,

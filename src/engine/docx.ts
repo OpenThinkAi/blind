@@ -47,7 +47,7 @@ import { accountSegments } from "../formats/paths.ts";
 import type { PseudoClass } from "./canonical.ts";
 import { type HexNamer, rewriteOfficeId } from "./officeid.ts";
 import type { Pseudonymizer } from "./pseudonym.ts";
-import type { Span } from "./text.ts";
+import type { ExtraForm, Span } from "./text.ts";
 import { refuseUnrewritten } from "./unrewritten.ts";
 
 export interface DocxRequest {
@@ -481,6 +481,17 @@ export function docxParagraphs(plan: DocxPlan, which: "main" | "all"): string[] 
     out.push(text);
   }
   return out;
+}
+
+/**
+ * The identity metadata and path account names replaced whole, with their classes (AGT-1812): they
+ * recur elsewhere in the corpus like a pseudonymised column value. Trimmed, in document order.
+ */
+export function docxWholes(plan: DocxPlan): ExtraForm[] {
+  return [
+    ...plan.wholes.map((n) => ({ cls: n.whole as PseudoClass, value: n.value.trim() })),
+    ...plan.accounts.map((e) => ({ cls: e.cls, value: e.value.trim() })),
+  ].filter((f) => f.value !== "");
 }
 
 /**

@@ -28,8 +28,9 @@
 // spliced into the original text, so layout and key order never change.
 //
 // Values a column pass pseudonymised recur (src/engine/recur.ts): after the
-// column decisions, every value one of them pseudonymised, and every value an
-// earlier map holds, is replaced wherever else it appears: in free text, in
+// column decisions, every value one of them pseudonymised, every XLSX/DOCX
+// identity metadata value replaced whole (creator, authors, company, account
+// names in paths), and every value an earlier map holds, is replaced wherever else it appears: in free text, in
 // cells kept as text or under `keep`, and in JSON strings and keys. A `keep`
 // cell changes only for such a value; spec entities and patterns in it are
 // still left as written and reported.
@@ -54,7 +55,7 @@ import { isJsonNumber, type JsonFormat, JsonError, type JsonToken, quote, scanJs
 import type { BlindMap } from "./map.ts";
 import { type EntityEntry, Pseudonymizer } from "./pseudonym.ts";
 import { type ColumnOutcome, decide, outcomeOf } from "./columns.ts";
-import { DocxError, type DocxPlan, docxParagraphs, FONT, IMAGE, planDocx, THUMBNAIL, thumbnailReason, refuseDocxUnrewritten, renderDocx, scanDocx } from "./docx.ts";
+import { DocxError, type DocxPlan, docxParagraphs, docxWholes, FONT, IMAGE, planDocx, THUMBNAIL, thumbnailReason, refuseDocxUnrewritten, renderDocx, scanDocx } from "./docx.ts";
 import { OfficeIds } from "./officeid.ts";
 import { NameRewriter, rewriteSpans } from "./names.ts";
 import { keepForms, nameParts, personPartForms, personValues, recurrenceForms, TextScanner, vocabularyForms } from "./recur.ts";
@@ -139,7 +140,7 @@ export interface FileReport {
   /** Free-text replacements (text files, and header, preamble and kept cells of tables). */
   entityReplacements: number;
   patternReplacements: number;
-  /** Values pseudonymised by a column rule (or held by an earlier map) found again and replaced outside their column. */
+  /** Values pseudonymised by a column rule, replaced whole in Office metadata, or held by an earlier map, found again and replaced elsewhere. */
   mappedReplacements: number;
   /** Host names left as written because they are under a keep-list domain. */
   keptHosts: number;
@@ -627,6 +628,11 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       }
     }
   }
+  // Office identity metadata (creator, authors, company, account names in paths) is replaced whole
+  // whatever the spec says; those values recur like a pseudonymised column value (AGT-1812), so the
+  // creator in a cell, a sheet name, another file or a file name gets the same pseudonym.
+  const metadata = plans.flatMap((p) => (p.kind === "xlsx" ? p.plan.wholes : p.kind === "docx" ? docxWholes(p.docx) : []));
+  columnValues.push(...metadata);
   // Transcript speakers: person forms for names, content and recurrences alike.
   const vocabulary = (spec.entities.vocabulary ?? []).flatMap((e) => [e.canonical, ...e.aliases, ...e.parts]);
   const kept = keptSpeakers(opts.keep ?? [], vocabulary);
@@ -643,7 +649,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   }
   // The values the column pass pseudonymised (an earlier map's are added by recurrenceForms), and
   // the people among them and in the map, whose name parts are matched alone too.
-  const mapped = plans.flatMap((p) => (p.kind === "text" || p.kind === "docx" ? [] : p.kind === "xlsx" ? p.plan.mapped : p.mapped));
+  const mapped = [...plans.flatMap((p) => (p.kind === "text" || p.kind === "docx" ? [] : p.kind === "xlsx" ? p.plan.mapped : p.mapped)), ...metadata];
   const voiceNames = speakers.filter((n) => !kept(n));
   const vocabularySet = vocabularyForms(spec.entities);
   const keepSet = keepForms(opts.keep);

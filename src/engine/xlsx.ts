@@ -26,8 +26,8 @@
 // contents sheet keeps pointing at the right sheet.
 
 import type { ColumnRule } from "../schema.ts";
-import { type Frame, localName, type MemberResult, rewriteOoxml, ZipError } from "../formats/ooxml.ts";
-import { replaceAccounts } from "../formats/paths.ts";
+import { type Frame, localName, type MemberResult, readOoxml, rewriteOoxml, rewriteXml, ZipError } from "../formats/ooxml.ts";
+import { accountSegments, replaceAccounts } from "../formats/paths.ts";
 import {
   cellText,
   classify,
@@ -107,6 +107,11 @@ export interface XlsxPlan {
   hexIds: string[];
   /** Identity metadata and account names replaced whole, as written; filled by prepareXlsx. */
   metadata: string[];
+  /**
+   * The same values with their classes, read when the workbook is planned (AGT-1812): they recur
+   * elsewhere in the corpus like a pseudonymised column value. Trimmed, in member and document order.
+   */
+  wholes: ExtraForm[];
 }
 
 const NUMBER = /^(-?)(\d+)(?:\.(\d+))?([Ee][+-]?\d+)?$/;
@@ -227,7 +232,35 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
     }
     return [...list].sort((a, b) => rank(a) - rank(b))[0] as Action;
   });
-  return { wb, cells, strings, columns, sheets, columnValues, mapped, pending, requests: [], hexIds: [], metadata: [] };
+  return { wb, cells, strings, columns, sheets, columnValues, mapped, pending, requests: [], hexIds: [], metadata: [], wholes: xlsxWholes(bytes) };
+}
+
+/**
+ * The identity metadata and path account names the render replaces whole (the `whole` and `path`
+ * slots of classify), with their classes, read before any pseudonym is derived so the corpus-wide
+ * recurrence pass can find them again in cells, names, other files and file names.
+ */
+function xlsxWholes(bytes: Uint8Array): ExtraForm[] {
+  const out: ExtraForm[] = [];
+  for (const m of readOoxml(bytes)) {
+    // planXlsx has already refused a workbook with a member that cannot be read.
+    if (m.kind !== "xml") continue;
+    rewriteXml(
+      m.text,
+      (value, ctx) => {
+        const slot = classify(m.name, ctx.element, ctx.parents, ctx.attribute);
+        if (slot === "whole") {
+          const core = value.trim();
+          if (core !== "") out.push({ cls: wholeClass(ctx.element, ctx.attribute), value: core });
+        } else if (slot === "path") {
+          for (const seg of accountSegments(value)) if (seg.value.trim() !== "") out.push({ cls: "person", value: seg.value.trim() });
+        }
+        return value;
+      },
+      slotRules(m.name),
+    );
+  }
+  return out;
 }
 
 /** Every value in the workbook that no pseudonym may equal. */

@@ -4,6 +4,7 @@ import { addSemanticLayer, MAX_PER_FILE, semanticFindings, xmlViews } from "../.
 import { applySpec } from "../../src/engine/apply.ts";
 import type { BlindMap } from "../../src/engine/map.ts";
 import type { ColumnRule, Spec } from "../../src/schema.ts";
+import { DEFAULT_SEED, generateKit } from "../../src/bench/synth.ts";
 import { makeZip } from "./zipfixture.ts";
 
 // Synthetic data only: invented names, example.com, RFC 5737 addresses.
@@ -96,7 +97,7 @@ describe("semantic layer", () => {
   test("identifier shapes: mixed letters and 4+ digits, 10-16 digit runs, emails and hosts", () => {
     const text = [
       "ref PRJ-48213 and acct 4820193746215 by dana@corp.example.net on build.corp.example.net",
-      "not: 2026-10-11T09:30:00Z 45210.416666666664 12345 deface notes.md e.g. Id_12AB 192.0.2.7",
+      "not: 2026-10-11T09:30:00Z 45210.416666666664 12345 deface notes.md e.g. Id_12AB",
     ].join("\n");
     const r = audit([file("a.txt", text)]);
     expect(classes(r)).toEqual(["semantic:alnum-id", "semantic:digits", "semantic:email", "semantic:host"]);
@@ -113,7 +114,7 @@ describe("semantic layer", () => {
     const text = "seen 5820193746 and 0f1e2d3c-4b5a-4968-8776-a5b4c3d2e1f0 and user_1a2b@host-3c4d.com on host-5e6f.host-7a8b.net, Person_A7F3 Org_2C9E\n";
     expect(semantic(audit([file("a.txt", text)], SPEC, map))).toEqual([]);
     // Without the map they are unexplained.
-    expect(classes(audit([file("a.txt", text)]))).toEqual(["semantic:digits", "semantic:alnum-id"]);
+    expect(classes(audit([file("a.txt", text)]))).toEqual(["semantic:digits", "semantic:guid"]);
   });
 
   test("the keep list, vocabulary forms, vocabulary column values and the spec's headers explain phrases", () => {
@@ -205,5 +206,82 @@ describe("semantic layer", () => {
   test("the same tree gives the same findings", () => {
     const entries = [file("a.txt", "Northwind Harbor a3f9c21e ZQ-90812 dana@corp.example.net\n")];
     expect(semanticFindings(entries, SPEC, EMPTY_MAP, { keep: [] })).toEqual(semanticFindings(entries, SPEC, EMPTY_MAP, { keep: [] }));
+  });
+});
+
+describe("shapes are candidates whatever the spec's patterns say (AGT-1806)", () => {
+  const OFF: Spec["patterns"] = { ip: false, email: false, host: false, guid: false, mac: false };
+  const off: Spec = { ...SPEC, patterns: OFF };
+  const text = (t: string): TreeEntry[] => [file("a.log", t)];
+
+  test("IPv4 and IPv6 are semantic:ip candidates with the pattern off, masked", () => {
+    const r = audit(text("conn from 203.0.114.77 and 2001:db8::1 ok\n"), off);
+    expect(r.status).toBe("candidates");
+    const ips = semantic(r).filter((f) => f.class === "semantic:ip");
+    expect(ips.length).toBe(2);
+    for (const f of ips) {
+      expect(f.severity).toBe("candidate");
+      expect(f.masked).not.toContain("203.0.114.77");
+      expect(f.masked).not.toContain("2001:db8::1");
+    }
+  });
+
+  test("guid, mac, email and host shapes are candidates with their patterns off", () => {
+    const r = audit(text("id 123e4567-e89b-12d3-a456-426614174000 nic aa:bb:cc:dd:ee:ff mail jo@vendor.test host db01.vendor.test\n"), off);
+    expect(classes(r).sort()).toEqual(["semantic:email", "semantic:guid", "semantic:host", "semantic:mac"]);
+  });
+
+  test("an all-digit GUID is still a guid candidate", () => {
+    expect(classes(audit(text("id 12345678-1234-1234-1234-123456789012\n"), off))).toEqual(["semantic:guid"]);
+  });
+
+  test("pseudonym IPs the engine issued (in the map) are never reported", () => {
+    const map: BlindMap = { version: 1, entries: [{ kind: "host", canonical: "10.9.8.7", value: "10.9.8.7", pseudonym: "198.51.100.14" }] };
+    const r = audit(text("a 198.51.100.14 b\n"), off, map);
+    expect(semantic(r)).toEqual([]);
+    expect(r.status).toBe("clean");
+    // A pool address the map did not issue is an original left in place.
+    expect(classes(audit(text("b 192.0.2.200\n"), off, map))).toEqual(["semantic:ip"]);
+  });
+
+  test("an address equal to or inside a keep term (exact or CIDR) is kept", () => {
+    const t = text("a 10.1.2.3 b 10.2.9.9 c 10.3.0.1 d 2001:db8:1::5 e 2001:db8:2::5\n");
+    const r = audit(t, off, EMPTY_MAP, ["10.1.2.3", "10.2.0.0/16", "2001:db8:1::/48"]);
+    const left = semantic(r).filter((f) => f.class === "semantic:ip");
+    expect(left.length).toBe(2);
+    expect(left.map((f) => f.masked).join(" ")).not.toContain("10.1.2.3");
+  });
+
+  test("the hex finder does not double-report a GUID", () => {
+    expect(classes(audit(text("0f1e2d3c-4b5a-4968-8776-a5b4c3d2e1f0\n"), off))).toEqual(["semantic:guid"]);
+  });
+
+  describe("kit v1", () => {
+    const k = generateKit(DEFAULT_SEED);
+    const run = (patterns: Spec["patterns"]) => {
+      const spec: Spec = { ...k.spec, patterns };
+      const r = applySpec(
+        k.files.map((f) => ({ path: f.path, bytes: Buffer.from(f.text as string, "utf8") })),
+        spec,
+        { salt: SALT },
+      );
+      const entries = r.outputs.map((o) => file(o.path, o.bytes));
+      return audit(entries, spec, r.map);
+    };
+    test("with ip off, the audit says candidates and names the IP findings", () => {
+      const r = run({ ...k.spec.patterns, ip: false });
+      expect(r.status).toBe("candidates");
+      const ips = semantic(r).filter((f) => f.class === "semantic:ip");
+      expect(ips.length).toBeGreaterThan(0);
+      for (const f of ips) expect(f.masked).not.toMatch(/\d+\.\d+\.\d+\.\d+/);
+    });
+    test("with the pattern on and the kit's spec, it is still clean", () => {
+      const r = run(k.spec.patterns);
+      expect(k.spec.patterns.ip).toBe(true);
+      // The only candidate is the declared unknown column (see walking-skeleton.test.ts).
+      expect(semantic(r)).toEqual([]);
+      expect(r.summary.leaks).toBe(0);
+      expect(r.files.find((f) => f.path === "sync.log")?.status).toBe("clean");
+    });
   });
 });

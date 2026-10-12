@@ -529,7 +529,8 @@ up to three layers, mechanical, semantic, then model; the report lists the layer
   name split across runs is one phrase, and its attribute values) and reports as a `candidate`:
   identifier-shaped tokens (a hex run of 6 or more with a digit and a letter; 4 or more digits mixed
   with letters, such as `PRJ-48213`; a run of 10 or more digits, not the fraction of a decimal
-  number), Title-Case phrases of two or more words, email and host shapes, and lone capitalised
+  number), Title-Case phrases of two or more words, email and host shapes, IPv4/IPv6, GUID and MAC
+  shapes (`semantic:ip`, `semantic:guid`, `semantic:mac`), and lone capitalised
   words (`semantic:name`: a given name or nickname the spec missed). A lone word is a Title-Case
   word of 3 or more letters that is not part of a longer Title-Case run, not in the built-in
   dictionary, not a keep or vocabulary term, and not sentence-initial (after a line start, a
@@ -544,7 +545,11 @@ up to three layers, mechanical, semantic, then model; the report lists the layer
   ids, colours, fonts, content types). A Title-Case run is split at keep and vocabulary terms, and
   a leading function word (`The`, `In`, ...) is dropped, so `The Spring Planning Review` with that
   term in the vocabulary is explained. Candidates are listed once per value per file (the first
-  place, with how many places), at most 200 per file, then one line counting the rest. The layer
+  place, with how many places), at most 200 per file, then one line counting the rest. The email,
+  host, IP, GUID and MAC shapes are reported whatever the spec's `patterns` say, so a pattern turned
+  off by mistake cannot read as `clean`; an address equal to or inside a keep term (an exact address
+  or a CIDR range such as `10.2.0.0/16`) is kept, and an address counts as a pseudonym only when the
+  map says the engine issued it (the RFC 5737 pool is also where synthetic inputs live). The layer
   only adds candidates: it never removes or downgrades a mechanical finding.
 
 - **Model layer.** Runs unless `--no-model`, `privacy.mode = "none"`, or there is no `blind.toml`

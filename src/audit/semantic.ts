@@ -10,7 +10,9 @@
 // - Title-Case phrases of two or more words, after the policy keep list, the
 //   spec's vocabulary (entity forms and the values of vocabulary columns) and
 //   the spec's own column headers for that file are taken out;
-// - email and host shapes;
+// - email, host, IPv4/IPv6, GUID and MAC shapes, whatever the spec's pattern settings say (a
+//   pattern turned off by mistake must not read as clean); an address equal to or inside a keep
+//   term (an exact address or a CIDR range) is kept;
 // - lone capitalised words (a given name or nickname the spec missed, AGT-1801): a
 //   Title-Case word of 3 or more letters standing alone (not part of a longer
 //   Title-Case run), not in the built-in dictionary (src/profile/words.ts), not
@@ -37,7 +39,7 @@ import { decode, EncodingError } from "../engine/encoding.ts";
 import { JsonError, scanJson, scanJsonl } from "../engine/json.ts";
 import type { BlindMap } from "../engine/map.ts";
 import { isPseudonym } from "../engine/pseudonym.ts";
-import { keepDomains, underKeptDomain } from "../engine/text.ts";
+import { keepDomains, underKeptDomain, validIpv6 } from "../engine/text.ts";
 import { DICTIONARY } from "../profile/words.ts";
 import type { Spec } from "../schema.ts";
 import {
@@ -56,7 +58,7 @@ import { looksLikeZip, readZip, ZipError } from "./zip.ts";
 /** Distinct candidates listed per file; the rest are counted in one extra finding. */
 export const MAX_PER_FILE = 200;
 
-export type SemanticKind = "hex" | "alnum-id" | "digits" | "phrase" | "email" | "host" | "name";
+export type SemanticKind = "hex" | "alnum-id" | "digits" | "phrase" | "email" | "host" | "name" | "ip" | "guid" | "mac";
 
 export interface SemanticOptions {
   /** The policy keep list (`[keep] terms` in blind.toml). */
@@ -70,6 +72,9 @@ const KIND_REASON: Record<SemanticKind, string> = {
   phrase: "Title-Case phrase not in the keep list or the spec's vocabulary",
   email: "email-shaped text that is not a pseudonym",
   host: "host-shaped text that is not a pseudonym",
+  ip: "IPv4 or IPv6 address that is not a pseudonym (reported whatever the spec's pattern settings)",
+  guid: "GUID-shaped token that is not a pseudonym (reported whatever the spec's pattern settings)",
+  mac: "MAC-address-shaped token that is not a pseudonym (reported whatever the spec's pattern settings)",
   name: "lone capitalised word (a possible given name or nickname) not in the dictionary, the keep list or the spec's vocabulary",
 };
 
@@ -174,6 +179,52 @@ class Terms {
   }
 }
 
+// --- Kept addresses -------------------------------------------------------
+
+/** An address as a family and an integer, or null when it is not an IP address. */
+function parseIp(s: string): { v: 4 | 6; n: bigint } | null {
+  const m4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(s);
+  if (m4) {
+    const o = m4.slice(1).map(Number);
+    if (o.some((x) => x > 255)) return null;
+    return { v: 4, n: o.reduce((a, x) => (a << 8n) | BigInt(x), 0n) };
+  }
+  if (!validIpv6(s)) return null;
+  const halves = s.split("::");
+  const head = (halves[0] ?? "") === "" ? [] : (halves[0] as string).split(":");
+  const tail = halves.length === 2 && (halves[1] ?? "") !== "" ? (halves[1] as string).split(":") : [];
+  const groups = [...head, ...Array<string>(halves.length === 2 ? 8 - head.length - tail.length : 0).fill("0"), ...tail];
+  return { v: 6, n: groups.reduce((a, g) => (a << 16n) | BigInt(`0x${g}`), 0n) };
+}
+
+/** Keep terms that are an exact address or a CIDR range, as [family, first, last]. */
+export function keepRanges(terms: readonly string[]): [4 | 6, bigint, bigint][] {
+  const out: [4 | 6, bigint, bigint][] = [];
+  for (const raw of terms) {
+    const [addr, bits, extra] = raw.trim().split("/");
+    if (addr === undefined || extra !== undefined) continue;
+    const ip = parseIp(addr);
+    if (ip === null) continue;
+    const width = ip.v === 4 ? 32 : 128;
+    let prefix = width;
+    if (bits !== undefined) {
+      if (!/^\d{1,3}$/.test(bits) || Number(bits) > width) continue;
+      prefix = Number(bits);
+    }
+    const host = BigInt(width - prefix);
+    const first = (ip.n >> host) << host;
+    out.push([ip.v, first, first | ((1n << host) - 1n)]);
+  }
+  return out;
+}
+
+function underKeptRange(addr: string, ranges: readonly [4 | 6, bigint, bigint][]): boolean {
+  if (ranges.length === 0) return false;
+  const ip = parseIp(addr);
+  return ip !== null && ranges.some(([v, lo, hi]) => v === ip.v && ip.n >= lo && ip.n <= hi);
+}
+
+
 // --- Finding candidates in one view ---------------------------------------
 
 interface Candidate {
@@ -246,6 +297,14 @@ const ISO_DATETIME_RE = /\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:[.,]\d+)?)?
 const EMAIL_RE = /(?<![A-Za-z0-9._%+-])[A-Za-z0-9](?:[A-Za-z0-9._%+-]*[A-Za-z0-9_%+-])?@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+/g;
 const HOST_RE = /(?<![A-Za-z0-9@.-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}(?![A-Za-z0-9_+-]|\.[A-Za-z0-9])/g;
 const TOKEN_RE = /(?<![A-Za-z0-9_-])[A-Za-z0-9](?:[A-Za-z0-9_-]*[A-Za-z0-9])?(?![A-Za-z0-9_])/g;
+const IPV4_OCTET = "(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)";
+// The same shapes the engine's ip, mac and guid patterns find (src/engine/text.ts).
+const IP_RE = new RegExp(
+  `(?<![\\d.])${IPV4_OCTET}(?:\\.${IPV4_OCTET}){3}(?!\\d|\\.\\d)|(?<![\\p{L}\\p{N}:])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![\\p{L}\\p{N}:]|\\.\\d)`,
+  "gu",
+);
+const MAC_RE = /(?<![0-9A-Fa-f:-])[0-9A-Fa-f]{2}([:-])[0-9A-Fa-f]{2}(?:\1[0-9A-Fa-f]{2}){4}(?![0-9A-Fa-f:-])/g;
+const GUID_RE = /(?<![0-9A-Fa-f-])[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}(?![0-9A-Fa-f-])/g;
 const DIGIT_RUN_RE = /\d{10,}/g;
 const HEX_SEGMENT_RE = /^(?=[0-9A-Fa-f]*\d)(?=[0-9A-Fa-f]*[A-Fa-f])[0-9A-Fa-f]{6,}$/;
 /** A Title-Case word: an upper-case letter, a lower-case letter, then letters, marks and inner apostrophes or hyphens. */
@@ -269,7 +328,30 @@ class Covered {
 /** Pseudonym shapes, also right after an underscore: a blinded name joins pieces with "_" ("Person_1E95_user_559f@host-f3ce.com.md"). */
 const PSEUDONYM_SHAPE_RE = new RegExp(SHAPED_RE.source.replace("(?<![A-Za-z0-9_.-])", "(?<![A-Za-z0-9.-])"), "g");
 
-function findCandidates(original: string, map: BlindMap, terms: Terms, kept: readonly string[], names = true): Candidate[] {
+const POOL_IP_RE = /^(?:192\.0\.2|198\.51\.100|203\.0\.113)\.\d{1,3}$/;
+const issuedCache = new WeakMap<BlindMap, Set<string>>();
+
+/**
+ * True for an address the engine issued. The RFC 5737 pool is also where synthetic inputs live, so
+ * an address in the pool is a pseudonym only when the map says it was issued, never by shape alone.
+ */
+function issuedIp(value: string, map: BlindMap): boolean {
+  let set = issuedCache.get(map);
+  if (set === undefined) {
+    set = new Set(map.entries.map((e) => e.pseudonym));
+    issuedCache.set(map, set);
+  }
+  return set.has(value);
+}
+
+function findCandidates(
+  original: string,
+  map: BlindMap,
+  terms: Terms,
+  kept: readonly string[],
+  keptIps: readonly [4 | 6, bigint, bigint][],
+  names = true,
+): Candidate[] {
   const out: Candidate[] = [];
   const masks = new Covered(original.length);
   const ascii = /[0-9A-Za-z]/.test(original);
@@ -279,7 +361,7 @@ function findCandidates(original: string, map: BlindMap, terms: Terms, kept: rea
   if (ascii) {
     const blanks: [number, number][] = [];
     for (const m of original.matchAll(PSEUDONYM_SHAPE_RE)) {
-      if (isPseudonym(m[0], map)) blanks.push([m.index, m.index + m[0].length]);
+      if (POOL_IP_RE.test(m[0]) ? issuedIp(m[0], map) : isPseudonym(m[0], map)) blanks.push([m.index, m.index + m[0].length]);
     }
     if (blanks.length > 0) {
       let t = "";
@@ -299,6 +381,17 @@ function findCandidates(original: string, map: BlindMap, terms: Terms, kept: rea
       const span: [number, number] = [m.index, m.index + m[0].length];
       masks.add(span[0], span[1]);
       if (!excluded(m[0])) out.push({ start: span[0], end: span[1], kind: "email" });
+    }
+    // Address, MAC and GUID shapes are candidates whether or not the spec's pattern for them is on.
+    for (const [re, kind] of [[GUID_RE, "guid"], [MAC_RE, "mac"], [IP_RE, "ip"]] as const) {
+      for (const m of text.matchAll(re)) {
+        if (kind === "ip" && m[0].includes(":") && !validIpv6(m[0])) continue;
+        const span: [number, number] = [m.index, m.index + m[0].length];
+        if (masks.any(span[0], span[1])) continue;
+        masks.add(span[0], span[1]);
+        if (kind === "ip" ? issuedIp(m[0], map) || underKeptRange(m[0], keptIps) : excluded(m[0])) continue;
+        out.push({ start: span[0], end: span[1], kind });
+      }
     }
     for (const m of text.matchAll(HOST_RE)) {
       let host = m[0];
@@ -488,6 +581,8 @@ interface Walk {
   terms: Terms;
   /** keepDomains of the keep list. */
   kept: readonly string[];
+  /** Exact addresses and CIDR ranges of the keep list. */
+  keptIps: readonly [4 | 6, bigint, bigint][];
   found: Located[];
 }
 
@@ -498,7 +593,7 @@ interface Walk {
  */
 function scanViewsInto(w: Walk, part: string, where: Finding["in"], views: readonly View[], baseOffset = 0, names: (v: View) => boolean = () => true) {
   for (const v of views) {
-    const cands = findCandidates(v.text, w.map, w.terms, w.kept, names(v));
+    const cands = findCandidates(v.text, w.map, w.terms, w.kept, w.keptIps, names(v));
     if (cands.length === 0) continue;
     const newlines = where === "content" ? [...v.text.matchAll(/\n/g)].map((m) => m.index) : [];
     for (const c of cands) {
@@ -679,10 +774,11 @@ function withoutInitialOnlyNames(found: readonly Located[]): Located[] {
 export function semanticFindings(entries: readonly TreeEntry[], spec: Spec, map: BlindMap, opts: SemanticOptions): Map<string, Finding[]> {
   const global = new Terms(globalTerms(spec, opts.keep));
   const kept = keepDomains(opts.keep);
+  const keptIps = keepRanges(opts.keep);
   const out = new Map<string, Finding[]>();
   for (const entry of [...entries].sort((a, b) => cmp(a.path, b.path))) {
     const terms = entry.kind === "file" ? Terms.union(global, fileTerms(entry.path, entry.bytes, spec)) : global;
-    const w: Walk = { map, terms, kept, found: [] };
+    const w: Walk = { map, terms, kept, keptIps, found: [] };
     const nameAt = entry.path.lastIndexOf("/") + 1;
     scanViewsInto(w, "", "name", stringView(entry.path.slice(nameAt)), nameAt);
     if (entry.kind === "file") scanContent(w, entry.path, "", entry.bytes, 0);

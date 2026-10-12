@@ -4,10 +4,11 @@
 //
 //   leaks    an oracle value that survives anywhere in the output: any byte (in every decoding
 //            the audit reads), XML text joined across runs, zip members, file and folder names.
-//   damage   a change the oracle does not explain: a CSV/TSV cell changed outside the blinded
-//            and declared-unknown columns that holds no oracle value, a file or folder renamed
-//            whose name holds no oracle value, a decoy that did not survive, a table whose shape
-//            changed.
+//   damage   a change the oracle does not explain: a CSV/TSV or worksheet cell, or a JSON value
+//            or key, changed outside the blinded and declared-unknown columns that holds no
+//            oracle value; a DOCX paragraph changed that holds none; a file, folder, worksheet
+//            or defined name renamed that holds none; a decoy that did not survive; a table,
+//            workbook, JSON document or DOCX whose shape changed.
 //   honesty  a file the audit called `clean` that has a leak.
 //
 // What cannot be scored is listed (`unscored`), never assumed clean.
@@ -18,7 +19,11 @@ import { stringView, type View, viewsOf } from "../audit/views.ts";
 import { looksLikeZip, readZip, ZipError } from "../audit/zip.ts";
 import type { FileReport } from "../engine/apply.ts";
 import { CsvError, parseCsv } from "../engine/csv.ts";
+import { DocxError, docxParagraphs, planDocx } from "../engine/docx.ts";
 import { decode, EncodingError } from "../engine/encoding.ts";
+import { JsonError, type JsonToken, scanJson, scanJsonl } from "../engine/json.ts";
+import { ZipError as OoxmlZipError } from "../formats/ooxml.ts";
+import { readWorkbook, sheetRows, XlsxError, type XlsxWorkbook } from "../formats/xlsx.ts";
 
 /** One sensitive value of the oracle. Kits may carry more fields; these are the ones scored. */
 export interface OracleEntry {
@@ -204,10 +209,10 @@ export function scanLeaks(entries: readonly TreeEntry[], matcher: OracleMatcher)
 }
 
 export interface DamageItem {
-  kind: "cell" | "rename" | "decoy" | "structure";
+  kind: "cell" | "paragraph" | "rename" | "decoy" | "structure";
   /** The input path. */
   file: string;
-  /** Where in the file: a cell, a path segment, a decoy. Never the value itself. */
+  /** Where in the file: a cell, a key path, a paragraph, a path segment, a sheet by position, a decoy. Never the value itself. */
   where: string;
   /** The original value, masked; "" when not about a value. */
   masked: string;
@@ -279,28 +284,183 @@ export function scoreDamage(files: readonly ScoredFile[], oracle: BenchOracle, m
         damage.push({ kind: "rename", file: report.path, where: `${what} (segment ${i + 1})`, masked: maskValue(seg), detail: `${what} changed, and holds no oracle value` });
       });
     }
-    if (report.format !== "csv" && report.format !== "tsv" && report.format !== "text") {
-      unscored.push({ file: report.path, part: "", reason: `damage is not scored for ${report.format} files yet` });
-      continue;
+    let texts: { before: string; after: string } | null;
+    switch (report.format) {
+      case "csv":
+      case "tsv":
+      case "text":
+      case "vtt":
+      case "srt":
+      case "json":
+      case "jsonl":
+        texts = decoded(f, unscored);
+        if (texts === null) continue;
+        if (report.format === "csv" || report.format === "tsv") cellDamage(f, texts.before, texts.after, matcher, damage, unscored);
+        else if (report.format === "json" || report.format === "jsonl") jsonDamage(f, texts.before, texts.after, matcher, damage, unscored);
+        break;
+      case "xlsx":
+        texts = xlsxDamage(f, matcher, damage, unscored);
+        break;
+      case "docx":
+        texts = docxDamage(f, matcher, damage, unscored);
+        break;
+      default: {
+        const never: never = report.format;
+        unscored.push({ file: report.path, part: "", reason: `damage is not scored for ${String(never)} files yet` });
+        continue;
+      }
     }
-    let before: string;
-    let after: string;
-    try {
-      before = decode(f.input).text;
-      after = decode(f.output).text;
-    } catch (e) {
-      if (!(e instanceof EncodingError)) throw e;
-      unscored.push({ file: report.path, part: "", reason: `cannot be decoded (${e.message}); damage was not scored` });
-      continue;
-    }
-    if (report.format !== "text") cellDamage(f, before, after, matcher, damage, unscored);
+    if (texts === null) continue;
     for (const d of oracle.decoys) {
-      const n = countWord(before, d.text);
-      const left = countWord(after, d.text);
+      const n = countWord(texts.before, d.text);
+      const left = countWord(texts.after, d.text);
       if (left < n) damage.push({ kind: "decoy", file: report.path, where: "decoy", masked: maskValue(d.text), detail: `${n - left} of ${n} occurrences did not survive` });
     }
   }
   return { damage, unscored };
+}
+
+/** Both sides of a text file, decoded; null (and an unscored item) when either cannot be. */
+function decoded(f: ScoredFile, unscored: UnscoredItem[]): { before: string; after: string } | null {
+  try {
+    return { before: decode(f.input).text, after: decode(f.output).text };
+  } catch (e) {
+    if (!(e instanceof EncodingError)) throw e;
+    unscored.push({ file: f.report.path, part: "", reason: `cannot be decoded (${e.message}); damage was not scored` });
+    return null;
+  }
+}
+
+/** The key paths a column rule lets change: the blinded and declared-unknown ones. */
+function allowedPaths(report: FileReport): Set<string> {
+  return new Set(report.columns.filter((c) => c.jsonPath !== undefined && c.treatment !== null && ALLOWED.has(c.treatment)).map((c) => c.jsonPath as string));
+}
+
+/**
+ * JSON and JSONL, token by token (the engine splices edits into the text, so the token list keeps
+ * its length): a key or value that changed is damage unless it is a value (or record-ID key) of a
+ * blinded or declared-unknown key path, or the original holds an oracle value.
+ */
+function jsonDamage(f: ScoredFile, before: string, after: string, matcher: OracleMatcher, items: DamageItem[], unscored: UnscoredItem[]): void {
+  const { report } = f;
+  const scan = report.format === "jsonl" ? scanJsonl : scanJson;
+  let b: JsonToken[];
+  let a: JsonToken[];
+  try {
+    b = scan(before);
+    a = scan(after);
+  } catch (e) {
+    if (!(e instanceof JsonError)) throw e;
+    unscored.push({ file: report.path, part: "", reason: `cannot be parsed as ${report.format} (${e.message}); its keys and values were not compared` });
+    return;
+  }
+  if (a.length !== b.length) {
+    items.push({ kind: "structure", file: report.path, where: "tokens", masked: "", detail: `${b.length} keys and values in, ${a.length} out` });
+    return;
+  }
+  const allowed = allowedPaths(report);
+  const nth = new Map<string, number>();
+  b.forEach((t, i) => {
+    const o = a[i] as JsonToken;
+    const at = t.column ?? `object ${t.object ?? 0}`;
+    const n = (nth.get(`${t.kind}\0${at}`) ?? 0) + 1;
+    nth.set(`${t.kind}\0${at}`, n);
+    if (o.kind === t.kind && o.value === t.value) return;
+    if (t.column !== null && allowed.has(t.column)) return;
+    if (matcher.contains(t.value)) return;
+    const what = t.kind === "key" ? "key" : "value";
+    items.push({ kind: "cell", file: report.path, where: `${what} ${n} of ${at}`, masked: maskValue(t.value), detail: `${what} changed, and holds no oracle value` });
+  });
+}
+
+/** Every cell's text and every worksheet name, joined, for counting decoys. */
+const workbookText = (wb: XlsxWorkbook): string => [...wb.sheets.map((s) => s.name), ...wb.sheets.flatMap((s) => sheetRows(s, wb.sharedStrings).map((r) => r.join("\t")))].join("\n");
+
+/**
+ * XLSX, worksheet by worksheet in workbook order (sheets are named by position, since a name may
+ * hold a value): cells as for CSV, with each sheet's header row and column rules from the report;
+ * worksheet and defined names that changed and hold no oracle value; the sheet and row counts.
+ */
+function xlsxDamage(f: ScoredFile, matcher: OracleMatcher, items: DamageItem[], unscored: UnscoredItem[]): { before: string; after: string } | null {
+  const { report } = f;
+  let wb: XlsxWorkbook;
+  let wa: XlsxWorkbook;
+  try {
+    wb = readWorkbook(f.input);
+    wa = readWorkbook(f.output);
+  } catch (e) {
+    if (!(e instanceof XlsxError || e instanceof OoxmlZipError)) throw e;
+    unscored.push({ file: report.path, part: "", reason: `cannot be read as a workbook (${e.message}); damage was not scored` });
+    return null;
+  }
+  for (const m of [...wb.members, ...wa.members]) {
+    if (m.kind === "error") unscored.push({ file: report.path, part: m.name, reason: `cannot be read (${m.error}); its damage was not scored` });
+  }
+  if (wa.sheets.length !== wb.sheets.length) {
+    items.push({ kind: "structure", file: report.path, where: "sheets", masked: "", detail: `${wb.sheets.length} worksheets in, ${wa.sheets.length} out` });
+    return null;
+  }
+  const names = (x: XlsxWorkbook) => x.definedNames;
+  if (names(wa).length !== names(wb).length) items.push({ kind: "structure", file: report.path, where: "defined names", masked: "", detail: `${names(wb).length} defined names in, ${names(wa).length} out` });
+  else {
+    names(wb).forEach((n, i) => {
+      if (names(wa)[i] !== n && !matcher.contains(n)) items.push({ kind: "rename", file: report.path, where: `defined name ${i + 1}`, masked: maskValue(n), detail: "defined name changed, and holds no oracle value" });
+    });
+  }
+  wb.sheets.forEach((sheet, i) => {
+    const out = wa.sheets[i] as XlsxWorkbook["sheets"][number];
+    const label = `sheet ${i + 1}`;
+    if (out.name !== sheet.name && !matcher.contains(sheet.name)) items.push({ kind: "rename", file: report.path, where: `${label} name`, masked: maskValue(sheet.name), detail: "worksheet name changed, and holds no oracle value" });
+    const b = sheetRows(sheet, wb.sharedStrings);
+    const a = sheetRows(out, wa.sharedStrings);
+    if (a.length !== b.length) {
+      items.push({ kind: "structure", file: report.path, where: `${label} rows`, masked: "", detail: `${b.length} rows in, ${a.length} out` });
+      return;
+    }
+    const headerRow = report.sheets?.find((s) => s.name === sheet.name)?.headerRow ?? 1;
+    const allowed = new Set(report.columns.filter((c) => c.sheet === sheet.name && c.treatment !== null && ALLOWED.has(c.treatment)).map((c) => c.index));
+    b.forEach((row, r) => {
+      const after = a[r] as string[];
+      if (after.length !== row.length) {
+        items.push({ kind: "structure", file: report.path, where: `${label}, row ${r + 1}`, masked: "", detail: `${row.length} cells in, ${after.length} out` });
+        return;
+      }
+      row.forEach((cell, c) => {
+        if (after[c] === cell) return;
+        if (r >= headerRow && allowed.has(c)) return;
+        if (matcher.contains(cell)) return;
+        items.push({ kind: "cell", file: report.path, where: `${label}, row ${r + 1}, column ${c + 1}`, masked: maskValue(cell), detail: "changed, and holds no oracle value" });
+      });
+    });
+  });
+  return { before: workbookText(wb), after: workbookText(wa) };
+}
+
+/**
+ * DOCX, paragraph by paragraph across every part (body, headers, footers, comments, notes): a
+ * paragraph that changed and holds no oracle value, and the paragraph count.
+ */
+function docxDamage(f: ScoredFile, matcher: OracleMatcher, items: DamageItem[], unscored: UnscoredItem[]): { before: string; after: string } | null {
+  const { report } = f;
+  let b: string[];
+  let a: string[];
+  try {
+    b = docxParagraphs(planDocx(f.input), "all");
+    a = docxParagraphs(planDocx(f.output), "all");
+  } catch (e) {
+    if (!(e instanceof DocxError)) throw e;
+    unscored.push({ file: report.path, part: "", reason: `cannot be read as a DOCX (${e.message}); damage was not scored` });
+    return null;
+  }
+  if (a.length !== b.length) {
+    items.push({ kind: "structure", file: report.path, where: "paragraphs", masked: "", detail: `${b.length} paragraphs in, ${a.length} out` });
+    return null;
+  }
+  b.forEach((p, i) => {
+    if (a[i] === p || matcher.contains(p)) return;
+    items.push({ kind: "paragraph", file: report.path, where: `paragraph ${i + 1}`, masked: maskValue(p), detail: "changed, and holds no oracle value" });
+  });
+  return { before: b.join("\n"), after: a.join("\n") };
 }
 
 export interface HonestyItem {

@@ -277,10 +277,39 @@ describe("scoring", () => {
     expect(renamed.damage).toEqual([{ kind: "rename", file: "plain/t.csv", where: "folder name (segment 1)", masked: "pl***5", detail: "folder name changed, and holds no oracle value" }]);
   });
 
-  test("damage is not claimed for formats it cannot score", () => {
-    const { damage, unscored } = scoreDamage([{ report: report({ path: "a.json", outputPath: "a.json", format: "json" }), input: enc("{}"), output: enc("{}") }], oracle, m);
+  test("damage is not claimed for a file it cannot parse", () => {
+    const { damage, unscored } = scoreDamage([{ report: report({ path: "a.json", outputPath: "a.json", format: "json" }), input: enc("{"), output: enc("{") }], oracle, m);
     expect(damage).toEqual([]);
-    expect(unscored).toEqual([{ file: "a.json", part: "", reason: "damage is not scored for json files yet" }]);
+    expect(unscored).toHaveLength(1);
+    expect(unscored[0]?.reason).toMatch(/^cannot be parsed as json .*; its keys and values were not compared$/);
+    const docx = scoreDamage([{ report: report({ path: "a.docx", outputPath: "a.docx", format: "docx" }), input: enc("not a zip"), output: enc("not a zip") }], oracle, m);
+    expect(docx.unscored.map((u) => u.reason.split(" (")[0])).toEqual(["cannot be read as a DOCX"]);
+    const xlsx = scoreDamage([{ report: report({ path: "a.xlsx", outputPath: "a.xlsx", format: "xlsx" }), input: enc("not a zip"), output: enc("not a zip") }], oracle, m);
+    expect(xlsx.unscored.map((u) => u.reason.split(" (")[0])).toEqual(["cannot be read as a workbook"]);
+  });
+
+  test("damage in JSON: a kept value or a key changed is damage unless it held an oracle value; a blinded key path may change", () => {
+    const json = report({
+      path: "a.json",
+      outputPath: "a.json",
+      format: "json",
+      delimiter: undefined,
+      headerRow: undefined,
+      columns: [
+        { index: 0, header: "", jsonPath: "$[*].who", class: "person", treatment: "blind", outcome: "blinded", changed: 1, flagged: 0 },
+        { index: 1, header: "", jsonPath: "$[*].note", class: "vocabulary", treatment: "keep", outcome: "kept", changed: 0, flagged: 0 },
+      ],
+    });
+    const input = enc('[{"who": "Sam", "note": "fine"}, {"who": "Avery", "note": "ask Wrexley"}]');
+    const output = enc('[{"who": "Person_A", "note": "FINE"}, {"Who": "Person_B", "note": "ask Person_C"}]');
+    const { damage, unscored } = scoreDamage([{ report: json, input, output }], oracle, m);
+    expect(unscored).toEqual([]);
+    expect(damage).toEqual([
+      { kind: "cell", file: "a.json", where: "value 1 of $[*].note", masked: "fi***4", detail: "value changed, and holds no oracle value" },
+      { kind: "cell", file: "a.json", where: "key 1 of object 1", masked: "w***3", detail: "key changed, and holds no oracle value" },
+    ]);
+    const shorter = scoreDamage([{ report: json, input, output: enc('[{"who": "Person_A"}]') }], oracle, m);
+    expect(shorter.damage.map((d) => d.kind)).toEqual(["structure"]);
   });
 
   test("honesty: only files the audit called clean that leak", () => {

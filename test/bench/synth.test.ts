@@ -101,7 +101,7 @@ describe("synthetic kit v1", () => {
       expect(readdirSync(dir).sort()).toEqual(["input", "oracle.json", "spec.json"]);
       expect(JSON.parse(readFileSync(join(dir, "oracle.json"), "utf8"))).toEqual(kit.oracle);
       expect(parseSpec(readFileSync(join(dir, "spec.json"), "utf8"))).toEqual(kit.spec);
-      for (const f of kit.files) expect(readFileSync(join(dir, "input", ...f.path.split("/")), "utf8")).toBe(f.text);
+      for (const f of kit.files) expect(readFileSync(join(dir, "input", ...f.path.split("/")), "utf8")).toBe(f.text as string);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

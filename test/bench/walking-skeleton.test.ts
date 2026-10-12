@@ -136,7 +136,7 @@ describe("walking skeleton on synthetic kit v1", () => {
 
   test("the month decoy survives: Jan. is not taken for the given name Jan", () => {
     const md = run.output["notes/review.md"] as string;
-    const expected = (kit.files.find((f) => f.path === "notes/review.md")?.text.match(/\bJan\./g) ?? []).length;
+    const expected = (kit.files.find((f) => f.path === "notes/review.md")?.text?.match(/\bJan\./g) ?? []).length;
     expect(expected).toBeGreaterThan(0);
     expect((md.match(/\bJan\./g) ?? []).length).toBe(expected);
   });
@@ -158,7 +158,7 @@ describe("walking skeleton on synthetic kit v1", () => {
   // wins equal-length ties, so the acronym decoy survives.
   test("the acronym decoy survives: SAM, marked vocabulary, is not taken for the given name Sam", () => {
     const md = run.output["notes/review.md"] as string;
-    const expected = (kit.files.find((f) => f.path === "notes/review.md")?.text.match(/\bSAM\b/g) ?? []).length;
+    const expected = (kit.files.find((f) => f.path === "notes/review.md")?.text?.match(/\bSAM\b/g) ?? []).length;
     expect(expected).toBeGreaterThan(0);
     expect((md.match(/\bSAM\b/g) ?? []).length).toBe(expected);
   });

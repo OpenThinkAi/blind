@@ -326,6 +326,18 @@ describe("decisions", () => {
     expect(why.c7).toMatch(/\[keep\]\.terms/);
   });
 
+  test("leakDecisions never skips a secret, even one that is a dictionary word, a measure, short or kept", () => {
+    const cs = [
+      cand({ value: "sunflower", kinds: ["pattern:secret"], suggested: "id", severity: "leak" }),
+      cand({ id: "c2", value: "1234", kinds: ["pattern:secret"], suggested: "id", severity: "leak" }),
+      cand({ id: "c3", value: "open sesame", kinds: ["pattern:secret"], suggested: "id", severity: "leak" }),
+    ];
+    const kept = { values: new Set(["open sesame"]), terms: new Set(["sunflower"]) };
+    const { decisions, skipped } = leakDecisions(SPEC, cs, [], EMPTY_MAP, kept);
+    expect(skipped).toEqual([]);
+    expect(decisions.map((d) => [d.id, d.action === "accept" ? d.as : null])).toEqual([["c1", "id"], ["c2", "id"], ["c3", "id"]]);
+  });
+
   test("keptValues reads the cells of the keep columns of the output, and the policy terms, folded", () => {
     mkdirSync(join(dir, "kept"));
     writeFileSync(join(dir, "kept", "clinic.csv"), 'name,clinic_phone\n"Ann, B",555-0199\nCy,\n');

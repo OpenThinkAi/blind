@@ -450,6 +450,8 @@ export function keptValues(root: string, spec: Spec, terms: readonly string[]): 
 
 /** Why `--accept-leaks` leaves a value out, or null when it is for the spec: it is not sensitive, or the owner keeps it. */
 function notSensitive(c: Candidate, vocabulary: ReadonlySet<string>, kept: KeptValues): string | null {
+  // A secret (a password, gate code, safe combination) is sensitive whatever it looks like: never skipped.
+  if (c.kinds.includes("pattern:secret")) return null;
   const v = c.value.trim();
   const f = fold(v);
   if (kept.terms.has(f)) return "a [keep].terms entry: kept by policy";

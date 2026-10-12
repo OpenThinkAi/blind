@@ -94,3 +94,12 @@ describe("valueStats", () => {
     expect(valueStats(values, 0).samples).toEqual([]);
   });
 });
+
+test("the email detector is linear on a long run with no @, and still finds an email anywhere", () => {
+  const run = "a.".repeat(100_000);
+  const t0 = performance.now();
+  expect(DETECTORS.email.test(run)).toBe(false);
+  expect(performance.now() - t0).toBeLessThan(250);
+  expect(DETECTORS.email.test("contact: avery.quill+ops@mail.example.com.")).toBe(true);
+  expect(DETECTORS.email.test("x-avery@example.org")).toBe(true);
+});

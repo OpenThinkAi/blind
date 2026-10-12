@@ -76,14 +76,15 @@ describe("valueStats", () => {
 
   test("detector rates are shares of values", () => {
     const s = valueStats(["192.0.2.1", "ada@example.com", "plain", "EMP-004417"], 0);
-    expect(s.detectorRates).toEqual({ address: 0, email: 0.25, guid: 0, host: 0, ip: 0.25, mac: 0, numericId: 0.25 });
+    // "plain" is handle-shaped as a value (a lowercase token not in the word list); only the column test (shapes.ts) classifies.
+    expect(s.detectorRates).toEqual({ address: 0, email: 0.25, guid: 0, host: 0, ip: 0.25, mac: 0, numericId: 0.25, handle: 0.25, phone: 0, plate: 0 });
   });
 
   test("an empty column is all zeros", () => {
     const s = valueStats(["", " "], 3);
     expect(s).toEqual({
       count: 0, distinctRatio: 0, digitRatio: 0, dictionaryRatio: 0, meanLength: 0,
-      detectorRates: { address: 0, email: 0, guid: 0, host: 0, ip: 0, mac: 0, numericId: 0 }, samples: [],
+      detectorRates: { address: 0, email: 0, guid: 0, host: 0, ip: 0, mac: 0, numericId: 0, plate: 0, handle: 0, phone: 0 }, samples: [],
     });
   });
 

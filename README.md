@@ -33,7 +33,9 @@ with `sheet`) and keeps, scans, drops, blinds or redacts them; when rules overla
 specific wins, and `blind plan` notes each overlap (see [docs/policy.md](docs/policy.md#columns)). `scan` is the one for notes, remarks and diagnoses:
 the cell is kept as written except for what the free-text scanner finds in it (phones, emails,
 names, a plate, username, badge, gate code or hidden-key place after its keyword). `[defaults] columns = "scan"` gives every column no
-rule decides that treatment too, instead of pseudonymising identifier-like ones whole.
+rule decides that treatment too, instead of pseudonymising identifier-like ones whole. A column the
+built-in detectors recognise by shape (emails, IDs, licence plates, usernames, phone numbers) is
+still classified, and blinded when its class is sensitive (see [docs/spec.md](docs/spec.md#re-planning-with-a-saved-spec)).
 
 ## What a model sees
 

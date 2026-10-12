@@ -72,7 +72,8 @@ What `classes` does: the analyst is told these are the sensitive classes; an ans
 question that names a class (`blind plan --answer q1=org`) blinds the column only if the class is
 listed here, otherwise it keeps it; and the built-in detectors (`blind plan --no-model`) blind a
 column they recognise, and turn a pattern on, only when its class is listed (`host` covers IP
-addresses, host names and MAC addresses, `email` emails, `id` GUIDs and numeric IDs). It does not
+addresses, host names and MAC addresses, `email` emails, `id` GUIDs, numeric IDs, licence plates,
+usernames/login handles and phone numbers). It does not
 turn off a rule you wrote in the spec. To switch a pattern regardless of the classes or the spec,
 use [`[patterns]`](#patterns).
 
@@ -260,7 +261,8 @@ columns = "scan"
 | `columns` | `"fallback"` or `"scan"` | `"fallback"` | What a column (or JSON key) gets when no rule decides it: no spec rule, or an `unknown`/`value` one. `fallback` runs the engine's fail-closed identifier-like test ([spec.md](spec.md#how-blind-apply-uses-the-spec)): codes, names and other mostly distinct values are pseudonymised whole, the rest scanned as text. `scan` treats every such column as `scan`: nothing is pseudonymised whole unless a rule says so, and its text is still scanned. Use `scan` when your policy lists what *is* sensitive and everything else should stay. |
 
 `blind apply` reads it at apply time (no re-plan needed); `[[columns]]` rules, keep terms and the
-analyst's or heuristic's classified rules (an email or numeric-ID column, say) still decide their
+analyst's or heuristic's classified rules (an email, numeric-ID, licence-plate, username or phone
+column, say; [spec.md](spec.md#re-planning-with-a-saved-spec)) still decide their
 columns. The apply report shows such a column as `unknown → scanned (the [defaults] columns setting)`.
 
 ## `[models.analyst]` and `[models.auditor]`

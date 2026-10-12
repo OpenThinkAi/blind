@@ -1,21 +1,29 @@
 // Value statistics, shape detectors, excerpts and deterministic sampling for the profile.
 // Everything here is a pure function of its input: no clock, no randomness, no locale.
 
-import { type DetectorName, type DetectorRates, MAX_EXCERPT, type ValueStats } from "../schema.ts";
+import { type BaseDetectorName, type DetectorRates, MAX_EXCERPT, type ValueStats } from "../schema.ts";
 import { findAddresses } from "../engine/address.ts";
 import { isEpochColumn, isEpochTimestamp } from "../engine/epoch.ts";
+import { shapeRates } from "../engine/shapes.ts";
+import { hostShaped } from "../engine/text.ts";
 import { DICTIONARY } from "../engine/words.ts";
 
 const OCTET = "(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)";
+const HOST_RE = /(?<![@\w.-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}(?![\w-]|\.\w)/g;
 
-/** Shape detectors. All but `numericId` look for the shape anywhere in the value. */
-/** A detector is anything with a RegExp-style `test`. */
-export const DETECTORS: Record<DetectorName, { test(value: string): boolean }> = {
+/**
+ * Shape detectors. All but `numericId` look for the shape anywhere in the value. The column shapes
+ * (plate, handle, phone) are measured by src/engine/shapes.ts, which the engine and audit share.
+ * A detector is anything with a RegExp-style `test`.
+ */
+export const DETECTORS: Record<BaseDetectorName, { test(value: string): boolean }> = {
   ip: new RegExp(`(?<![\\d.])${OCTET}(?:\\.${OCTET}){3}(?![\\d.]*\\d)`),
   // Starts only where a run of local-part characters starts: the same matches, in linear time on a long run with no "@".
   email: /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/,
   // A dotted name ending in a letters-only label; the domain of an email does not count as a host.
-  host: /(?<![@\w.-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}(?![\w-]|\.\w)/,
+  // A match counts only under the engine's host rule (hostShaped: 3+ labels or a known suffix), so
+  // "msg.reply" is not a host (AGT-1846).
+  host: { test: (v: string) => [...v.matchAll(HOST_RE)].some((m) => hostShaped(m[0])) },
   guid: /(?<![0-9A-Fa-f])[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}(?![0-9A-Fa-f])/,
   mac: /(?<![0-9A-Fa-f:-])[0-9A-Fa-f]{2}([:-])[0-9A-Fa-f]{2}(?:\1[0-9A-Fa-f]{2}){4}(?![0-9A-Fa-f:-])/,
   // A street address anywhere in the value, a bare street line ("12 Sample Lane") included (the `address` pattern's finder).
@@ -24,7 +32,8 @@ export const DETECTORS: Record<DetectorName, { test(value: string): boolean }> =
   numericId: /^[A-Za-z]{0,6}[-_#]?\d{4,}$/,
 };
 
-const DETECTOR_NAMES = Object.keys(DETECTORS).sort() as DetectorName[];
+const DETECTOR_NAMES = Object.keys(DETECTORS).sort() as BaseDetectorName[];
+
 
 /** Collapses whitespace and cuts to MAX_EXCERPT code points, ending a cut excerpt with "…". */
 export function excerpt(text: string): string {
@@ -59,7 +68,7 @@ export function valueStats(raw: readonly string[], k: number, dates: readonly bo
   // in a column that is mostly Unix times, those times.
   const dated = new Set(raw.flatMap((v, i) => (dates[i] === true && v.trim() !== "" ? [v.trim()] : [])));
   const epochs = isEpochColumn(values);
-  const skips = (name: DetectorName, v: string): boolean => name === "numericId" && (dated.has(v) || (epochs && isEpochTimestamp(v)));
+  const skips = (name: BaseDetectorName, v: string): boolean => name === "numericId" && (dated.has(v) || (epochs && isEpochTimestamp(v)));
   const uniques = distinct(values);
   let chars = 0;
   let digits = 0;
@@ -76,9 +85,9 @@ export function valueStats(raw: readonly string[], k: number, dates: readonly bo
   }
   const detectorRates = {} as DetectorRates;
   for (const name of DETECTOR_NAMES) {
-    const re = DETECTORS[name];
-    detectorRates[name] = ratio(values.filter((v) => !skips(name, v) && re.test(v)).length, values.length);
+    detectorRates[name] = ratio(values.filter((v) => !skips(name, v) && DETECTORS[name].test(v)).length, values.length);
   }
+  Object.assign(detectorRates, shapeRates(values));
   return {
     count: values.length,
     distinctRatio: ratio(uniques.length, values.length),

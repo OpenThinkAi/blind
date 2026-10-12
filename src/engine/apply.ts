@@ -79,6 +79,7 @@ import { commonNamePartCount, keepForms, keptWords, nameParts, personPartForms, 
 import { EntityMatcher, type ExtraForm, keepDomains, type Span } from "./text.ts";
 import { entrySpans, keptSpeakers, planTranscript, shapeParagraphs, speakerForms, speakersOf, type TranscriptPlan, transcriptSpans } from "./transcript.ts";
 import { unrewrittenSpans } from "./unrewritten.ts";
+import { pseudoCell, pseudoWrite } from "./shapes.ts";
 import { type Env, planXlsx, prepareXlsx, renderXlsx, settleXlsx, XlsxError, type XlsxPlan, XlsxSpecError, xlsxValues, ZipError } from "./xlsx.ts";
 
 /** XLSX members that are not XML but are copied unchanged and listed as unread. */
@@ -482,7 +483,7 @@ function planTable(
         else if (action.kind === "pseudo") {
           edits.set(key, { kind: "pseudo", cls: action.cls });
           if (rule?.class === "vocabulary") continue;
-          const form: ExtraForm = { cls: action.cls, value: cell.value };
+          const form: ExtraForm = { cls: action.cls, value: pseudoCell(action.cls, cell.value).core };
           mapped.push(form);
           if (isFallback(outcome)) fallback.push({ key, value: cell.value, column, form });
         } else pending.push({ key, value: cell.value, keep: action.kind === "keep", column });
@@ -606,7 +607,7 @@ function planJson(
       if (action.kind === "pseudo") {
         edits.set(i, { kind: "pseudo", cls: action.cls });
         if (rule?.class === "vocabulary") continue;
-        const form: ExtraForm = { cls: action.cls, value };
+        const form: ExtraForm = { cls: action.cls, value: pseudoCell(action.cls, value).core };
         mapped.push(form);
         if (isFallback(outcome)) fallback.push({ key: i, value, column, form });
       } else pending.push({ key: i, value, keep: action.kind === "keep", column });
@@ -652,7 +653,7 @@ function renderJson(
     const edit = p.edits.get(i);
     let value = t.value;
     if (edit !== undefined) {
-      if (edit.kind === "pseudo") value = pz.pseudonym(edit.cls, t.value);
+      if (edit.kind === "pseudo") value = pseudoWrite(pz, edit.cls, t.value);
       else if (edit.kind === "fixed") value = edit.value;
       else {
         value = rewriteSpans(t.value, edit.spans, pz);
@@ -1269,7 +1270,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         const [r, c] = key.split(":").map(Number) as [number, number];
         const cell = (p.rows[r] as Row).cells[c] as Cell;
         let value: string;
-        if (edit.kind === "pseudo") value = pz.pseudonym(edit.cls, cell.value);
+        if (edit.kind === "pseudo") value = pseudoWrite(pz, edit.cls, cell.value);
         else if (edit.kind === "fixed") value = edit.value;
         else {
           value = rewriteSpans(cell.value, edit.spans, pz);

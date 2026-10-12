@@ -129,7 +129,10 @@
             "guid": { "$ref": "#/$defs/ratio" },
             "mac": { "$ref": "#/$defs/ratio" },
             "address": { "$ref": "#/$defs/ratio" },
-            "numericId": { "$ref": "#/$defs/ratio" }
+            "numericId": { "$ref": "#/$defs/ratio" },
+            "plate": { "$ref": "#/$defs/ratio" },
+            "handle": { "$ref": "#/$defs/ratio" },
+            "phone": { "$ref": "#/$defs/ratio" }
           }
         },
         "samples": { "$ref": "#/$defs/excerpts" }

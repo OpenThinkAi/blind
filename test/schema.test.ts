@@ -141,7 +141,7 @@ describe("profile", () => {
     ["table header too long", (d) => (d.tables[0].columns[0].header = long), "$.tables[0].columns[0].header", /at most 120 characters, got 121/],
     ["column ratio", (d) => (d.tables[0].columns[0].stats.distinctRatio = 2), "$.tables[0].columns[0].stats.distinctRatio", /must be <= 1/],
     ["column meanLength", (d) => (d.tables[0].columns[1].stats.meanLength = -1), "$.tables[0].columns[1].stats.meanLength", /must be >= 0/],
-    ["detector unknown", (d) => (d.tables[0].columns[0].stats.detectorRates.phone = 0), "$.tables[0].columns[0].stats.detectorRates.phone", /unknown field/],
+    ["detector unknown", (d) => (d.tables[0].columns[0].stats.detectorRates.postcode = 0), "$.tables[0].columns[0].stats.detectorRates.postcode", /unknown field/],
     ["detector missing", (d) => delete d.tables[0].columns[0].stats.detectorRates.guid, "$.tables[0].columns[0].stats.detectorRates.guid", /is required/],
     ["column sample too long", (d) => (d.tables[0].columns[0].stats.samples[0] = long), "$.tables[0].columns[0].stats.samples[0]", /at most 120 characters/],
     ["column samples over sampleCount", (d) => d.tables[0].columns[0].stats.samples.push("Extra Person"), "$.tables[0].columns[0].stats.samples", /at most sampleCount \(3\) items, got 4/],

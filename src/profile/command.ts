@@ -89,7 +89,7 @@ export function renderProfile(p: Profile, skipped: readonly Skipped[], notes: re
     return `${q(file)}  ${f?.format ?? "?"}  ${f?.size ?? 0} bytes`;
   };
   for (const t of p.tables) {
-    out.push(`${head(t.file)}${t.sheet === undefined ? "" : `  sheet ${q(t.sheet)}`}  header row ${t.headerRow}`);
+    out.push(`${head(t.file)}${t.sheet === undefined ? "" : `  sheet ${q(t.sheet)}`}  header row ${t.headerRow}${t.overflowRows === undefined ? "" : `  ${t.overflowRows} row(s) wider than the header (extra cells counted in the last column)`}`);
     out.push(
       ...table([
         ["column", "count", "distinct", "digits", "words", "length", "detectors", "samples"],

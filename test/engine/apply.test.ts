@@ -403,14 +403,73 @@ describe("refusals and skips", () => {
     expect(res.skipped[0]?.reason).toMatch(/malformed CSV: unexpected text after the closing quote/);
   });
 
-  test("a row narrower than the header is refused, but a title line above the header is fine", () => {
-    const short = run([file("short.csv", "id,name,city\n1,Avery,Oslo\n2,Blake\n")]);
-    expect(short.outputs).toEqual([]);
-    expect(short.skipped[0]?.reason).toMatch(/malformed CSV: row 3 has 2 cells but the header has 3/);
+  test("a title line above the header is fine", () => {
     const titled = run([file("titled.csv", "Quarterly list\nid,name,city\n1,Avery,Oslo\n2,Blake,Rome\n")]);
     expect(titled.skipped).toEqual([]);
   });
 
+  test("a quoted field spanning a line break in a row of the wrong width is refused", () => {
+    const res = run([file("bad.csv", 'id,name,city\n1,"Avery\nQuill",Oslo,extra\n')]);
+    expect(res.outputs).toEqual([]);
+    expect(res.skipped[0]?.reason).toMatch(/malformed CSV: row 2 has 4 cells but the header has 3/);
+  });
+
+  test("a multi-line quoted cell of the right width is written", () => {
+    const csv = 'id,name,notes\n1,Avery Quill,"line one\nline two"\n2,Blake Example,short\n';
+    const res = run([file("ok.csv", csv)], spec({ columns: [rule("ok.csv", "name", "person", "blind")] }));
+    expect(res.skipped).toEqual([]);
+    expect(text(res, "ok.csv")).toContain('"line one\nline two"');
+    expect(text(res, "ok.csv")).not.toContain("Avery");
+  });
+});
+
+describe("rows of a different width than the header (no quote involved)", () => {
+  const TSV = "id\tclient\tnotes\nA1\tDana Example\tfirst visit\nA2\tLee Example\t\tbring crate to lee@example.com\n";
+  const s = spec({ columns: [rule("appts.tsv", "client", "person", "blind"), rule("appts.tsv", "id", "vocabulary", "keep")] });
+
+  test("a row with an extra delimiter is written; the overflow is scanned as free text of the last column", () => {
+    const res = run([file("appts.tsv", TSV)], s);
+    expect(res.skipped).toEqual([]);
+    const lines = text(res, "appts.tsv").split("\n");
+    expect(lines[0]).toBe("id\tclient\tnotes");
+    expect(lines[1]).toMatch(/^A1\tPerson_[0-9A-F]{4}\tfirst visit$/);
+    // The row keeps its four cells and its doubled tab; the email in the overflow is replaced.
+    const row = (lines[2] as string).split("\t");
+    expect(row).toHaveLength(4);
+    expect(row[0]).toBe("A2");
+    expect(row[1]).toMatch(/^Person_[0-9A-F]{4}$/);
+    expect(row[2]).toBe("");
+    expect(row[3]).not.toContain("lee@example.com");
+    expect(row[3]).toStartWith("bring crate to ");
+    expect(res.files.find((f) => f.path === "appts.tsv")?.overflowRows).toBe(1);
+  });
+
+  test("untouched overflow cells are byte-identical", () => {
+    const plain = "id\tclient\tnotes\nA1\tx\ty\nA2\tz\t\tbring crate back\n";
+    expect(text(run([file("p.tsv", plain)], spec({ columns: [rule("p.tsv", "id", "vocabulary", "keep"), rule("p.tsv", "client", "vocabulary", "keep")] })), "p.tsv")).toBe(plain);
+  });
+
+  test("a row narrower than the header is written, missing trailing cells being empty", () => {
+    const csv = "id,name,city\n1,Avery,Oslo\n2,Blake\n";
+    const res = run([file("short.csv", csv)]);
+    expect(res.skipped).toEqual([]);
+    expect(text(res, "short.csv").split("\n")[2]?.split(",")).toHaveLength(2);
+    expect(res.files.find((f) => f.path === "short.csv")?.overflowRows).toBeUndefined();
+  });
+
+  test("dropping the last column drops its overflow cells too", () => {
+    const res = run([file("appts.tsv", TSV)], spec({ columns: [rule("appts.tsv", "notes", "unknown", "drop"), rule("appts.tsv", "id", "vocabulary", "keep"), rule("appts.tsv", "client", "vocabulary", "keep")] }));
+    expect(res.skipped).toEqual([]);
+    expect(text(res, "appts.tsv")).toBe("id\tclient\nA1\tDana Example\nA2\tLee Example\n");
+  });
+
+  test("the profiler agrees: it counts overflow in the last column and reports the rows", () => {
+    const rows = parseTable(TSV, "tsv");
+    const { table } = profileTable("appts.tsv", rows, 3, true);
+    expect(table.overflowRows).toBe(1);
+    expect(table.columns.map((c) => c.header)).toEqual(["id", "client", "notes"]);
+    expect(table.columns[2]?.stats.count).toBe(2);
+  });
   test("a rule for a column that is not in the file is an error", () => {
     const s = spec({ columns: [rule("t.csv", "Ownr", "person", "blind")] });
     expect(() => run([file("t.csv", "Owner\nAvery Quill\n")], s)).toThrow(ApplyError);

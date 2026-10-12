@@ -275,7 +275,7 @@ export function buildProfile(inputs: readonly string[], k: number, cwd: string):
         skipped.push({ path: f.path, reason: `cannot parse: ${e.message}` });
         continue;
       }
-      const result = profileTable(f.path, rows, k);
+      const result = profileTable(f.path, rows, k, true);
       if (result.noHeader) notes.push(`${f.path}: no header row detected; row 1 used as the header`);
       tables.push(result);
     } else if (format === "json" || format === "jsonl") {

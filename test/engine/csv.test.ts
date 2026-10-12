@@ -39,11 +39,18 @@ describe("parseCsv / serializeCsv", () => {
     expect(() => parseCsv(text, ",")).toThrow(/closing quote/);
   });
 
-  test("a row whose width differs from the header is refused", () => {
+  test("a row whose width differs from the header is accepted when no quoted field spans a line", () => {
     const rows = (t: string) => parseCsv(t, ",").map((r) => r.cells);
-    expect(() => assertRowWidths(rows("a,b,c\n1,2,3\n4,5\n"), 0)).toThrow(/row 3 has 2 cells but the header has 3/);
-    expect(() => assertRowWidths(rows("a,b\n1,2,3\n"), 0)).toThrow(CsvError);
-    expect(() => assertRowWidths(rows("Title\na,b\n1,2\n"), 1)).not.toThrow();
+    expect(assertRowWidths(rows("a,b,c\n1,2,3\n4,5\n"), 0)).toBe(0);
+    expect(assertRowWidths(rows("a,b\n1,2,3\n4,5,6,7\n8,9\n"), 0)).toBe(2);
+    expect(assertRowWidths(rows("Title\na,b\n1,2\n"), 1)).toBe(0);
+  });
+
+  test("a mismatched row holding a quoted field with a line break is refused", () => {
+    const rows = (t: string) => parseCsv(t, ",").map((r) => r.cells);
+    expect(() => assertRowWidths(rows('a,b,c\n1,"x\ny",3,4\n'), 0)).toThrow(/row 2 has 4 cells but the header has 3/);
+    expect(() => assertRowWidths(rows('a,b,c\n1,"x\ny"\n'), 0)).toThrow(CsvError);
+    expect(assertRowWidths(rows('a,b,c\n1,"x\ny",3\n'), 0)).toBe(0);
   });
 
   test("a blank line between rows is still allowed", () => {

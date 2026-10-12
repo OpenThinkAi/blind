@@ -44,8 +44,9 @@ export interface Span {
    * `map`: an extra form, a value pseudonymised elsewhere (a column rule, an earlier map) found again here.
    * `speaker`: a transcript speaker's tag, or their name, a part of it or a misspelling (transcript.ts).
    * `prose`: a person found only in free text (prose.ts), or a part of their name.
+   * `removed`: a value of a dropped or redacted column, found again here (AGT-1835).
    */
-  source: "pattern" | "entity" | "map" | "speaker" | "prose";
+  source: "pattern" | "entity" | "map" | "speaker" | "prose" | "removed";
 }
 
 /** Code-unit order, never locale order. */
@@ -173,7 +174,7 @@ interface Form {
   rank: number;
   /** A vocabulary form: wins every length tie, so it shields its span from other forms. */
   shield: boolean;
-  source: "entity" | "map" | "speaker" | "prose";
+  source: "entity" | "map" | "speaker" | "prose" | "removed";
   /** A name part that is also a month or weekday word: not matched in a date context (datecontext.ts). */
   datePart: boolean;
 }
@@ -199,7 +200,7 @@ export interface ExtraForm {
   /** The text to match, under the case rule of its own shape; `value` when omitted. */
   form?: string;
   /** The span source for matches; `map` when omitted. */
-  source?: "map" | "speaker" | "prose";
+  source?: "map" | "speaker" | "prose" | "removed";
   /** A name part (recur.ts nameParts): a month or weekday word among them is left alone in a date context (AGT-1813). */
   datePart?: boolean;
 }

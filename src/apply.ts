@@ -185,6 +185,9 @@ export function renderReport(result: ApplyResult): string {
     if (f.mappedReplacements > 0) {
       lines.push(`  ${f.mappedReplacements} value${f.mappedReplacements === 1 ? "" : "s"} blinded in a column or in Office metadata replaced again where ${f.mappedReplacements === 1 ? "it recurs" : "they recur"} outside it`);
     }
+    if ((f.removedReplacements ?? 0) > 0) {
+      lines.push(`  ${f.removedReplacements} value${f.removedReplacements === 1 ? "" : "s"} from dropped/redacted columns replaced where ${f.removedReplacements === 1 ? "it recurs" : "they recur"}`);
+    }
     if ((f.metadataReplacements ?? 0) > 0) {
       lines.push(`  metadata: ${f.metadataReplacements} author, creator, company or account-name value${f.metadataReplacements === 1 ? "" : "s"} replaced`);
     }

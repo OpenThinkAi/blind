@@ -271,7 +271,7 @@ export class TextScanner {
    */
   kept(text: string): Span[] {
     const shields = findPatternSpans(text, this.patterns, this.keep).filter((s) => s.cls === null);
-    return this.all.find(text, shields).filter((s) => s.source === "map" || s.source === "speaker");
+    return this.all.find(text, shields).filter((s) => s.source === "map" || s.source === "removed" || s.source === "speaker");
   }
 
   /** Whether a kept cell holds a spec entity or a pattern match, which `keep` leaves as written. */

@@ -46,7 +46,7 @@ import {
 import { detectHeaderRow } from "../profile/table.ts";
 import type { ColumnReport } from "./apply.ts";
 import { PSEUDO_CLASSES, type PseudoClass, type RealPseudoClass } from "./canonical.ts";
-import { type ColumnAction, decide, outcomeOf } from "./columns.ts";
+import { type ColumnAction, decide, outcomeOf, removedForms } from "./columns.ts";
 import type { NameSlot } from "./names.ts";
 import { type HexNamer, rewriteOfficeId } from "./officeid.ts";
 import type { TextScanner } from "./recur.ts";
@@ -100,6 +100,8 @@ export interface XlsxPlan {
   columnValues: ExtraForm[];
   /** The same, without columns classed vocabulary: the recurring values (recur.ts). */
   mapped: ExtraForm[];
+  /** Values of dropped and redacted columns: they recur like `mapped` ones (AGT-1835). */
+  removed: ExtraForm[];
   /** Data cells not pseudonymised, counted once the corpus-wide scanner exists. */
   pending: Pending[];
   /** Filled by prepareXlsx. */
@@ -145,6 +147,7 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
   const sheets: SheetReport[] = [];
   const columnValues: ExtraForm[] = [];
   const mapped: ExtraForm[] = [];
+  const removed: ExtraForm[] = [];
   const pending: Pending[] = [];
   let refusal: string | undefined;
   /** Per shared string, the actions of the cells that use it. */
@@ -195,6 +198,10 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
       // Recurring values: what this column pseudonymises, unless the column is classed vocabulary.
       const recur = action.kind === "pseudo" && rule?.class !== "vocabulary";
       const removes = action.kind === "drop" || action.kind === "redact";
+      // Their text recurs elsewhere although the cells go; a number cell refuses the workbook below.
+      if (removes) {
+        removed.push(...removedForms(rule, texts.filter((_, i) => ["s", "str", "inlineStr"].includes((data[i] as XlsxCell).type))));
+      }
       data.forEach((c, i) => {
         const text = texts[i] as string;
         if (removes && isFilled(text) && c.type !== "s" && c.type !== "str" && c.type !== "inlineStr") {
@@ -261,7 +268,7 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
   const cache = removing ? wb.members.find((m) => /^xl\/(?:pivotCache|charts)\//i.test(m.name)) : undefined;
   // Pivot and chart caches repeat cell values that are not in the map, so nothing would clear them there.
   if (refusal === undefined && cache !== undefined) refusal = `the workbook drops or redacts a column, but member ${cache.name} caches cell values blind cannot clear`;
-  return { wb, cells, strings, columns, sheets, columnValues, mapped, pending, requests: [], hexIds: [], metadata: [], wholes: xlsxWholes(bytes), ...(refusal === undefined ? {} : { refusal }) };
+  return { wb, cells, strings, columns, sheets, columnValues, mapped, removed, pending, requests: [], hexIds: [], metadata: [], wholes: xlsxWholes(bytes), ...(refusal === undefined ? {} : { refusal }) };
 }
 
 /**
@@ -325,6 +332,7 @@ export interface Rendered {
   entityReplacements: number;
   patternReplacements: number;
   mappedReplacements: number;
+  removedReplacements: number;
   /** Transcript speakers' names (or parts, or misspellings) replaced. */
   speakerReplacements: number;
   /** People named only in prose, or parts of their names, replaced. */
@@ -397,6 +405,7 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
   let entityReplacements = 0;
   let patternReplacements = 0;
   let mappedReplacements = 0;
+  let removedReplacements = 0;
   let speakerReplacements = 0;
   let proseReplacements = 0;
   let keptHosts = 0;
@@ -419,6 +428,7 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
       at = s.end;
       if (s.cls !== null && s.source === "entity") entityReplacements++;
       else if (s.cls !== null && s.source === "map") mappedReplacements++;
+      else if (s.cls !== null && s.source === "removed") removedReplacements++;
       else if (s.cls !== null && s.source === "speaker") speakerReplacements++;
       else if (s.cls !== null && s.source === "prose") proseReplacements++;
       else if (s.cls !== null) patternReplacements++;
@@ -653,6 +663,7 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
     entityReplacements,
     patternReplacements,
     mappedReplacements,
+    removedReplacements,
     speakerReplacements,
     proseReplacements,
     keptHosts,

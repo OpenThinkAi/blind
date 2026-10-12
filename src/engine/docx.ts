@@ -88,6 +88,8 @@ export interface DocxRender {
   patternReplacements: number;
   /** Values a column pass pseudonymised elsewhere in the corpus, found again here. */
   mappedReplacements: number;
+  /** Values of dropped or redacted columns, found again here (AGT-1835). */
+  removedReplacements: number;
   /** Transcript speaker tags and spoken speaker names (see transcript.ts). */
   speakerReplacements: number;
   /** People named only in prose, or parts of their names (see prose.ts). */
@@ -610,6 +612,7 @@ export function renderDocx(plan: DocxPlan, pz: Pseudonymizer, ids: HexNamer): Do
     entityReplacements: plan.edits.filter((e) => e.source === "entity").length,
     patternReplacements: plan.edits.filter((e) => e.source === "pattern").length,
     mappedReplacements: plan.edits.filter((e) => e.source === "map").length,
+    removedReplacements: plan.edits.filter((e) => e.source === "removed").length,
     speakerReplacements: plan.edits.filter((e) => e.source === "speaker").length,
     proseReplacements: plan.edits.filter((e) => e.source === "prose").length,
     keptHosts: plan.keptHosts,

@@ -124,7 +124,7 @@ const OUTCOME_TEXT: Record<FileReport["columns"][number]["outcome"], string> = {
   kept: "kept",
   "unknown-pseudonymised": "pseudonymised",
   "unknown-kept-low-cardinality": "kept (low cardinality)",
-  "unknown-kept-not-identifier-like": "kept (not identifier-like: mostly dictionary words)",
+  "unknown-kept-not-identifier-like": "kept (not identifier-like: prose, measures or a small repeating set)",
   "unknown-kept-empty": "kept (empty)",
 };
 

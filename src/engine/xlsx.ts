@@ -193,16 +193,21 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
       data.forEach((c, i) => {
         const text = texts[i] as string;
         if (!isFilled(text) || c.type === "b" || c.type === "e" || c.type === "d") return;
-        const plan: CellPlan = { action, renumber: action.kind === "pseudo" && c.type === "n" };
+        // A number cell is renumbered only when a rule (or the class it gives) pseudonymises the
+        // column. Under the fail-closed fallback (`stats` set) it is left as written, like free
+        // text: renumbering an amount gives a different, plausible number, which is silent
+        // corruption (AGT-1822). A whole-value spec match is still renumbered (prepareXlsx).
+        const cellAction: ColumnAction = c.type === "n" && stats !== undefined && action.kind === "pseudo" ? { kind: "free" } : action;
+        const plan: CellPlan = { action: cellAction, renumber: cellAction.kind === "pseudo" && c.type === "n" };
         plans.set(c.ref, plan);
         if (c.type === "s") (uses[Number(c.v)] as Action[]).push(action);
         if (plan.renumber && !NUMBER.test(text)) {
           throw new XlsxError(`worksheet ${JSON.stringify(sheet.name)} cell ${c.ref}: a number in a form that cannot be renumbered in place`);
         }
-        if (action.kind === "pseudo") {
+        if (cellAction.kind === "pseudo") {
           column.changed++;
           // A number is pseudonymised as an id; only a whole number is found again as written.
-          const form: ExtraForm | null = c.type !== "n" ? { cls: action.cls, value: text } : /^\d+$/.test(text) ? { cls: "id", value: text } : null;
+          const form: ExtraForm | null = c.type !== "n" ? { cls: cellAction.cls, value: text } : /^\d+$/.test(text) ? { cls: "id", value: text } : null;
           if (form !== null) {
             columnValues.push(form);
             if (recur) mapped.push(form);

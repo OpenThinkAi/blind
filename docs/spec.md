@@ -223,7 +223,7 @@ and not written (exit 1). Transcripts are found by content, not by name (see
 | `treatment: keep` (any class) | Byte-identical, except that a value blinded elsewhere is replaced (see recurring values below). Cells that contain a spec entity or pattern match are left alone and reported as a warning. |
 | `treatment: blind`, class `person`/`org`/`host`/`email`/`id`/`location` | Every non-empty cell gets that class's pseudonym. |
 | `treatment: blind` with `unknown`/`vocabulary`, or `value` with any other class | Every non-empty cell gets a `Value_` pseudonym. |
-| `class: unknown, treatment: value`, or **no rule at all** | Fail closed. If distinct ratio ≥ 0.5 and (digit ratio ≥ 0.3, or dictionary-word ratio ≤ 0.3, or ≥ 80% of values are Title-Case multi-word), every cell gets a `Value_` pseudonym, reported as `unknown → pseudonymised`. Otherwise the column is kept (`unknown → kept (low cardinality)`, or `kept (not identifier-like)` for prose), but spec entities and patterns are still replaced inside its cells. |
+| `class: unknown, treatment: value`, or **no rule at all** | Fail closed. If distinct ratio ≥ 0.5 and (digit ratio ≥ 0.3, or dictionary-word ratio ≤ 0.3, or ≥ 80% of values are Title-Case multi-word), every cell gets a `Value_` pseudonym, reported as `unknown → pseudonymised`. Two kinds of column are exempt: **measures**, where ≥ 80% of values are a date, a time, a decimal or grouped number (`38.6`, `1,250`), a currency amount (`$120.50`, `40.00 EUR`) or a quantity with a unit (`38.6 lb`, `12%`, `5 mg`), and plain integers are not measures; and **small categoricals**, at most 10 distinct values over at least 4, ≥ 75% of values repeating, no codes (digit ratio < 0.3, every value has a letter) and not Title-Case names (`Canine`, `Feline`; `M`, `F`). Otherwise the column is kept (`unknown → kept (low cardinality)`, or `kept (not identifier-like)` for prose, measures and categoricals), but spec entities and patterns are still replaced inside its cells. A rule always wins: give a column a class or `blind` to pseudonymise it anyway. |
 
 A rule that names a column the file does not have is an error, so a stale spec never quietly stops
 blinding a column. Rows above the header and the header row itself are treated as free text.
@@ -384,9 +384,13 @@ is an error). The column table above applies to every cell, with these workbook 
   free text, else kept. A shared string no cell uses (an orphan) is rewritten as free text too. In
   rich text, a pseudonym, or a match that spans formatting runs, is written into the first non-empty
   run and the other runs are emptied; otherwise each run keeps its formatting.
-- **Numbers.** A number cell cannot hold text, so a pseudonymised number cell is renumbered: its
-  digits get a same-length numeric `id` pseudonym (`4417` → `8203`; a decimal keeps its point),
-  whatever the column's class. Booleans, errors and dates are never changed.
+- **Numbers.** A number cell cannot hold text, so a number cell in a column a rule pseudonymises
+  (`blind`, or `value` with a class) is renumbered: its digits get a same-length numeric `id`
+  pseudonym (`4417` → `8203`; a decimal keeps its point), whatever the column's class. A column
+  with no rule (or `unknown`/`value`) that fails closed still pseudonymises its text cells, but its
+  number cells are left as written: a renumbered amount is a different, plausible number, which is
+  silent corruption. A number cell whose whole value is a spec value is renumbered wherever it is.
+  Booleans, errors and dates are never changed.
 - **Sheet and defined names.** Worksheet names, defined names and table names are rewritten through
   the same name hook as file names. Blinded worksheet names must stay distinct ignoring case, and
   every blinded name must keep the spreadsheet's naming rules; otherwise apply refuses (exit 2,

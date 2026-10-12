@@ -51,6 +51,7 @@ import type { NameSlot } from "./names.ts";
 import { type HexNamer, rewriteOfficeId } from "./officeid.ts";
 import type { TextScanner } from "./recur.ts";
 import type { ExtraForm, Span } from "./text.ts";
+import { customDataPart, customPartRefusal } from "./customxml.ts";
 import { refuseUnrewritten } from "./unrewritten.ts";
 
 /** The spec does not fit the workbook; the caller turns this into its ApplyError (exit 2). */
@@ -251,6 +252,11 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
     }
     return [...list].sort((a, b) => rank(a) - rank(b))[0] as Action;
   });
+  // A custom XML data part holds values blind rewrites nowhere: refuse unless it is empty or structural.
+  for (const m of readOoxml(bytes)) {
+    if (refusal !== undefined) break;
+    if (m.kind === "xml" && customDataPart(m.name)) refusal = customPartRefusal(m.name, m.text) ?? undefined;
+  }
   const removing = columns.some((c) => c.outcome === "dropped" || c.outcome === "redacted");
   const cache = removing ? wb.members.find((m) => /^xl\/(?:pivotCache|charts)\//i.test(m.name)) : undefined;
   // Pivot and chart caches repeat cell values that are not in the map, so nothing would clear them there.

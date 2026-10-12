@@ -342,12 +342,37 @@ describe("DOCX: fail closed", () => {
     );
   });
 
-  test("an unknown part with text is refused; one without text is fine and its attributes are free text", () => {
-    const withText = entries({ extra: [{ name: "customXml/item1.xml", data: `${DECL}<props xmlns="urn:example:props"><client>Dana Pell</client></props>` }] });
-    expect(skippedReason(run(docx(withText)))).toBe("part customXml/item1.xml is not a part this handler knows and holds text it cannot blind; not written");
-    const noText = entries({ extra: [{ name: "customXml/item2.xml", data: `${DECL}<props xmlns="urn:example:props"><client name="Dana Pell"/></props>` }] });
-    const res = run(docx(noText));
-    expect(parts(res).get("customXml/item2.xml")).toContain(`<client name="${pseudo(res, "person", "Dana Pell")}"/>`);
+  const CUSTOM_REASON = (part: string) => `custom XML part ${part} holds data blind cannot confirm it blinded; remove the part or save without it; not written`;
+
+  test("a custom XML data part with text or attribute values is refused, naming the part and not the value (AGT-1840)", () => {
+    const item = (xml: string) => entries({ extra: [{ name: "customXml/item1.xml", data: `${DECL}${xml}` }] });
+    const repro = '<crm><contact name="Dana Example" email="dana@example.com" host="crm01.example.net" acct="AC-55501"/></crm>';
+    for (const xml of [repro, '<props xmlns="urn:example:props"><client>Dana Pell</client></props>', '<props xmlns="urn:example:props"><client name="Dana Pell"/></props>', "<r><![CDATA[x]]></r>"]) {
+      const res = run(docx(item(xml)));
+      expect(skippedReason(res)).toBe(CUSTOM_REASON("customXml/item1.xml"));
+      expect(skippedReason(res)).not.toMatch(/Dana|example/);
+    }
+  });
+
+  test("empty or structural custom XML parts Word writes are not refused (AGT-1840)", () => {
+    const BIB = "http://schemas.openxmlformats.org/officeDocument/2006/bibliography";
+    const parts = [
+      `<b:Sources SelectedStyle="\\APA.XSL" StyleName="APA" xmlns:b="${BIB}" xmlns="${BIB}"/>`,
+      '<CoverPageProperties xmlns="http://schemas.microsoft.com/office/2006/coverPageProps"><PublishDate/><Abstract/><CompanyAddress></CompanyAddress></CoverPageProperties>',
+      '<p:properties xmlns:p="http://schemas.microsoft.com/office/2006/metadata/properties" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><documentManagement><Title xsi:nil="true"/></documentManagement></p:properties>',
+      '<ct:contentTypeSchema xmlns:ct="http://schemas.microsoft.com/office/2006/metadata/contentType" xmlns:ma="http://schemas.microsoft.com/office/2006/metadata/properties/metaAttributes" ct:_="" ma:_="" ma:contentTypeName="Document" ma:contentTypeID="0x0101"/>',
+      '<crm><contact name="" email=" "/></crm>',
+    ];
+    for (const xml of parts) {
+      const res = run(docx(entries({ extra: [{ name: "customXml/item1.xml", data: `${DECL}${xml}` }] })));
+      expect(res.skipped).toEqual([]);
+    }
+  });
+
+  test("a bibliography part that lists a source is refused (AGT-1840)", () => {
+    const BIB = "http://schemas.openxmlformats.org/officeDocument/2006/bibliography";
+    const data = `${DECL}<b:Sources xmlns:b="${BIB}"><b:Source><b:Tag>x</b:Tag></b:Source></b:Sources>`;
+    expect(skippedReason(run(docx(entries({ extra: [{ name: "customXml/item1.xml", data }] }))))).toBe(CUSTOM_REASON("customXml/item1.xml"));
   });
 
   test("a host, email or address in a part nothing rewrites stops the document, naming the part and not the value (AGT-1810)", () => {

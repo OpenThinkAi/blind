@@ -338,7 +338,16 @@ Vellacourt`) is matched alone except in a date: next to a day number or year (`9
 or joined to one by `-`, `/` or `.` (`1-Jan-2026`, `Jan-2026`, `01/Jan/26`). A part two
 different people share (`Quill` for `Avery Quill` and `Bea Quill`, or a column person and a
 transcript speaker) gets its own pseudonym, never either person's, and the apply report lists those
-pseudonyms. Spec entities are not split this way: their parts are the ones the spec lists. A cell
+pseudonyms. A cell of several people (`Dana & Lee Quillfeather`, `Dana and Lee Quillfeather`,
+`Dana + Lee Quillfeather`, `Quillfeather, Dana & Lee`, `Dana Quillfeather & Lee Marwick`) still gets
+one pseudonym as a cell, but each person in it has parts of their own, the shared surname
+included: a bare given name takes the surname of the next full name (else the reversed `Surname,`
+before it), so `Rex Quillfeather` in a pet column or `the Quillfeather household` in prose is
+replaced. A surname two of them share is a part two people share (own pseudonym, above), each
+person recurs as a full name (`Dana Quillfeather`, `Lee Quillfeather`) with the pseudonym that name
+has wherever else it is written, and the cell is read as those people when an initial or a titled
+surname is resolved to one. A cell with no surname to share (`Dana & Lee`) is read as one name, as
+before. Spec entities are not split this way: their parts are the ones the spec lists. A cell
 pseudonymised as `value` that reads as a person's name (`Avery Quill`, `Quill, Avery`; the same test
 as a column of people) has name parts too, which carry that cell's `Value_` pseudonym.
 

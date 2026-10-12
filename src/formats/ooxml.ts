@@ -559,8 +559,8 @@ function writeZip(zip: Zip, replaced: Map<Entry, Replacement>): Uint8Array {
 
 export type MemberResult =
   | { name: string; kind: "xml"; changed: boolean }
-  /** Not XML (images, binaries, directories): copied raw, never read. */
-  | { name: string; kind: "other" }
+  /** Not XML (images, binaries, directories): copied raw, never read, unless `replaceOther` supplied new bytes (`replaced`). */
+  | { name: string; kind: "other"; replaced?: true }
   /** Could not be read or parsed: copied raw and untouched. The caller must not treat it as processed. */
   | { name: string; kind: "error"; error: string };
 
@@ -622,6 +622,8 @@ export function rewriteOoxml(
   bytes: Uint8Array,
   rewrite: OoxmlRewrite,
   rules: RewriteRules | ((member: string) => RewriteRules) = defaultRules,
+  /** New bytes for a non-XML member (null keeps it as it is). Part names, order and compression are unchanged. */
+  replaceOther?: (member: string) => Uint8Array | null,
 ): OoxmlResult {
   const zip = readZip(bytes);
   const replaced = new Map<Entry, Replacement>();
@@ -629,7 +631,14 @@ export function rewriteOoxml(
 
   for (const e of zip.entries) {
     if (e.name.endsWith("/") || !isXmlMember(e.name)) {
-      members.push({ name: e.name, kind: "other" });
+      const swap = e.name.endsWith("/") ? null : (replaceOther?.(e.name) ?? null);
+      if (swap === null) {
+        members.push({ name: e.name, kind: "other" });
+        continue;
+      }
+      const stored = e.method === 0 ? swap : deflateRawSync(swap, { level: 6 });
+      replaced.set(e, { data: stored, crc: crc32(swap), usize: swap.length });
+      members.push({ name: e.name, kind: "other", replaced: true });
       continue;
     }
     try {

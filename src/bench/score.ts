@@ -459,8 +459,8 @@ function docxDamage(f: ScoredFile, matcher: OracleMatcher, items: DamageItem[], 
   let b: string[];
   let a: string[];
   try {
-    b = docxParagraphs(planDocx(f.input), "all");
-    a = docxParagraphs(planDocx(f.output), "all");
+    b = docxParagraphs(planDocx(f.input, "keep"), "all");
+    a = docxParagraphs(planDocx(f.output, "keep"), "all");
   } catch (e) {
     if (!(e instanceof DocxError)) throw e;
     unscored.push({ file: report.path, part: "", reason: `cannot be read as a DOCX (${e.message}); damage was not scored` });

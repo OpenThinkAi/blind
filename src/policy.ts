@@ -104,6 +104,11 @@ export interface Policy {
    * replaces only what the free-text scanner finds in it.
    */
   defaults: { columns: ColumnDefault };
+  /**
+   * `[images] keep`: false (the default) replaces each picture inside a DOCX or XLSX with a neutral
+   * placeholder of the same format; true copies them unchanged, with a warning and an audit candidate.
+   */
+  images: { keep: boolean };
 }
 
 /** The spec with blind.toml's `[patterns]` switches laid over its own: the patterns apply and audit use. */
@@ -143,6 +148,7 @@ export function defaultPolicy(): Policy {
     columns: [],
     context: { enabled: true, triggers: [] },
     defaults: { columns: "fallback" },
+    images: { keep: false },
   };
 }
 
@@ -270,6 +276,12 @@ export function renderPolicy(p: Policy): string {
     "# text; only a rule pseudonymises a column whole. Either way a value kept whole in a keep or scan column is",
     "# never pseudonymised whole by the fallback elsewhere.",
     p.defaults.columns === "fallback" ? '# columns = "fallback"' : `columns = ${str(p.defaults.columns)}`,
+    "",
+    "[images]",
+    "# Pictures inside a DOCX or XLSX can hold scanned IDs, faces, signatures and EXIF (GPS, device owner), and blind",
+    "# cannot read them. By default each is replaced with a neutral placeholder of the same format. keep = true",
+    "# copies them unchanged (the apply report warns and the audit lists them as unscanned).",
+    p.images.keep ? "keep = true" : "# keep = false",
     "",
   ].join("\n");
 }
@@ -423,7 +435,7 @@ export function parsePolicy(text: string, source = POLICY_FILE): Policy {
   }
   if (!isTable(doc)) throw new PolicyError(`${source}: not a TOML table`);
   const r = new Reader(source);
-  r.noExtra(doc, "", ["sensitive", "keep", "models", "profile", "privacy", "patterns", "columns", "context", "defaults"]);
+  r.noExtra(doc, "", ["sensitive", "keep", "models", "profile", "privacy", "patterns", "columns", "context", "defaults", "images"]);
 
   const sensitive = r.table(doc, "sensitive", "sensitive", ["classes", "description", "examples"]);
   const classes = r.strings(sensitive, "classes", "sensitive.classes");
@@ -464,7 +476,15 @@ export function parsePolicy(text: string, source = POLICY_FILE): Policy {
     columns: readColumns(r, doc, source),
     context: readContext(r, doc),
     defaults: readDefaults(r, doc),
+    images: readImages(r, doc),
   };
+}
+
+/** `[images]` is optional, and so is its one key. */
+function readImages(r: Reader, doc: Table): Policy["images"] {
+  if (doc.images === undefined) return { keep: false };
+  const t = r.table(doc, "images", "images", ["keep"]);
+  return { keep: t.keep === undefined ? false : r.boolean(t, "keep", "images.keep") };
 }
 
 /** `[defaults]` is optional, and so is its one key. */

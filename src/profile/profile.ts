@@ -247,7 +247,7 @@ export function buildProfile(inputs: readonly string[], k: number, cwd: string):
       let paragraphs: string[];
       let all: string[];
       try {
-        const plan = planDocx(bytes);
+        const plan = planDocx(bytes, "keep");
         paragraphs = docxParagraphs(plan, plan.main === undefined ? "all" : "main");
         all = docxParagraphs(plan, "all");
       } catch (e) {

@@ -51,6 +51,7 @@ import { type CellRule, type ContextOptions, pairCells } from "./context.ts";
 import { type ExtraForm, type Span, withCellRedaction } from "./text.ts";
 import { customPartRefusal } from "./customxml.ts";
 import { refuseUnrewritten } from "./unrewritten.ts";
+import { IMAGE, type ImageMode, imageWarning, placeholderFor } from "./images.ts";
 
 export interface DocxRequest {
   cls: PseudoClass;
@@ -82,6 +83,8 @@ export interface DocxPlan {
   /** Account names in paths, each replaced as a whole with a person pseudonym. */
   accounts: Edit[];
   warnings: string[];
+  /** Image parts written as placeholders (the default; `[images] keep = true` leaves this empty). */
+  images?: Set<string>;
 }
 
 export interface DocxRender {
@@ -325,7 +328,7 @@ function kindRules(kind: PartKind, visit?: RewriteRules["visit"]): RewriteRules 
 }
 
 /** Package members copied unchanged and reported: images (never blinded) and embedded fonts. Any other non-XML member stops the package. */
-export const IMAGE = /\.(png|jpe?g|gif|bmp|tiff?|emf|wmf|svg|ico|webp)$/i;
+export { IMAGE };
 export const FONT = /\.(odttf|ttf|otf|fntdata)$/i;
 /** The package thumbnail Word and Excel can save: a picture of the original first page or sheet, so never copied. */
 export const THUMBNAIL = /^docProps\/thumbnail\.[^/]+$/i;
@@ -334,9 +337,10 @@ export const thumbnailReason = (name: string): string => `${name} is a picture o
 /**
  * Read the package and collect its text units. Throws DocxError when the package
  * must not be written. Matching waits for scanDocx, once every column in the
- * corpus is decided.
+ * corpus is decided. `images` is required: apply says whether pictures are replaced or kept;
+ * profile, reveal and bench only read, so they pass "keep".
  */
-export function planDocx(bytes: Uint8Array): DocxPlan {
+export function planDocx(bytes: Uint8Array, images: ImageMode): DocxPlan {
   let members;
   try {
     members = readOoxml(bytes);
@@ -345,16 +349,17 @@ export function planDocx(bytes: Uint8Array): DocxPlan {
   }
   const plan: DocxPlan = { bytes, nodes: new Map(), kinds: new Map(), edits: [], wholes: [], units: [], tables: [], keptHosts: 0, requests: [], values: [], hexIds: [], accounts: [], warnings: [] };
 
-  const images: string[] = [];
+  const pictures: string[] = [];
   for (const m of members) {
     if (m.kind !== "other" || m.name.endsWith("/")) continue;
     if (THUMBNAIL.test(m.name)) throw new DocxError(thumbnailReason(m.name));
-    if (IMAGE.test(m.name)) images.push(m.name);
+    if (IMAGE.test(m.name)) pictures.push(m.name);
     else if (!FONT.test(m.name)) throw new DocxError(`embedded file ${m.name} cannot be blinded inside a DOCX`);
   }
-  if (images.length > 0) {
-    plan.warnings.push(`${images.length} image${images.length === 1 ? "" : "s"} copied unchanged (images are not blinded): ${images.join(", ")}`);
-  }
+  const warning = imageWarning(pictures, images);
+  if (warning.refusal !== null) throw new DocxError(warning.refusal);
+  if (warning.line !== null) plan.warnings.push(warning.line);
+  if (images === "replace") plan.images = new Set(pictures);
 
   const units = plan.units;
   const recorder = { pseudonym: (cls: PseudoClass, value: string) => (plan.requests.push({ cls, value }), value) };
@@ -663,6 +668,7 @@ export function renderDocx(plan: DocxPlan, pz: Pseudonymizer, ids: HexNamer): Do
       return renderNode(node, pz, ids);
     },
     (member) => rulesFor(plan.kinds.get(member) ?? "inert"),
+    (member) => (plan.images?.has(member) ? placeholderFor(member) : null),
   );
   const failed = result.members.find((m) => m.kind === "error");
   if (failed !== undefined && failed.kind === "error") throw new DocxError(`part ${failed.name} cannot be written (${failed.error})`);
@@ -671,7 +677,7 @@ export function renderDocx(plan: DocxPlan, pz: Pseudonymizer, ids: HexNamer): Do
   for (const e of plan.accounts) if (pz.pseudonym(e.cls, e.value) !== e.value) metadataReplacements++;
   return {
     bytes: result.bytes,
-    changed: result.members.some((m) => m.kind === "xml" && m.changed),
+    changed: result.members.some((m) => (m.kind === "xml" && m.changed) || (m.kind === "other" && m.replaced === true)),
     entityReplacements: plan.edits.filter((e) => e.source === "entity").length,
     patternReplacements: plan.edits.filter((e) => e.source === "pattern").length,
     mappedReplacements: plan.edits.filter((e) => e.source === "map").length,

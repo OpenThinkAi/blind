@@ -479,7 +479,7 @@ type Role = DocxNode["role"];
 function revealDocx(bytes: Uint8Array, rv: Revealer): RevealedFile {
   let plan: DocxPlan;
   try {
-    plan = planDocx(bytes);
+    plan = planDocx(bytes, "keep");
   } catch (e) {
     if (e instanceof DocxError) throw new RevealError(`cannot read it as DOCX: ${e.message}`);
     throw e;

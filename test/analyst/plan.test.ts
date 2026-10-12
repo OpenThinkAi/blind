@@ -392,6 +392,75 @@ describe("blind plan with a saved spec", () => {
   });
 });
 
+describe("a forbidden treatment in the analyst's reply drops that rule, not the spec (AGT-1860)", () => {
+  /** The fake reply with Vendor set to redact and ref_code to scan: the policy's own words, echoed. */
+  const echoing = () => {
+    const s = proposal();
+    Object.assign(s.columns[5] ?? {}, { class: "org", treatment: "redact" });
+    Object.assign(s.columns[4] ?? {}, { class: "id", treatment: "scan" });
+    return s;
+  };
+
+  test("the two rules are dropped and noted, the rest of the spec is kept, and those columns fall back", async () => {
+    const r = await plan(["in"], fakeFetch(echoing));
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('note: analyst rule 1 of 2 dropped: scan for "staff.csv" "ref_code"');
+    expect(r.out).toContain('note: analyst rule 2 of 2 dropped: redact for "staff.csv" "Vendor"');
+    const spec = savedSpec();
+    expect(rule(spec, "Owner")).toMatchObject({ class: "person", treatment: "blind", source: "analyst" });
+    expect(rule(spec, "Status")).toMatchObject({ class: "vocabulary", treatment: "keep", source: "analyst" });
+    // As if the analyst had not ruled them: the heuristic rule, and the analyst left them out.
+    expect(rule(spec, "Vendor")).toMatchObject({ source: "heuristic", treatment: "value" });
+    expect(rule(spec, "ref_code")).toMatchObject({ source: "heuristic" });
+    expect(r.out).toContain('the analyst left out "staff.csv" "Vendor"');
+    expect(spec.entities.person).toHaveLength(1);
+  });
+
+  test("blind.toml's [[columns]] drop, redact and scan rules still apply to the dropped columns", async () => {
+    writePolicy((p) => {
+      p.columns = [
+        { header: ["Vendor"], treatment: "drop", class: "org" },
+        { header: ["ref_code"], treatment: "scan", class: "unknown" },
+        { header: ["box"], treatment: "redact", class: "unknown" },
+      ] as never;
+    });
+    const r = await plan(["in"], fakeFetch(echoing));
+    expect(r.code).toBe(0);
+    const spec = savedSpec();
+    expect(rule(spec, "Vendor")).toMatchObject({ treatment: "drop", source: "policy" });
+    expect(rule(spec, "ref_code")).toMatchObject({ treatment: "scan", source: "policy" });
+    expect(rule(spec, "box")).toMatchObject({ treatment: "redact", source: "policy" });
+    expect(rule(spec, "Owner")).toMatchObject({ source: "analyst" });
+  });
+
+  test("under profile-only the note names the header token, never the header", async () => {
+    writePolicy((p) => {
+      p.privacy.mode = "profile-only";
+      p.profile.samples = defaultSamples("profile-only");
+      p.models.analyst.url = "https://analyst.example.com/v1";
+    });
+    const r = await plan(["in", "--json"], fakeFetch(echoing));
+    expect(r.code).toBe(0);
+    const notes = (JSON.parse(r.out) as { notes: string[] }).notes.filter((n) => n.startsWith("analyst rule"));
+    expect(notes).toHaveLength(2);
+    expect(notes.join("\n")).toMatch(/col_6/);
+    expect(notes.join("\n")).not.toContain("ref_code");
+    expect(notes.join("\n")).not.toContain("Vendor");
+    expect(rule(savedSpec(), "Vendor")).toMatchObject({ source: "heuristic" });
+  });
+
+  test("any other problem in the same reply still rejects the whole spec", async () => {
+    const r = await plan(["in"], fakeFetch(() => {
+      const s = echoing();
+      s.columns.push({ ...at("Salary"), class: "vocabulary", treatment: "keep", confidence: 1, source: "analyst" });
+      return s;
+    }));
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("the analyst's spec was rejected");
+    expect(existsSync(join(dir, ".blind", "spec.json"))).toBe(false);
+  });
+});
+
 describe("the analyst's reply is rejected whole when it does not fit the profile", () => {
   const cases: [string, (s: Spec) => void, RegExp][] = [
     ["an invented column", (s) => s.columns.push({ ...at("Salary"), class: "vocabulary", treatment: "keep", confidence: 1, source: "analyst" }), /"Salary" is not a column/],

@@ -16,7 +16,7 @@ import { writeProfile } from "../profile/command.ts";
 import { buildProfile, forPrivacyMode, InputError } from "../profile/profile.ts";
 import { type ColumnRule, type DetectorRates, type EntityClassName, type HitPattern, type Location, type PatternName, patternOn, type Profile, REDACTED_VALUE, type Spec, type Treatment } from "../schema.ts";
 import { parseSpec, SchemaError, validateProfile, validateSpec } from "../validate.ts";
-import { AnalystError, answerQuestion, locationKey, proposeSpec, runAnalyst } from "./analyst.ts";
+import { AnalystError, type DroppedRule, answerQuestion, locationKey, proposeSpec, runAnalyst } from "./analyst.ts";
 import { isBirthDateName, lastKey } from "../engine/birthdate.ts";
 import { heuristicReason, heuristicShape, heuristicSpec, profileLocations } from "./heuristic.ts";
 import { applyColumnPolicy, describeMatch, type RuleMatch } from "./policycolumns.ts";
@@ -392,6 +392,7 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
     if (!values["no-model"] && !useModel) remarks.push('privacy.mode is "none", so no model was called: heuristic analyst only');
     const modelOpts = { ...io.model, quiet: values.quiet, stderr: (line: string) => io.err.write(`blind plan: ${line}\n`) };
     let filled: Location[] = [];
+    let ruledOut: DroppedRule[] = [];
     let vocabDropped: Dropped[] = [];
     if (saved === undefined) {
       if (useModel) {
@@ -400,6 +401,7 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
         const seen = seenAfter([], profile);
         spec = seen.length > 0 ? { ...guarded.spec, seen } : guarded.spec;
         filled = result.filled;
+        ruledOut = result.dropped;
         vocabDropped = guarded.dropped;
       } else spec = heuristicSpec(profile, policy);
       diff = freshDiff(spec, vocabDropped);
@@ -407,12 +409,21 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
       const part = unseenPart(profile, saved);
       let proposal: Spec | null = null;
       if (useModel && isEmptyPart(part)) remarks.push(`${join(BLIND_DIR, SPEC_FILE)} already covers every column, key and document excerpt here, so no model was called`);
-      else if (useModel) proposal = await proposeSpec(part, profile, policy, modelOpts);
+      else if (useModel) {
+        const reply = await proposeSpec(part, profile, policy, modelOpts);
+        proposal = reply.spec;
+        ruledOut = reply.dropped;
+      }
       const merged = mergeProposal(saved, proposal, part, policy, { profile, map: readMapIfAny(io.cwd) });
       spec = merged.spec;
       diff = merged.diff;
       filled = merged.filled;
     }
+    ruledOut.forEach((d, i) => {
+      remarks.push(
+        `analyst rule ${i + 1} of ${ruledOut.length} dropped: ${d.treatment} for ${where(d.at)}; only ${POLICY_FILE} or a human may drop, redact or scan a column, so it is ruled as if the analyst had left it out`,
+      );
+    });
     for (const l of filled) remarks.push(`the analyst left out ${where(l)}; the heuristic rule was used`);
     // blind.toml's column rules ([[columns]], and headers that are [keep] terms) decide ahead of everything else.
     const overlay = applyColumnPolicy(spec, profile, policy);

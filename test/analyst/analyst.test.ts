@@ -95,6 +95,12 @@ describe("analyst prompt", () => {
     expect(s).toContain("Ask rather than guess");
   });
 
+  test("the system prompt says drop, redact and scan are not the analyst's, and that policy rules apply after it (AGT-1860)", () => {
+    const s = systemPrompt(defaultPolicy());
+    expect(s).toMatch(/Never use the treatments "drop", "redact" or "scan"/);
+    expect(s).toContain("applied after you");
+  });
+
   test("the profile and the policy go only into data, as the profile payload", () => {
     const profile = { version: 1, sampleCount: 1, files: [], tables: [], jsonKeys: [], documents: [], transcripts: [], cooccurrence: [] } as Profile;
     const prompt = analystPrompt(profile, policy);

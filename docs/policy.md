@@ -51,7 +51,7 @@ host = true
 
 [context]
 # enabled = true
-# triggers = ["locker code"]
+# triggers = ["locker code", { word = "license", kind = "number" }]
 ```
 
 `[sensitive]`, `[keep]`, `[models.analyst]`, `[profile]` and `[privacy]` must be present.
@@ -267,7 +267,7 @@ restore it. The table and both keys are optional; with no `[context]`, the built
 | Key | Type | Meaning |
 |---|---|---|
 | `enabled` | `true` or `false` (default `true`) | `false` turns the keywords off, built-in and extra |
-| `triggers` | array of strings | extra keywords or phrases, matched whole-word in any case; the token after each is redacted |
+| `triggers` | array of strings and `{ word, kind }` tables | extra keywords or phrases, matched whole-word in any case; the value after each is redacted. A bare string expects a `secret`; a table names the `kind`: `secret`, `number` or `date` |
 
 Built-in keywords: `DOB` / `date of birth`; `DL` / `driver's license`; `plate`; `gate code` (also
 door, garage, alarm, entry, access, keypad and lockbox `code`/`pin`); `password` / `passcode` /
@@ -288,6 +288,36 @@ What counts as the value, after the keyword and any separators or filler (`:`, `
   `card number 4111 1111 1111 1111`, `safe combo 12 34 56`.
 - A date after `DOB` may be numeric, `April 12, 1980` or `12 April 1980`.
 - A value spelled out in digits right after the keyword (`gate code four four seven one`) is taken whole.
+- Up to four ordinary words may sit between the keyword and the value: `combo changed to 47-11-09`,
+  `the gate code is now 9182#`, `password was reset to Example!42`, `license on file is ST 123`. A
+  sentence end (`.`, `;`, `!`, `?`) or a line break stops the search, and so does a fifth word.
+  After skipped words a secret must look like one (a digit or a symbol, or any word right after
+  `to`): `the password was reset and then we left` redacts nothing.
+
+A trigger from `triggers` can name the kind of value it expects, so an ordinary word after it is
+left alone:
+
+```toml
+[context]
+triggers = ["vault code", { word = "license", kind = "number" }, { word = "born", kind = "date" }]
+```
+
+With `kind = "number"`, `her license photo is old` stays and `license 4417-22 expires` becomes
+`license REDACTED expires`. A bare string is a `secret` trigger and takes the next token whatever it
+is. An unknown `kind`, a blank `word` or any other key in the table is an error.
+
+**Forms and tables.** The label and the value are often in different cells (`| Owner DOB |
+01/02/1960 |`). In a DOCX table (also a DrawingML table), a CSV or an XLSX sheet, a cell that ends
+in a keyword (`DOB`, `Owner DOB:`, `Driver license`, `Account number`; at most four words, no
+sentence) marks the cell to its right as the value, which must fit the keyword's rule (a date for
+`DOB`, a digit and three characters for a number keyword, any non-prose text for a secret). A label
+in the first row of a table whose right neighbour is no value, or is a plain word beside a secret
+keyword (so it reads as the next column header), heads a column instead: every cell below it that
+fits the rule is the value. A cell that is itself a label is never a value. In a CSV or XLSX the
+whole value cell becomes `REDACTED`, but only where the column is left as text: a column a
+`[[columns]]` rule keeps, drops or redacts, or that is already pseudonymised, is not touched. A
+number-typed XLSX cell is not redacted this way (write it as text). In a DOCX only the value in the
+cell is replaced.
 
 A match is a heuristic on the words around it: `the password is swordfish` is redacted, and prose
 such as `password is stored in the vault` can lose a word it should keep (`stored` is on the

@@ -48,6 +48,7 @@ import { detectHeaderRow } from "../profile/table.ts";
 import type { ColumnReport } from "./apply.ts";
 import { PSEUDO_CLASSES, type PseudoClass, type RealPseudoClass } from "./canonical.ts";
 import { type ColumnAction, decide, outcomeOf, removedForms } from "./columns.ts";
+import { type ContextOptions, pairCells } from "./context.ts";
 import type { NameSlot } from "./names.ts";
 import { type HexNamer, rewriteOfficeId } from "./officeid.ts";
 import type { TextScanner } from "./recur.ts";
@@ -130,7 +131,7 @@ const whole = (spans: readonly Span[], text: string): boolean => spans.length ==
 const lower = (s: string): string => s.toLowerCase();
 
 /** Step 1. Throws XlsxSpecError when the spec does not fit; ZipError or XlsxError when the file cannot be read. */
-export function planXlsx(path: string, bytes: Uint8Array, rules: readonly ColumnRule[]): XlsxPlan {
+export function planXlsx(path: string, bytes: Uint8Array, rules: readonly ColumnRule[], context?: ContextOptions): XlsxPlan {
   const wb = readWorkbook(bytes);
   const broken = wb.members.find((m) => m.kind === "error");
   if (broken?.kind === "error") throw new XlsxError(`member ${broken.name} cannot be read (${broken.error})`);
@@ -243,6 +244,26 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
       if (c.row > headerRow) continue;
       plans.set(c.ref, { action: { kind: "header" }, renumber: false });
       if (c.type === "s") (uses[Number(c.v)] as Action[]).push({ kind: "header" });
+    }
+    // A text cell that holds the value of a label in another cell ("DOB" | "01/02/1960"), in a column
+    // a rule does not keep, is redacted whole (AGT-1841). A number cell cannot be rewritten as text, so it
+    // is left to the other finders.
+    if (context !== undefined) {
+      const byRef = new Map(sheet.cells.map((c) => [`${c.row}:${c.col}`, c]));
+      for (const m of pairCells(rows, context, Math.max(0, headerRow))) {
+        const c = byRef.get(`${m.row}:${m.col}`);
+        if (c === undefined || (c.type !== "s" && c.type !== "str" && c.type !== "inlineStr")) continue;
+        // A detected header row names the columns that rules and later runs refer to: never rewritten.
+        if (detected !== null && m.row === headerRow) continue;
+        const had = plans.get(c.ref);
+        // Already pseudonymised, redacted or dropped by the column pass: hidden. Kept by a rule: the rule wins.
+        if (had !== undefined && (had.action.kind === "pseudo" || had.action.kind === "drop" || had.action.kind === "redact" || had.action.kind === "keep")) continue;
+        const forced: CellPlan = had ?? { action: { kind: "redact" }, renumber: false };
+        forced.action = { kind: "redact" };
+        forced.renumber = false;
+        plans.set(c.ref, forced);
+        if (c.type === "s") (uses[Number(c.v)] as Action[]).push(forced.action);
+      }
     }
     cells.set(sheet.member, plans);
   }

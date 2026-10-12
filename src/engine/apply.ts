@@ -59,6 +59,7 @@ import { isJsonNumber, type JsonFormat, JsonError, type JsonToken, jsonCuts, quo
 import type { BlindMap } from "./map.ts";
 import { type EntityEntry, Pseudonymizer } from "./pseudonym.ts";
 import { type ColumnOutcome, decide, outcomeOf, removedForms } from "./columns.ts";
+import { type ContextOptions, type ContextTriggerSpec, pairCells } from "./context.ts";
 import { DocxError, type DocxPlan, docxParagraphs, docxWholes, FONT, IMAGE, planDocx, THUMBNAIL, thumbnailReason, refuseDocxUnrewritten, renderDocx, scanDocx } from "./docx.ts";
 import { OfficeIds } from "./officeid.ts";
 import { NameRewriter, rewriteSpans } from "./names.ts";
@@ -218,7 +219,7 @@ export interface ApplyOptions {
    * Context-keyword redaction (context.ts): the value after "gate code", "password" and the like is
    * written as REDACTED. On unless `enabled` is false; `triggers` adds words to the built-in list.
    */
-  context?: { enabled: boolean; triggers: readonly string[] };
+  context?: { enabled: boolean; triggers: readonly ContextTriggerSpec[] };
 }
 
 /** The spec does not fit the inputs (a rule names a column that is not there, or a shape this engine cannot apply). */
@@ -342,12 +343,16 @@ function scanPending<K>(pending: readonly Pending<K>[], edits: Map<K, CellEdit>,
   }
 }
 
+const contextOf = (opts: ApplyOptions): ContextOptions | undefined =>
+  opts.context?.enabled === false ? undefined : { triggers: opts.context?.triggers ?? [] };
+
 function planTable(
   input: InputFile,
   encoding: Encoding,
   text: string,
   format: "csv" | "tsv",
   rules: readonly ColumnRule[],
+  context?: ContextOptions,
 ): TablePlan {
   const delim = sniffDelimiter(text, format === "tsv" ? "\t" : undefined);
   const rows = parseCsv(text, delim);
@@ -379,6 +384,7 @@ function planTable(
   const removed: ExtraForm[] = [];
   const columns: ColumnReport[] = [];
   const dropped = new Set<number>();
+  const keptCols = new Set<number>();
   const data = rows.slice(headerRow + 1);
   for (let col = 0; col < width; col++) {
     const header = headers[col] as string;
@@ -397,6 +403,7 @@ function planTable(
       flagged: 0,
     };
     columns.push(column);
+    if (action.kind === "keep") keptCols.add(col);
     if (action.kind === "drop" || action.kind === "redact") {
       removed.push(...removedForms(rule, data.map((r) => r.cells[col]?.value ?? "")));
     }
@@ -424,6 +431,24 @@ function planTable(
     (rows[r] as Row).cells.forEach((cell, col) => {
       if (r < headerRow || !dropped.has(col)) pending.push({ key: `${r}:${col}`, value: cell.value, keep: false, column: null });
     });
+  }
+  // A cell that holds the value of a label in another cell ("DOB" | "01/02/1960"), in a column
+  // the column pass left as text (not one a rule keeps), is replaced whole (AGT-1841).
+  if (context !== undefined) {
+    const grid = rows.map((r) => r.cells.map((c) => c.value));
+    const marks = pairCells(grid, context, Math.max(0, headerRow));
+    const forced = new Set<string>();
+    for (const m of marks) {
+      // A detected header row names the columns that rules and later runs refer to: never rewritten.
+      if (dropped.has(m.col) || keptCols.has(m.col) || (detected !== null && m.row === headerRow)) continue;
+      const key = `${m.row}:${m.col}`;
+      // A cell the column pass already pseudonymised, redacted or dropped is hidden: leave it be.
+      const decided = edits.get(key);
+      if (decided !== undefined && decided.kind !== "spans") continue;
+      edits.set(key, { kind: "fixed", value: REDACTED_VALUE });
+      forced.add(key);
+    }
+    for (let i = pending.length - 1; i >= 0; i--) if (forced.has((pending[i] as Pending<string>).key)) pending.splice(i, 1);
   }
   return {
     kind: "table",
@@ -674,7 +699,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     }
     if (format === "xlsx") {
       try {
-        const plan = planXlsx(input.path, input.bytes, rules);
+        const plan = planXlsx(input.path, input.bytes, rules, contextOf(opts));
         if (plan.refusal !== undefined) skipped.push({ path: input.path, reason: `${plan.refusal}; not written` });
         else plans.push({ kind: "xlsx", input, plan });
       } catch (e) {
@@ -714,7 +739,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       continue;
     }
     try {
-      plans.push(planTable(input, decoded.encoding, decoded.text, format, rules));
+      plans.push(planTable(input, decoded.encoding, decoded.text, format, rules, contextOf(opts)));
     } catch (e) {
       if (!(e instanceof CsvError)) throw e;
       skipped.push({ path: input.path, reason: `malformed ${format.toUpperCase()}: ${e.message}; not written` });
@@ -799,11 +824,11 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   const scanForms = [...forms.filter((f) => !voiced.has(`${f.cls}\0${f.form ?? f.value}`)), ...voices, ...prose].sort(
     (a, b) => cmp(a.cls, b.cls) || cmp(a.form ?? a.value, b.form ?? b.value) || cmp(a.value, b.value),
   );
-  const scanner = new TextScanner(spec.entities, spec.patterns, keep, scanForms, opts.context?.enabled === false ? undefined : { triggers: opts.context?.triggers ?? [] });
+  const scanner = new TextScanner(spec.entities, spec.patterns, keep, scanForms, contextOf(opts));
   const free = (t: string) => scanner.free(t);
   for (const p of plans) {
     if (p.kind === "text") p.spans = p.transcript !== undefined ? transcriptSpans(p.text, p.transcript, free, kept) : scanner.free(p.text);
-    else if (p.kind === "docx") scanDocx(p.docx, p.transcript !== undefined ? (t) => entrySpans(t, free, kept) : free);
+    else if (p.kind === "docx") scanDocx(p.docx, p.transcript !== undefined ? (t) => entrySpans(t, free, kept) : free, contextOf(opts));
     else if (p.kind === "json") scanPending(p.pending, p.edits, scanner);
     else if (p.kind === "table") scanPending(p.pending, p.edits, scanner);
   }

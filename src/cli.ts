@@ -19,7 +19,8 @@ export const COMMANDS = [
   { name: "bench", usage: "bench <kit>", summary: "Score apply and audit against a kit's oracle" },
 ] as const;
 
-const HANDLERS: Partial<Record<(typeof COMMANDS)[number]["name"], (args: string[]) => Promise<number>>> = {
+// Every command has a handler: a Record (not Partial) makes a missing one a type error.
+const HANDLERS: Record<(typeof COMMANDS)[number]["name"], (args: string[]) => Promise<number>> = {
   init: (args) => runInit(args, processIO()),
   profile: (args) => runProfile(args, processIO()),
   plan: (args) => runPlan(args, processPlanIO()),
@@ -32,7 +33,7 @@ const HANDLERS: Partial<Record<(typeof COMMANDS)[number]["name"], (args: string[
 
 export function helpText(): string {
   const width = Math.max(...COMMANDS.map((c) => c.usage.length));
-  const rows = COMMANDS.map((c) => `  ${c.usage.padEnd(width)}  ${c.summary}${Object.hasOwn(HANDLERS, c.name) ? "" : " (not implemented)"}`);
+  const rows = COMMANDS.map((c) => `  ${c.usage.padEnd(width)}  ${c.summary}`);
   return [
     `blind ${pkg.version}`,
     "",
@@ -62,10 +63,6 @@ export async function main(argv: string[]): Promise<number> {
   }
   const handler = Object.hasOwn(HANDLERS, cmd) ? HANDLERS[cmd as keyof typeof HANDLERS] : undefined;
   if (handler !== undefined) return handler(argv.slice(1));
-  if (COMMANDS.some((c) => c.name === cmd)) {
-    process.stderr.write(`blind ${cmd}: not implemented\n`);
-    return 2;
-  }
   process.stderr.write(`blind: unknown command '${cmd}'\n\n${helpText()}`);
   return 2;
 }

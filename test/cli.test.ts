@@ -18,6 +18,11 @@ test("init is wired and no longer listed as not implemented", async () => {
   expect(await main(["init", "--help"])).toBe(0);
 });
 
+test("every listed command dispatches to a handler", async () => {
+  // --help is each command's no-side-effect path; an unwired command would fall through to "unknown command".
+  for (const c of COMMANDS) expect({ c: c.name, code: await main([c.name, "--help"]) }).toEqual({ c: c.name, code: 0 });
+});
+
 test("a command name that is an Object prototype key is unknown", async () => {
   expect(await main(["constructor"])).toBe(2);
 });

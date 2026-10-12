@@ -253,6 +253,8 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
       for (const m of pairCells(rows, context, Math.max(0, headerRow))) {
         const c = byRef.get(`${m.row}:${m.col}`);
         if (c === undefined || (c.type !== "s" && c.type !== "str" && c.type !== "inlineStr")) continue;
+        // A detected header row names the columns that rules and later runs refer to: never rewritten.
+        if (detected !== null && m.row === headerRow) continue;
         const had = plans.get(c.ref);
         // Already pseudonymised, redacted or dropped by the column pass: hidden. Kept by a rule: the rule wins.
         if (had !== undefined && (had.action.kind === "pseudo" || had.action.kind === "drop" || had.action.kind === "redact" || had.action.kind === "keep")) continue;

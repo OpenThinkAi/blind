@@ -439,7 +439,8 @@ function planTable(
     const marks = pairCells(grid, context, Math.max(0, headerRow));
     const forced = new Set<string>();
     for (const m of marks) {
-      if (dropped.has(m.col) || keptCols.has(m.col)) continue;
+      // A detected header row names the columns that rules and later runs refer to: never rewritten.
+      if (dropped.has(m.col) || keptCols.has(m.col) || (detected !== null && m.row === headerRow)) continue;
       const key = `${m.row}:${m.col}`;
       // A cell the column pass already pseudonymised, redacted or dropped is hidden: leave it be.
       const decided = edits.get(key);

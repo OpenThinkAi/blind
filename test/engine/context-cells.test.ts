@@ -150,6 +150,14 @@ describe("CSV and XLSX cells", () => {
     expect(out).not.toContain("Ada Example");
   });
 
+  test("a detected header row is never rewritten", () => {
+    // "DOB" is followed by a date-shaped header: the pairing would redact the column name.
+    const csv = "Owner,DOB,01/02/1960\nAda Example,x,Tue\nBo Sample,y,Wed\nCy Test,z,Thu\n";
+    const r = apply([{ path: "h.csv", bytes: enc(csv) }]);
+    const out = dec(r.outputs[0]?.bytes);
+    expect(out.split("\n")[0]).toBe("Owner,DOB,01/02/1960");
+  });
+
   test("an XLSX form row", () => {
     const str = (ref: string, t: string) => `<c r="${ref}" t="inlineStr"><is><t>${t}</t></is></c>`;
     const rows = [

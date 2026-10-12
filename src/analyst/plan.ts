@@ -384,8 +384,8 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
     for (const l of overlay.reverted) remarks.push(`${where(l)}: no ${POLICY_FILE} rule matches it any more; the heuristic rule was used`);
     // Rules that disagree on one column: name them (globs only, never a value) and say which won and why.
     for (const o of overlay.overlaps) {
-      const [win, ...rest] = o.matches as [RuleMatch, ...RuleMatch[]];
-      remarks.push(`${where(o.loc)}: ${o.matches.length} ${POLICY_FILE} rules match: ${[win, ...rest].map(describeMatch).join("; ")}; columns[${win.index}] wins (${o.reason})`);
+      const win = o.matches[0] as RuleMatch;
+      remarks.push(`${where(o.loc)}: ${o.matches.length} ${POLICY_FILE} rules match: ${o.matches.map(describeMatch).join("; ")}; columns[${win.index}] wins (${o.reason})`);
     }
     for (const k of overlay.shadowedKeeps) {
       const globs = [...(k.rule.header ?? []).map((h) => `header ${JSON.stringify(h)}`), ...(k.rule.path === undefined ? [] : [`path ${JSON.stringify(k.rule.path)}`])].join(", ");

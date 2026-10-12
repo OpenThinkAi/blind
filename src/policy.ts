@@ -378,8 +378,9 @@ function readColumns(r: Reader, doc: Table, source: string): ColumnPolicyRule[] 
     const sheet = glob("sheet");
     const file = glob("file");
     let header: string[] | undefined;
-    // Without a path, a header is required (the error message is the one older configs got).
-    if (t.header !== undefined || keyPath === undefined) {
+    // A rule names columns by header, JSON keys by path, or both.
+    if (t.header === undefined && keyPath === undefined) r.fail(`${path}.header`, "set (a rule needs header, path or both)", undefined);
+    if (t.header !== undefined) {
       const raw = t.header;
       header = typeof raw === "string" ? [raw] : r.strings(t, "header", `${path}.header`);
       if (header.length === 0 || header.some((h) => h.trim() === "")) r.fail(`${path}.header`, "a non-empty glob or array of non-empty globs", raw);

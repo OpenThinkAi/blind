@@ -57,11 +57,12 @@ class = "person"
     expect(bad('header = "x"\ntreatment = "keep"\nclass = "unknown"')).toThrow(/class "unknown" cannot use treatment "keep"/);
     expect(bad('header = []\ntreatment = "drop"')).toThrow(/columns\[0\]\.header must be a non-empty glob/);
     expect(bad('header = " "\ntreatment = "drop"')).toThrow(/columns\[0\]\.header must be a non-empty glob/);
-    expect(bad('treatment = "drop"')).toThrow(/columns\[0\]\.header must be an array of strings/);
+    expect(bad('treatment = "drop"')).toThrow(/columns\[0\]\.header must be set \(a rule needs header, path or both\)/);
     expect(bad('header = "x"\ntreatment = "drop"\nsheets = "S"')).toThrow(/unknown key columns\[0\]\.sheets/);
     expect(bad('path = "owner.dob"\nsheet = "S"\ntreatment = "drop"')).toThrow(/path \(JSON keys\) and sheet \(worksheet columns\) cannot both be set/);
     expect(bad('path = " "\ntreatment = "drop"')).toThrow(/columns\[0\]\.path must be a non-empty glob/);
-    expect(bad('sheet = "S"\ntreatment = "drop"')).toThrow(/columns\[0\]\.header must be an array of strings/);
+    expect(bad('sheet = "S"\ntreatment = "drop"')).toThrow(/columns\[0\]\.header must be set/);
+    expect(bad('header = 3\ntreatment = "drop"')).toThrow(/columns\[0\]\.header must be an array of strings/);
     expect(() => parsePolicy(withColumns('columns = "keep everything"'))).toThrow(PolicyError);
   });
 });
@@ -293,6 +294,8 @@ treatment = "keep"
     expect(sheet.ruleFor({ file: "w.xlsx", sheet: "pets", header: "DOB" })).toMatchObject({ treatment: "keep" });
     expect(sheet.ruleFor({ file: "w.xlsx", sheet: "Clients", header: "DOB" })).toBeUndefined();
     expect(sheet.ruleFor({ file: "v.csv", header: "DOB" })).toBeUndefined();
+    // Built by hand with neither header nor path (parsePolicy refuses it), a rule matches nothing.
+    expect(new ColumnPolicy({ columns: [rule({ treatment: "drop" })] }).ruleFor({ file: "v.csv", header: "x" })).toBeUndefined();
   });
 
   test("the most specific rule wins, whatever the file order; a full tie goes to the first", () => {

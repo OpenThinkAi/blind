@@ -238,6 +238,8 @@ export class ColumnPolicy {
     const folded = name === null ? null : fold(name);
     const out: RuleMatch[] = [];
     for (const c of this.rules) {
+      // parsePolicy refuses a rule with neither; built by hand, it matches nothing rather than everything.
+      if (c.headers === null && c.path === null) continue;
       if (c.file !== null && !c.file.test(loc.file)) continue;
       if (c.sheet !== null && (loc.sheet === undefined || !c.sheet.test(fold(loc.sheet)))) continue;
       const globs: string[] = [];

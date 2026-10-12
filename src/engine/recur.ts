@@ -38,6 +38,7 @@ import { canonicalize, PSEUDO_CLASSES, type PseudoClass } from "./canonical.ts";
 import { isHonorificOrRole } from "./honorifics.ts";
 import { isDateWord } from "./datecontext.ts";
 import type { BlindMap } from "./map.ts";
+import type { ContextOptions } from "./context.ts";
 import { EntityMatcher, type ExtraForm, findPatternSpans, findSpans, type Span } from "./text.ts";
 
 /** A recurring value needs at least this many letters and digits; the audit's MIN_LEAK_LENGTH agrees. */
@@ -251,6 +252,8 @@ export class TextScanner {
     private readonly patterns: Patterns,
     private readonly keep: readonly string[],
     forms: readonly ExtraForm[],
+    /** Context-keyword redaction (context.ts); absent = off. */
+    private readonly context?: ContextOptions,
   ) {
     this.spec = new EntityMatcher(entities);
     this.all = new EntityMatcher(entities, forms);
@@ -258,7 +261,7 @@ export class TextScanner {
 
   /** Free text (and cells kept as text): patterns first, then spec entities and recurring values in the gaps, longest first. */
   free(text: string): Span[] {
-    return findSpans(text, this.all, this.patterns, this.keep);
+    return findSpans(text, this.all, this.patterns, this.keep, this.context);
   }
 
   /**

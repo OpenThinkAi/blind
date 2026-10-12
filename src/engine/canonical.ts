@@ -9,7 +9,12 @@
 // numeric ID keeps its length and its leading digits.
 
 export const PSEUDO_CLASSES = ["person", "org", "host", "email", "id", "location", "value"] as const;
-export type PseudoClass = (typeof PSEUDO_CLASSES)[number];
+/**
+ * `redact` is not a pseudonym class: a span of it is written as REDACTED_VALUE, recorded nowhere
+ * (context-keyword redaction, context.ts). It is outside PSEUDO_CLASSES, which lists the real ones.
+ */
+export type PseudoClass = RealPseudoClass | "redact";
+export type RealPseudoClass = (typeof PSEUDO_CLASSES)[number];
 
 // Compared after case-folding and with dots removed, so "Inc.", "S.A." and
 // "L.L.C." all match. Stripped repeatedly from the end ("Pty Ltd").
@@ -98,6 +103,7 @@ export function canonicalize(cls: PseudoClass, value: string): string {
     case "email":
     case "location":
     case "value":
+    case "redact":
       return v;
   }
 }

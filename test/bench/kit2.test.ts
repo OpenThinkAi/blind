@@ -8,7 +8,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type BenchReport, REPORT_FILE, runBench } from "../../src/bench/command.ts";
-import { ACCESS_XLSX, CALL_DOCX, CALL_VTT, CLOUD_DOMAIN, CONTAINER_LOG, CONTENTS_SHEET, SCOPES_JSON, SPOKEN_DECOY, SPOKEN_PHONE } from "../../src/bench/kit2.ts";
+import { ACCESS_XLSX, CALL_DOCX, CALL_VTT, CLOUD_DOMAIN, CONTAINER_LOG, CONTEXT_DECOY, CONTEXT_SECRETS, CONTENTS_SHEET, SCOPES_JSON, SPOKEN_DECOY, SPOKEN_PHONE } from "../../src/bench/kit2.ts";
 import { COLUMNS, DEFAULT_SEED, generateKit, type Kit, type KitFile, kitFileBytes, writeKit } from "../../src/bench/synth.ts";
 import { applySpec } from "../../src/engine/apply.ts";
 import { readWorkbook, sheetRows } from "../../src/formats/xlsx.ts";
@@ -94,6 +94,10 @@ describe("synthetic kit v2", () => {
       expect(scoped("spelled digits", f).map((v) => [v.value, v.class, v.canonical])).toEqual([[SPOKEN_PHONE, "id", "8015550142"]]);
       expect(scoped("spoken email", f).map((v) => [v.class, /^[a-z]+(?: dot [a-z]+)* at [a-z]+ dot example$/.test(v.value), v.canonical.includes("@")])).toEqual([["email", true, true]]);
     }
+    for (const f of [CALL_DOCX, CALL_VTT]) {
+      expect(scoped("context secret", f).map((v) => v.value).sort()).toEqual(CONTEXT_SECRETS.map((c) => c.secret).sort());
+    }
+    expect(kit.oracle.decoys.filter((d) => d.text === CONTEXT_DECOY).map((d) => d.files)).toEqual([[CALL_DOCX, CALL_VTT]]);
     expect(kit.oracle.decoys.filter((d) => d.text === SPOKEN_DECOY).map((d) => d.files)).toEqual([[CALL_DOCX, CALL_VTT]]);
     for (const k of ["scope_id", "account_no", "org_name", "owner_email", "tenant_host"]) expect(scoped(`key path $.scopes[*].${k}`).length).toBeGreaterThan(0);
     expect(scoped("sheet Access, column Path").every((v) => v.class === "id" && /\/svc-[a-z]+-[a-z]+$/.test(v.value))).toBe(true);
@@ -247,7 +251,8 @@ describe("blind bench on kit v2", () => {
     });
     expect(r.code).toBe(1);
     const where = new Set(r.report.leaks.items.map((l) => `${l.file} ${l.part} ${l.class}`));
-    expect(where).toEqual(new Set([`${CONTAINER_LOG}  id`, `${ACCESS_XLSX} xl/sharedStrings.xml id`, `${ACCESS_XLSX} xl/sharedStrings.xml org`]));
+    // The log's lone "in account <id>" is redacted by the context keyword, whatever the spec forgot.
+    expect(where).toEqual(new Set([`${ACCESS_XLSX} xl/sharedStrings.xml id`, `${ACCESS_XLSX} xl/sharedStrings.xml org`]));
   }, BENCH_TIMEOUT);
 });
 

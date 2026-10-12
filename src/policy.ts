@@ -79,6 +79,8 @@ export interface Policy {
   patterns: PolicyPatterns;
   /** `[[columns]]`, in file order. */
   columns: ColumnPolicyRule[];
+  /** `[context]`: redaction of the value after a keyword such as "gate code" or "password" (engine/context.ts). */
+  context: { enabled: boolean; triggers: string[] };
 }
 
 /** The spec with blind.toml's `[patterns]` switches laid over its own: the patterns apply and audit use. */
@@ -116,6 +118,7 @@ export function defaultPolicy(): Policy {
     // IPs and host names are found in free text even when "host" is not a listed class.
     patterns: { ip: true, host: true },
     columns: [],
+    context: { enabled: true, triggers: [] },
   };
 }
 
@@ -181,6 +184,13 @@ export function renderPolicy(p: Policy): string {
       const v = p.patterns[name];
       return v === undefined ? `# ${name} = true   # ${PATTERN_HELP[name]}` : `${name} = ${v}   # ${PATTERN_HELP[name]}`;
     }),
+    "",
+    "[context]",
+    "# The value after a keyword is replaced with REDACTED and the keyword stays: DOB, driver's license, plate,",
+    "# gate code, password / pw, combo, routing, account / acct, card, CVV, policy #. Secrets that no name or",
+    "# pattern finder targets. enabled = false turns it off. triggers adds words: the next token after each is redacted.",
+    p.context.enabled ? "# enabled = true" : "enabled = false",
+    p.context.triggers.length === 0 ? '# triggers = ["locker code"]' : `triggers = ${list(p.context.triggers)}`,
     "",
     "# Column rules, applied by `blind plan` before the analyst and the heuristic; the first match wins.",
     "# header: header globs (* and ?, any case); a JSON key matches by its name. file: optional path glob",
@@ -332,7 +342,7 @@ export function parsePolicy(text: string, source = POLICY_FILE): Policy {
   }
   if (!isTable(doc)) throw new PolicyError(`${source}: not a TOML table`);
   const r = new Reader(source);
-  r.noExtra(doc, "", ["sensitive", "keep", "models", "profile", "privacy", "patterns", "columns"]);
+  r.noExtra(doc, "", ["sensitive", "keep", "models", "profile", "privacy", "patterns", "columns", "context"]);
 
   const sensitive = r.table(doc, "sensitive", "sensitive", ["classes", "description", "examples"]);
   const classes = r.strings(sensitive, "classes", "sensitive.classes");
@@ -371,7 +381,21 @@ export function parsePolicy(text: string, source = POLICY_FILE): Policy {
     privacy: { mode },
     patterns,
     columns: readColumns(r, doc, source),
+    context: readContext(r, doc),
   };
+}
+
+/** `[context]` is optional, and so is each key in it. A trigger is a word or phrase, so it may not be blank. */
+function readContext(r: Reader, doc: Table): Policy["context"] {
+  const out: Policy["context"] = { enabled: true, triggers: [] };
+  if (doc.context === undefined) return out;
+  const t = r.table(doc, "context", "context", ["enabled", "triggers"]);
+  if (t.enabled !== undefined) out.enabled = r.boolean(t, "enabled", "context.enabled");
+  if (t.triggers !== undefined) {
+    out.triggers = r.strings(t, "triggers", "context.triggers");
+    if (out.triggers.some((w) => w.trim() === "")) r.fail("context.triggers", "an array of non-blank words or phrases", out.triggers);
+  }
+  return out;
 }
 
 /** `[patterns]` is optional, and so is each key in it; a key that is present must be a boolean. */

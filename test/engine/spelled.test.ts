@@ -3,8 +3,8 @@ import type { PatternName } from "../../src/schema.ts";
 import { findSpelledDigits, findSpokenEmails } from "../../src/engine/spelled.ts";
 import { EntityMatcher, findSpans, findSpelledSpans } from "../../src/engine/text.ts";
 
-const ALL: Record<PatternName, boolean> = { ip: true, email: true, host: true, guid: true, mac: true };
-const NONE: Record<PatternName, boolean> = { ip: false, email: false, host: false, guid: false, mac: false };
+const ALL: Record<PatternName, boolean> = { ip: true, email: true, host: true, guid: true, mac: true, phone: true };
+const NONE: Record<PatternName, boolean> = { ip: false, email: false, host: false, guid: false, mac: false, phone: false };
 const TLDS = new Set(["com", "example", "org", "net"]);
 const tld = (l: string) => TLDS.has(l);
 

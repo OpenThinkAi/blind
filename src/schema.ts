@@ -17,7 +17,11 @@ export type ColumnSource = Source | "policy";
 
 /** What a `redact` treatment writes in place of each non-empty value. */
 export const REDACTED_VALUE = "REDACTED";
-export type PatternName = "ip" | "email" | "host" | "guid" | "mac";
+export type PatternName = "ip" | "email" | "host" | "guid" | "mac" | "phone";
+export type Patterns = Record<Exclude<PatternName, "phone">, boolean> & { phone?: boolean };
+
+/** Whether a pattern is on. `phone` is absent from specs written before it existed, and absent means on (fail closed). */
+export const patternOn = (patterns: Patterns, name: PatternName): boolean => patterns[name] ?? name === "phone";
 
 /** Where a value lives: a table column (`header`, optionally on a `sheet`) or a JSON key path. */
 export type Location =
@@ -56,7 +60,8 @@ export interface Spec {
   version: 1;
   columns: ColumnRule[];
   entities: Entities;
-  patterns: Record<PatternName, boolean>;
+  /** `phone` may be absent in a spec written before it existed: absent means on (patternOn). */
+  patterns: Patterns;
   questions: Question[];
   /** Fingerprints of the document and transcript excerpts the analyst has read (see docs/spec.md). */
   seen?: string[];
@@ -73,7 +78,7 @@ export interface ProfileFile {
 }
 
 /** Profile detectors: the spec's shape patterns plus `numericId`, which has no free-text pattern. */
-export type DetectorName = PatternName | "numericId";
+export type DetectorName = Exclude<PatternName, "phone"> | "numericId";
 
 export interface ValueStats {
   count: number;

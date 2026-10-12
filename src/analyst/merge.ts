@@ -9,14 +9,14 @@
 import { createHash } from "node:crypto";
 import type { BlindMap } from "../engine/map.ts";
 import type { Policy } from "../policy.ts";
-import type { ColumnRule, Entities, Entity, EntityClassName, Location, PatternName, Profile, Question, Spec } from "../schema.ts";
+import { type ColumnRule, type Entities, type Entity, type EntityClassName, type Location, type PatternName, patternOn, type Profile, type Question, type Spec } from "../schema.ts";
 import { completeProposal, locationKey } from "./analyst.ts";
 import { profileLocations } from "./heuristic.ts";
 import { shieldedForms, shieldReason } from "./vocabguard.ts";
 
 type EntityClass = Exclude<EntityClassName, "unknown">;
 const ENTITY_CLASSES: readonly EntityClass[] = ["person", "org", "host", "email", "id", "location", "vocabulary"];
-const PATTERN_NAMES: readonly PatternName[] = ["ip", "email", "host", "guid", "mac"];
+const PATTERN_NAMES: readonly PatternName[] = ["ip", "email", "host", "guid", "mac", "phone"];
 
 export type Dropped =
   | { kind: "column"; location: Location; reason: string }
@@ -235,8 +235,8 @@ export function mergeProposal(
   // Patterns are saved entries too.
   if (proposal !== null) {
     for (const name of PATTERN_NAMES) {
-      if (proposal.patterns[name] !== saved.patterns[name]) {
-        dropped.push({ kind: "pattern", name, reason: `the saved spec has it ${saved.patterns[name] ? "on" : "off"}` });
+      if (patternOn(proposal.patterns, name) !== patternOn(saved.patterns, name)) {
+        dropped.push({ kind: "pattern", name, reason: `the saved spec has it ${patternOn(saved.patterns, name) ? "on" : "off"}` });
       }
     }
   }

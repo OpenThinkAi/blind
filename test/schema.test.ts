@@ -57,7 +57,7 @@ describe("spec", () => {
     ["entity part type", (d) => (d.entities.person[0].parts[1] = 7), "$.entities.person[0].parts[1]", /must be string, got integer/],
     ["pattern type", (d) => (d.patterns.ip = "yes"), "$.patterns.ip", /must be boolean, got string/],
     ["pattern missing", (d) => delete d.patterns.mac, "$.patterns.mac", /is required/],
-    ["pattern unknown", (d) => (d.patterns.phone = true), "$.patterns.phone", /unknown field/],
+    ["pattern unknown", (d) => (d.patterns.fax = true), "$.patterns.fax", /unknown field/],
     ["question options too few", (d) => (d.questions[0].options = ["blind"]), "$.questions[0].options", /at least 2 items/],
     ["question options duplicate", (d) => (d.questions[0].options = ["keep", "keep"]), "$.questions[0].options[1]", /duplicate item "keep"/],
     ["question answer not an option", (d) => (d.questions[1].answer = "maybe"), "$.questions[1].answer", /must be null or one of "yes", "no"/],

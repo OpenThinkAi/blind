@@ -237,9 +237,10 @@ wins over the spec's `patterns` in both directions, every run, without editing
 | `host` | `true` or `false` | host names |
 | `guid` | `true` or `false` | GUIDs |
 | `mac` | `true` or `false` | MAC addresses |
+| `phone` | `true` or `false` | phone numbers (on when the spec says nothing: a spec written before `phone` existed has it on) |
 
 `blind init` writes `ip = true` and `host = true`, so addresses and host names in free text are
-replaced even when `host` is not one of `[sensitive] classes`, and leaves the other three
+replaced even when `host` is not one of `[sensitive] classes`, and leaves the other four
 commented out (the spec decides). A `blind.toml` without the table behaves as before: the spec
 decides every pattern. `blind plan` and `blind run` show the patterns in force, marking one that
 blind.toml changed: `ip on (blind.toml; spec: off)`. The spec file itself is never changed. A

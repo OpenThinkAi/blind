@@ -32,7 +32,7 @@
 // else in any case; whole tokens only; longest form first at each position,
 // and a mapped value ranks after the spec entities when lengths tie.
 
-import type { Entities, PatternName } from "../schema.ts";
+import type { Entities, PatternName, Patterns } from "../schema.ts";
 import { DICTIONARY } from "../profile/words.ts";
 import { canonicalize, PSEUDO_CLASSES, type PseudoClass } from "./canonical.ts";
 import { isHonorificOrRole } from "./honorifics.ts";
@@ -233,7 +233,7 @@ export class TextScanner {
   /** `keep` is the keep-list domains (keepDomains in text.ts); `forms` come from recurrenceForms. */
   constructor(
     entities: Entities,
-    private readonly patterns: Record<PatternName, boolean>,
+    private readonly patterns: Patterns,
     private readonly keep: readonly string[],
     forms: readonly ExtraForm[],
   ) {

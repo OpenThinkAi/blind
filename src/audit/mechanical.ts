@@ -39,7 +39,7 @@
 // candidate, else `clean`; the audit never reports `clean` for something it
 // did not read.
 
-import { type ColumnRule, type PatternName, REDACTED_VALUE, type Spec } from "../schema.ts";
+import { type ColumnRule, type PatternName, type Patterns, patternOn, REDACTED_VALUE, type Spec } from "../schema.ts";
 import { CsvError, parseCsv, sniffDelimiter } from "../engine/csv.ts";
 import { inDateContext, isDateWord } from "../engine/datecontext.ts";
 import { decode, EncodingError } from "../engine/encoding.ts";
@@ -470,13 +470,13 @@ function scanView(view: View, ctx: Context, isName: boolean): Hit[] {
   return hits;
 }
 
-const PATTERN_NAMES: readonly PatternName[] = ["email", "ip", "mac", "guid", "host"];
+const PATTERN_NAMES: readonly PatternName[] = ["email", "ip", "mac", "guid", "phone", "host"];
 
 /** Which enabled pattern matches the whole value (the span itself only records the pseudonym class). */
-function patternName(value: string, patterns: Record<PatternName, boolean>): PatternName | "pattern" {
+function patternName(value: string, patterns: Patterns): PatternName | "pattern" {
   for (const name of PATTERN_NAMES) {
-    if (!patterns[name]) continue;
-    const only = { ip: false, email: false, host: false, guid: false, mac: false, [name]: true };
+    if (!patternOn(patterns, name)) continue;
+    const only = { ip: false, email: false, host: false, guid: false, mac: false, phone: false, [name]: true };
     const [s] = findPatternSpans(value, only);
     if (s !== undefined && s.start === 0 && s.end === value.length) return name;
   }

@@ -14,7 +14,7 @@ import { type AskOptions, ModelError, modelsEnabled } from "../model.ts";
 import { loadPolicy, POLICY_FILE, PolicyError, type PolicyPatterns } from "../policy.ts";
 import { writeProfile } from "../profile/command.ts";
 import { buildProfile, forPrivacyMode, InputError } from "../profile/profile.ts";
-import { type ColumnRule, type EntityClassName, type Location, REDACTED_VALUE, type Spec } from "../schema.ts";
+import { type ColumnRule, type EntityClassName, type Location, patternOn, REDACTED_VALUE, type Spec } from "../schema.ts";
 import { parseSpec, SchemaError, validateProfile, validateSpec } from "../validate.ts";
 import { AnalystError, answerQuestion, proposeSpec, runAnalyst } from "./analyst.ts";
 import { heuristicSpec } from "./heuristic.ts";
@@ -156,7 +156,8 @@ export function renderSpec(spec: Spec, policyPatterns: PolicyPatterns = {}): str
   out.push("");
   // blind.toml's [patterns] wins at apply time, so the review shows what will be used.
   const onOff = (on: boolean): string => (on ? "on" : "off");
-  const shown = Object.entries(spec.patterns).map(([name, on]) => {
+  const shown = (["ip", "email", "host", "guid", "mac", "phone"] as const).map((name) => {
+    const on = patternOn(spec.patterns, name);
     const set = policyPatterns[name as keyof PolicyPatterns];
     return set === undefined || set === on ? `${name} ${onOff(on)}` : `${name} ${onOff(set)} (blind.toml; spec: ${onOff(on)})`;
   });

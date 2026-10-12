@@ -21,8 +21,8 @@
 // Whitespace between the words of a multi-word form matches any run of
 // whitespace, so a name wrapped across lines is still found.
 
-import { PSEUDO_CLASSES, type PseudoClass } from "./canonical.ts";
-import type { Entities, PatternName } from "../schema.ts";
+import { PSEUDO_CLASSES, phoneDigits, type PseudoClass } from "./canonical.ts";
+import { type Entities, type PatternName, type Patterns, patternOn } from "../schema.ts";
 import { inDateContext, isDateWord } from "./datecontext.ts";
 import { findSpelledDigits, findSpokenEmails } from "./spelled.ts";
 
@@ -58,6 +58,16 @@ const PATTERN_RES: Record<PatternName, RegExp> = {
   ),
   mac: /(?<![0-9A-Fa-f:-])[0-9A-Fa-f]{2}([:-])[0-9A-Fa-f]{2}(?:\1[0-9A-Fa-f]{2}){4}(?![0-9A-Fa-f:-])/g,
   guid: /(?<![0-9A-Fa-f-])[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}(?![0-9A-Fa-f-])/g,
+  // A phone: North American (optional +1, a three-digit area code, 3 + 4 digits, with separators or
+  // parentheses) or international (a leading + and country code). Bare digit runs are never phones, so
+  // ids, amounts and dates that merely contain digits are left alone (accept() checks phoneDigits).
+  phone: new RegExp(
+    "(?<![\\p{L}\\p{N}_+]|\\p{N}[.-])(?:" +
+      "(?:\\+?1[ .-]?)?(?:\\(\\d{3}\\)[ .-]?|\\d{3}[ .-])\\d{3}[ .-]\\d{4}" +
+      "|\\+\\d{1,3}(?:[ \\t.-]?\\(?\\d{1,4}\\)?){2,6}" +
+      ")(?![\\p{L}\\p{N}_]|[.-]\\d)",
+    "gu",
+  ),
   host: /(?<![\p{L}\p{N}._-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}(?![\p{L}\p{N}_-]|\.[A-Za-z0-9])/gu,
 };
 
@@ -68,10 +78,11 @@ export const PATTERN_CLASS: Record<PatternName, PseudoClass> = {
   mac: "id",
   guid: "id",
   host: "host",
+  phone: "id",
 };
 
 // Fixed order: when two patterns match the same span, the earlier one wins.
-const PATTERN_ORDER: readonly PatternName[] = ["email", "ip", "mac", "guid", "host"];
+const PATTERN_ORDER: readonly PatternName[] = ["email", "ip", "mac", "guid", "phone", "host"];
 
 // Two-label names count as hosts only under these suffixes, so "notes.txt" or
 // "report.md" is not a host; three or more labels ("db01.example.com") always count.
@@ -92,6 +103,7 @@ export function validIpv6(s: string): boolean {
 
 function accept(name: PatternName, m: string): boolean {
   if (name === "ip" && m.includes(":")) return validIpv6(m);
+  if (name === "phone") return phoneDigits(m) !== undefined;
   if (name === "host") {
     const labels = m.split(".");
     return labels.length >= 3 || HOST_TLDS.has((labels[labels.length - 1] as string).toLowerCase());
@@ -122,10 +134,10 @@ export function underKeptDomain(host: string, domains: readonly string[]): boole
  * Pattern matches in `text`. A host match under one of `keep` (from keepDomains) is returned with
  * `cls: null`: kept as written, and still shielding its text from entity forms.
  */
-export function findPatternSpans(text: string, patterns: Record<PatternName, boolean>, keep: readonly string[] = []): Span[] {
+export function findPatternSpans(text: string, patterns: Patterns, keep: readonly string[] = []): Span[] {
   const found: (Span & { rank: number })[] = [];
   PATTERN_ORDER.forEach((name, rank) => {
-    if (!patterns[name]) return;
+    if (!patternOn(patterns, name)) return;
     for (const m of text.matchAll(PATTERN_RES[name])) {
       if (!accept(name, m[0])) continue;
       const start = m.index;
@@ -304,7 +316,7 @@ export class EntityMatcher {
  * Spans have source `pattern`, and `value` is the normalised form, so a spoken value and the same
  * value written out share one pseudonym.
  */
-export function findSpelledSpans(text: string, patterns: Record<PatternName, boolean>): Span[] {
+export function findSpelledSpans(text: string, patterns: Patterns): Span[] {
   const whole = (v: string): PseudoClass | null => {
     const [s] = findPatternSpans(v, patterns);
     return s !== undefined && s.start === 0 && s.end === v.length ? s.cls : null;
@@ -325,7 +337,7 @@ export function findSpelledSpans(text: string, patterns: Record<PatternName, boo
  * Pattern matches and spoken values together, leftmost first and longest at the same start, without
  * overlaps: "jane at example.com" is one spoken email, not a lone host.
  */
-function shapeSpans(text: string, patterns: Record<PatternName, boolean>, keep: readonly string[]): Span[] {
+function shapeSpans(text: string, patterns: Patterns, keep: readonly string[]): Span[] {
   const spelled = findSpelledSpans(text, patterns);
   const p = findPatternSpans(text, patterns, keep);
   if (spelled.length === 0) return p;
@@ -344,7 +356,7 @@ function shapeSpans(text: string, patterns: Record<PatternName, boolean>, keep: 
 export function findSpans(
   text: string,
   matcher: EntityMatcher,
-  patterns: Record<PatternName, boolean>,
+  patterns: Patterns,
   keep: readonly string[] = [],
 ): Span[] {
   const p = shapeSpans(text, patterns, keep);

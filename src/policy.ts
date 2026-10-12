@@ -35,6 +35,7 @@ const PATTERN_HELP: Record<PatternName, string> = {
   host: "host names",
   guid: "GUIDs",
   mac: "MAC addresses",
+  phone: "phone numbers",
 };
 export const POLICY_PATTERNS = Object.keys(PATTERN_HELP) as PatternName[];
 

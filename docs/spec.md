@@ -444,8 +444,8 @@ the same code as the commands themselves.
   inside a longer dotted name; `_` separates tokens, as in blinded file names), longest first.
   Text that happens to equal a pseudonym is restored too.
 - **Formats.** CSV/TSV cell by cell (a restored value that needs quoting is quoted), JSON and JSONL
-  string by string (spliced in, the rest of the text unchanged), and text (`.txt`, `.md`, `.log`),
-  with the file's encoding kept. XLSX and DOCX are restored at the zip and XML level in exactly the
+  string by string (spliced in, the rest of the text unchanged), and text (`.txt`, `.md`, `.log`, and the
+  `.vtt` and `.srt` transcripts, read as text), with the file's encoding kept. XLSX and DOCX are restored at the zip and XML level in exactly the
   places `blind apply` rewrites (every other byte is copied): cells, shared and inline strings,
   formulas, comments, metadata, pivot and chart caches; paragraphs (tracked insertions and
   deletions each in their own revision), field instructions, drawing text, authors and document
@@ -578,8 +578,9 @@ up to three layers, mechanical, semantic, then model; the report lists the layer
   number of chunks and accepted answers, and what was not sent.
 
 Status is `leak` if any leak, else `candidates` if any candidate, else `clean`. Exit status: 0
-clean, 1 candidates, 2 leak, 3 the audit could not run (usage error, or a missing or invalid spec
-or map; nothing audited). The report (a table, or `--json`) gives file, zip member, byte offset and
+clean, 1 candidates, 2 leak, 3 the audit could not run (a usage error, a missing or invalid spec or
+map or `blind.toml`, or a model call the privacy mode, endpoint or key setting refuses; nothing
+audited). The report (a table, or `--json`) gives file, zip member, byte offset and
 line, class and a masked value: the first two characters (never more than half), `***`, and the
 length. `clean` needs zero leaks, zero candidates of either layer and zero declared unknowns. It
 means only that these checks found nothing they look for; it is not a guarantee that nothing
@@ -735,7 +736,8 @@ Pairs of locations that share values, which suggests they hold the same kind of 
 
 ### How `blind profile` builds it
 
-`blind profile <inputs...>` reads CSV (`.csv`), TSV (`.tsv`, `.tab`), JSON (`.json`), JSONL
+`blind profile <inputs...>` (run it in the directory that holds `blind.toml`, which it needs for
+the sample count and the privacy mode) reads CSV (`.csv`), TSV (`.tsv`, `.tab`), JSON (`.json`), JSONL
 (`.jsonl`, `.ndjson`), XLSX workbooks (`.xlsx`), plain text (`.txt`, `.text`), Markdown (`.md`, `.markdown`), logs (`.log`),
 WebVTT (`.vtt`) and SRT (`.srt`) transcripts, and DOCX (`.docx`) files that are transcript-shaped, writes `.blind/profile.json` (mode
 0600) and prints it as a table; `--json` prints the JSON instead. `k` is `[profile] samples` in
@@ -779,7 +781,7 @@ WebVTT (`.vtt`) and SRT (`.srt`) transcripts, and DOCX (`.docx`) files that are 
 
 ## Privacy modes
 
-`[privacy] mode` in `blind.toml` decides what a model call may do. Every check runs before
+`[privacy] mode` in `blind.toml` (every key of that file is in [policy.md](policy.md)) decides what a model call may do. Every check runs before
 anything is sent; a refused call exits 2 and names the mode (except under `blind audit`, where 2
 means a leak: there a refused call exits 3, "the audit could not run"). There is no fallback to another mode
 or backend.
@@ -787,7 +789,7 @@ or backend.
 | Mode | Model calls | What is sent |
 |---|---|---|
 | `local-only` (default) | Loopback endpoints only (127.0.0.0/8, `::1`, `localhost`). `claude-cli`, the hosted Anthropic API and any other host are refused with "privacy.mode is local-only". | The caller's data, every string at most 120 characters. |
-| `profile-only` | Remote endpoints allowed, over https. | Exactly the profile and the policy (classes, description split into pieces of at most 120 characters, examples, keep list). Anything else is refused. |
+| `profile-only` | Remote endpoints allowed, over https (a loopback server may still use http). | Exactly the profile and the policy (classes, description split into pieces of at most 120 characters, examples, keep list). Anything else is refused. |
 | `none` | None. `blind plan` uses the heuristic analyst; `blind audit` runs its mechanical and semantic layers only. | Nothing. |
 
 `blind audit`'s model layer sends, under `local-only`, the blinded output's text as lines of at
@@ -831,7 +833,8 @@ sheet name, value-like header row or flagged key segment is refused before anyth
 ordinary title-case headers ("First Name", "Last Name") can be caught by the last rule; its
 headers then go out as `col_N` with their statistics, which costs the analyst context, never privacy.
 
-Each call prints one line to stderr before it is sent:
-`role · backend · model · mode · [samples k ·] N bytes sent`, where `samples k` is the profile's
-`sampleCount` and appears under `profile-only`. Under `profile-only` the line is printed even when
-the command is quiet.
+Each call prints one line to stderr before it is sent, after the command's name:
+`blind plan: analyst · openai-compatible · m · local-only · 31570 bytes sent`. The line is
+`role · backend · model · mode · [samples k ·] N bytes sent`, where `N` is the size of the request
+and `samples k` is the profile's `sampleCount`, shown under `profile-only`. Under `profile-only`
+the line is printed even when the command is quiet (`--quiet`).

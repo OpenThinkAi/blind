@@ -31,7 +31,7 @@ const REVEAL_HELP = [
   "Reverses a blinded file, or every file of a blinded tree, with the map `blind apply` wrote:",
   "each pseudonym in the content and in folder and file names is replaced with the original value",
   "the map records for it (an alias or a case variant comes back as that recorded form). Handles",
-  "CSV/TSV, JSON/JSONL, text (.txt, .md, .log), XLSX and DOCX; a workbook or document is revealed",
+  "CSV/TSV, JSON/JSONL, text (.txt, .md, .log, .vtt, .srt), XLSX and DOCX; a workbook or document is revealed",
   "whole or not at all. Other formats have no reversal path.",
   "",
   "Revealed files hold the original values. They are written under .blind/revealed/ by default,",

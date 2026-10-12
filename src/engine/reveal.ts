@@ -199,7 +199,7 @@ export function revealFile(path: string, bytes: Uint8Array, rv: Revealer): Revea
   if (format === null) {
     const dot = path.lastIndexOf(".");
     const ext = dot > path.lastIndexOf("/") ? path.slice(dot) : "(no extension)";
-    throw new RevealError(`no reversal path for ${ext} files; reveal handles CSV/TSV, JSON/JSONL, text (.txt, .md, .log), XLSX and DOCX`);
+    throw new RevealError(`no reversal path for ${ext} files; reveal handles CSV/TSV, JSON/JSONL, text (.txt, .md, .log, .vtt, .srt), XLSX and DOCX`);
   }
   if (format === "xlsx") return revealXlsx(bytes, rv);
   if (format === "docx") return revealDocx(bytes, rv);

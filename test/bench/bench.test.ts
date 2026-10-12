@@ -29,7 +29,7 @@ interface Run {
 }
 
 /** Writes a kit (optionally with an edited spec), runs `blind bench` on it, and deletes it. */
-async function bench(opts: { kit?: KitOptions; seed?: number; edit?: (spec: Spec) => void; args?: string[]; prepare?: (dir: string) => void } = {}): Promise<Run> {
+async function bench(opts: { kit?: KitOptions; seed?: number; edit?: (spec: Spec) => void; args?: string[]; prepare?: (dir: string) => void; tmpRoot?: string } = {}): Promise<Run> {
   const dir = mkdtempSync(join(tmpdir(), "blind-bench-test-"));
   try {
     const kit: Kit = generateKit(opts.seed, opts.kit);
@@ -38,7 +38,7 @@ async function bench(opts: { kit?: KitOptions; seed?: number; edit?: (spec: Spec
     opts.prepare?.(dir);
     const out = new Sink();
     const err = new Sink();
-    const code = await runBench([dir, ...(opts.args ?? [])], { out: out as unknown as NodeJS.WritableStream, err: err as unknown as NodeJS.WritableStream, cwd: dir });
+    const code = await runBench([dir, ...(opts.args ?? [])], { out: out as unknown as NodeJS.WritableStream, err: err as unknown as NodeJS.WritableStream, cwd: dir, tmpRoot: opts.tmpRoot });
     const path = join(dir, REPORT_FILE);
     const report = existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as BenchReport) : null;
     return { code, out: out.text, err: err.text, report };
@@ -296,11 +296,12 @@ describe("scoring", () => {
 });
 
 test("the bench leaves no workspace behind", async () => {
-  const before = new Set(listBenchDirs());
-  await bench();
-  expect(listBenchDirs().filter((d) => !before.has(d))).toEqual([]);
+  // Its own tmp root: sibling worktrees and concurrent runs cannot put workspaces in it.
+  const root = mkdtempSync(join(tmpdir(), "blind-bench-root-"));
+  try {
+    await bench({ tmpRoot: root });
+    expect(readdirSync(root)).toEqual([]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
-
-function listBenchDirs(): string[] {
-  return readdirSync(tmpdir()).filter((n) => n.startsWith("blind-bench-") && !n.startsWith("blind-bench-test-") && !n.startsWith("blind-bench-report-"));
-}

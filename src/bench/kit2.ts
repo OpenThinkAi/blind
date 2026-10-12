@@ -12,6 +12,8 @@
 // - meetings/renewal-call.docx and .vtt: one Teams meeting, saved as Word
 //   (speaker-and-time paragraphs, names split across runs) and as WebVTT (cue
 //   GUIDs, voice tags).
+//   The meeting also has a phone number spelled out digit by digit, an email
+//   address spoken word by word, and number words in ordinary prose (a decoy).
 // - exports/scopes.json: a scope list with snake_case keys, hex IDs and
 //   four-digit IDs written as strings.
 // - logs/agent-container.log: a container log whose registry host carries the
@@ -20,7 +22,7 @@
 import type { ColumnRule, Spec } from "../schema.ts";
 import { buildDocument, buildWorkbook, type WbCell, type WbSheet } from "./office.ts";
 import { type CastOrg, type CastPerson, emailOf, mention, type OracleBuilder, orgMention, ORGS, PEOPLE, Rng, tenantHost } from "./cast.ts";
-import type { KitFile, OracleColumn } from "./synth.ts";
+import type { Decoy, KitFile, OracleColumn } from "./synth.ts";
 
 export const ACCESS_XLSX = "workbooks/tenant-access.xlsx";
 export const CALL_DOCX = "meetings/renewal-call.docx";
@@ -62,6 +64,12 @@ const SCOPE_KEYS = [
   { path: "$.scopes[*].granted_on", class: "vocabulary", note: "ISO date" },
 ] as const;
 
+/** A phone number read out digit by digit (555-01xx: reserved for fiction), and its digits. */
+export const SPOKEN_PHONE = "eight oh one, five five five, zero one four two";
+export const SPOKEN_PHONE_DIGITS = "8015550142";
+/** Number words in ordinary prose in the meeting. A decoy: it must survive blinding. */
+export const SPOKEN_DECOY = "two dogs, one cat";
+
 /** Speakers of the meeting. Sam and Jan stay out: their given names are kit v1's decoys. */
 const SPEAKERS: readonly CastPerson[] = PEOPLE.filter((p) => p.given !== "Sam" && p.given !== "Jan");
 const OPENERS = ["Thanks", "Right", "Okay", "Good point", "Agreed"] as const;
@@ -73,6 +81,8 @@ export interface KitV2 {
   sheetOrg: CastOrg;
   /** The cloud account IDs in the container log. */
   cloudAccounts: string[];
+  /** Words that look like values but are not; they must survive blinding. */
+  decoys: Decoy[];
 }
 
 /** One meeting turn: who speaks and what they say. */
@@ -181,6 +191,20 @@ export function generateV2(seed: number, rows: number, oracle: OracleBuilder): K
     add(speaker.canonical, "person", speaker.canonical, "canonical", CALL_DOCX, "speaker");
     add(speaker.canonical, "person", speaker.canonical, "canonical", CALL_VTT, "speaker");
   }
+  // Values read aloud (AGT-1829): a phone number spelled digit by digit and an email address spoken
+  // word by word, which no written shape matches, and number words in ordinary prose, which must
+  // survive. Fixed text, no PRNG draws, so every other value in the kit stays where it was.
+  const [caller, mailer] = [SPEAKERS[0] as CastPerson, SPEAKERS[1] as CastPerson];
+  const mailOrg = ORGS[0] as CastOrg;
+  const spokenEmail = emailOf(caller, mailOrg).replace("@", " at ").replaceAll(".", " dot ");
+  turns.push({ speaker: caller, text: `If the line drops, my cell is ${SPOKEN_PHONE}.` });
+  turns.push({ speaker: mailer, text: `Send the signed copy to ${spokenEmail} and I will file it.` });
+  turns.push({ speaker: caller, text: `Sure. No rush, I have ${SPOKEN_DECOY} at home and a train to catch.` });
+  for (const f of [CALL_DOCX, CALL_VTT]) {
+    oracle.add(SPOKEN_PHONE, "id", SPOKEN_PHONE_DIGITS, "alias", f, "spelled digits");
+    oracle.add(spokenEmail, "email", emailOf(caller, mailOrg), "alias", f, "spoken email");
+  }
+  for (const p of [caller, mailer]) for (const f of [CALL_DOCX, CALL_VTT]) add(p.canonical, "person", p.canonical, "canonical", f, "speaker");
   const clock = (i: number) => `${Math.floor((i * 17) / 60)}:${pad2((i * 17) % 60)}`;
   const paragraphs: (string | null)[][] = [["Renewal call"]];
   turns.forEach((t, i) => {
@@ -259,7 +283,8 @@ export function generateV2(seed: number, rows: number, oracle: OracleBuilder): K
     { file: ACCESS_XLSX, sheet: sheetOrg.short, header: "Amount", class: "vocabulary", note: "money" },
     ...SCOPE_KEYS.map((k) => ({ file: SCOPES_JSON, jsonPath: k.path, class: k.class, note: k.note })),
   ];
-  return { files, columns, sheetOrg, cloudAccounts: [account] };
+  const decoys: Decoy[] = [{ text: SPOKEN_DECOY, resembles: "spelled digits", why: "number words in ordinary prose, not a value read aloud", files: [CALL_DOCX, CALL_VTT] }];
+  return { files, columns, sheetOrg, cloudAccounts: [account], decoys };
 }
 
 /**

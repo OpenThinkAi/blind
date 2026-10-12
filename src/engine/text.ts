@@ -2,8 +2,9 @@
 // into non-overlapping spans. Pure and deterministic; the caller decides what
 // each span becomes.
 //
-// Order: pattern matches (email, IP, MAC, GUID, host) are found first and are
-// atomic, so "avery@example.com" is one email, not a name plus a host. Entity
+// Order: pattern matches (email, IP, MAC, GUID, host) and spoken values (spelled
+// digits, spoken emails; spelled.ts) are found first and are atomic, so
+// "avery@example.com" is one email, not a name plus a host. Entity
 // forms are then matched in the gaps, longest form first at each position,
 // whole-token only.
 //
@@ -23,6 +24,7 @@
 import { PSEUDO_CLASSES, type PseudoClass } from "./canonical.ts";
 import type { Entities, PatternName } from "../schema.ts";
 import { inDateContext, isDateWord } from "./datecontext.ts";
+import { findSpelledDigits, findSpokenEmails } from "./spelled.ts";
 
 export interface Span {
   start: number;
@@ -294,14 +296,58 @@ export class EntityMatcher {
   }
 }
 
-/** Every span to act on: pattern matches, then entity forms in the gaps, sorted by position. */
+/**
+ * Spoken values (spelled.ts), each normalised and then classed by the normal patterns: a run of four
+ * or more spelled digits ("eight oh one five") becomes its digit string, classed by the first enabled
+ * pattern that matches it whole and `id` otherwise; a spoken email ("avery dot quill at example dot
+ * com") becomes the written address and is kept only when the `email` pattern is on and matches it.
+ * Spans have source `pattern`, and `value` is the normalised form, so a spoken value and the same
+ * value written out share one pseudonym.
+ */
+export function findSpelledSpans(text: string, patterns: Record<PatternName, boolean>): Span[] {
+  const whole = (v: string): PseudoClass | null => {
+    const [s] = findPatternSpans(v, patterns);
+    return s !== undefined && s.start === 0 && s.end === v.length ? s.cls : null;
+  };
+  const out: Span[] = [];
+  for (const d of findSpelledDigits(text)) {
+    out.push({ start: d.start, end: d.end, cls: whole(d.normalised) ?? "id", value: d.normalised, source: "pattern" });
+  }
+  if (patterns.email) {
+    for (const e of findSpokenEmails(text, (label) => HOST_TLDS.has(label.toLowerCase()))) {
+      if (whole(e.normalised) === "email") out.push({ start: e.start, end: e.end, cls: "email", value: e.normalised, source: "pattern" });
+    }
+  }
+  return out.sort((a, b) => a.start - b.start || b.end - a.end);
+}
+
+/**
+ * Pattern matches and spoken values together, leftmost first and longest at the same start, without
+ * overlaps: "jane at example.com" is one spoken email, not a lone host.
+ */
+function shapeSpans(text: string, patterns: Record<PatternName, boolean>, keep: readonly string[]): Span[] {
+  const spelled = findSpelledSpans(text, patterns);
+  const p = findPatternSpans(text, patterns, keep);
+  if (spelled.length === 0) return p;
+  const all = [...p, ...spelled].sort((a, b) => a.start - b.start || b.end - a.end);
+  const out: Span[] = [];
+  let taken = 0;
+  for (const s of all) {
+    if (s.start < taken) continue;
+    out.push(s);
+    taken = s.end;
+  }
+  return out;
+}
+
+/** Every span to act on: pattern matches and spoken values, then entity forms in the gaps, sorted by position. */
 export function findSpans(
   text: string,
   matcher: EntityMatcher,
   patterns: Record<PatternName, boolean>,
   keep: readonly string[] = [],
 ): Span[] {
-  const p = findPatternSpans(text, patterns, keep);
+  const p = shapeSpans(text, patterns, keep);
   const e = matcher.find(text, p);
   return [...p, ...e].sort((a, b) => a.start - b.start);
 }

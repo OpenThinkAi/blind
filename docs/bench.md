@@ -117,7 +117,11 @@ every other one split across two runs, as Word does after an edit) followed by t
 WebVTT copy has a GUID cue identifier and a voice tag per turn. The turns mention people in all
 their forms and organisations by name, short name and acronym. The Word copy also carries the
 bibliography `customXml` part Word saves into every document (no text; its `schemaRef` `uri` holds the
-OOXML host), which blind writes through rather than refuses.
+OOXML host), which blind writes through rather than refuses. The last three turns hold values
+read aloud: a phone number spelled digit by digit (`eight oh one, five five five, zero one four
+two`, oracle class `id`, scope `spelled digits`) and an email address spoken word by word
+(`bart dot quince at quillfeather dot example`, class `email`, scope `spoken email`), and number
+words in ordinary prose, `two dogs, one cat`, a decoy that must survive.
 
 **`exports/scopes.json`**: a scope list with snake_case keys, `scope_id` hex IDs (8 characters),
 `account_no` 4-digit IDs written as strings, organisation names, emails, tenant hosts, an access

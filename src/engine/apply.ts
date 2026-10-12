@@ -57,7 +57,7 @@ import { type ColumnOutcome, decide, outcomeOf } from "./columns.ts";
 import { DocxError, type DocxPlan, docxParagraphs, planDocx, renderDocx, scanDocx } from "./docx.ts";
 import { OfficeIds } from "./officeid.ts";
 import { NameRewriter, rewriteSpans } from "./names.ts";
-import { recurrenceForms, TextScanner } from "./recur.ts";
+import { keepForms, nameParts, personPartForms, personValues, recurrenceForms, TextScanner, vocabularyForms } from "./recur.ts";
 import { EntityMatcher, type ExtraForm, keepDomains, type Span } from "./text.ts";
 import { entrySpans, keptSpeakers, planTranscript, shapeParagraphs, speakerForms, speakersOf, type TranscriptPlan, transcriptSpans } from "./transcript.ts";
 import { type Env, planXlsx, prepareXlsx, renderXlsx, XlsxError, type XlsxPlan, XlsxSpecError, xlsxValues, ZipError } from "./xlsx.ts";
@@ -179,6 +179,11 @@ export interface ApplyResult {
   /** Files not written, and why. Never silently dropped. */
   skipped: SkippedFile[];
   map: BlindMap;
+  /**
+   * The pseudonyms given to name parts that two or more people share (a surname of two people
+   * blinded in a column): each got its own pseudonym, never either person's. Sorted.
+   */
+  sharedNameParts: string[];
 }
 
 export interface ApplyOptions {
@@ -632,22 +637,22 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       spoken.push(...p.transcript.spoken);
     }
   }
-  const voices = speakerForms(
-    speakers.filter((n) => !kept(n)),
-    spoken,
-    new Set(vocabulary.map((v) => v.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim())),
-  );
-  const nameMatcher = new EntityMatcher(spec.entities, [...columnValues, ...voices]);
+  // The values the column pass pseudonymised (an earlier map's are added by recurrenceForms), and
+  // the people among them and in the map, whose name parts are matched alone too.
+  const mapped = plans.flatMap((p) => (p.kind === "text" || p.kind === "docx" ? [] : p.kind === "xlsx" ? p.plan.mapped : p.mapped));
+  const voiceNames = speakers.filter((n) => !kept(n));
+  const vocabularySet = vocabularyForms(spec.entities);
+  const keepSet = keepForms(opts.keep);
+  const people = personValues(mapped, opts.map);
+  const voices = speakerForms(voiceNames, spoken, vocabularySet, people, keepSet);
+  const parts = personPartForms(mapped, opts.map, vocabularySet, { keep: opts.keep, speakers: voiceNames });
+  const nameMatcher = new EntityMatcher(spec.entities, [...columnValues, ...voices, ...parts]);
   const names = new NameRewriter(nameMatcher, spec.patterns, keep);
   for (const p of plans) names.planPath(p.input.path);
 
   // Every column is decided: scan the rest of the text for patterns, entities and the values the
   // column pass (or an earlier map) pseudonymised.
-  const forms = recurrenceForms(
-    plans.flatMap((p) => (p.kind === "text" || p.kind === "docx" ? [] : p.kind === "xlsx" ? p.plan.mapped : p.mapped)),
-    spec.entities,
-    opts.map,
-  );
+  const forms = recurrenceForms(mapped, spec.entities, opts.map, { keep: opts.keep, speakers: voiceNames });
   // A speaker's form replaces a recurring value with the same text: it carries the speaker's pseudonym.
   const voiced = new Set(voices.map((v) => `${v.cls}\0${v.form as string}`));
   const scanForms = [...forms.filter((f) => !voiced.has(`${f.cls}\0${f.form ?? f.value}`)), ...voices].sort(
@@ -912,5 +917,10 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     }
     byOutput.set(f.outputPath, f.path);
   }
-  return { outputs, files, skipped, map: pz.toMap() };
+  // Name parts two people share were replaced with a pseudonym of their own: report the ones used.
+  const sharedNameParts = nameParts([...people, ...voiceNames], [], vocabularySet, keepSet)
+    .filter((p) => p.shared && p.exclusion === null && requests.has(`person\0${p.value}`))
+    .map((p) => pz.pseudonym("person", p.value))
+    .sort(cmp);
+  return { outputs, files, skipped, map: pz.toMap(), sharedNameParts: [...new Set(sharedNameParts)] };
 }

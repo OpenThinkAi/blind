@@ -20,6 +20,13 @@
 //   can still list them as entities. The audit still reports them;
 // - not a spec vocabulary form, and (the caller's part) not a value from a
 //   column classed `vocabulary`.
+// The name parts of each person among them (and among the map's person
+// entries) recur on their own too (AGT-1803), so a lone "Quill" in a note gets
+// the pseudonym of "Avery Quill" from the Owner column, as the audit requires:
+// each word of 3+ letters, capitalised so it matches only where the text is
+// capitalised, not a dictionary word, keep term or vocabulary form
+// (partExclusion). A part two different people share is never given either's
+// pseudonym: it is pseudonymised as itself (nameParts), and apply reports it.
 // Matching uses the entity case rules (text.ts): a short acronym only exactly,
 // a single capitalised word only where the text is capitalised too, anything
 // else in any case; whole tokens only; longest form first at each position,
@@ -49,6 +56,98 @@ export function recurrenceExclusion(form: string, vocabulary: ReadonlySet<string
   return null;
 }
 
+/** Why a name part is not matched alone, or null when it is: the audit's rule for a lone name word (AGT-1801). */
+export function partExclusion(part: string, vocabulary: ReadonlySet<string>, keep: ReadonlySet<string>): string | null {
+  if ([...words(part).join("")].length < MIN_RECUR_LENGTH) return `fewer than ${MIN_RECUR_LENGTH} letters and digits`;
+  // The whole word, as the audit checks it: "Rose-May" is a name even though "rose" and "may" are words.
+  if (DICTIONARY.has(fold(part))) return "a dictionary word";
+  if (vocabulary.has(fold(part))) return "a spec vocabulary form";
+  if (keep.has(fold(part))) return "a keep term";
+  return null;
+}
+
+// A word of a name, as the audit reads one: letters and marks, joined by an apostrophe or a hyphen.
+const NAME_WORD_RE = /[\p{L}\p{M}]+(?:['\u2019-][\p{L}\p{M}]+)*/gu;
+
+/** Capitalised as a name part is written: "quill" and "QUILL" become "Quill"; "McDonald" stays. */
+function capitalise(w: string): string {
+  const lower = /\p{Ll}/u.test(w) ? w : w.toLowerCase();
+  const first = String.fromCodePoint(lower.codePointAt(0) as number);
+  return first.toUpperCase() + lower.slice(first.length);
+}
+
+/**
+ * The parts of a person's name: each word of the value as written and of its canonical form, and
+ * each piece of a hyphenated word, capitalised (so the single-word case rule applies: matched only
+ * where the text is capitalised). A one-word name is not a part of itself.
+ */
+function personWords(value: string, canonical: string): string[] {
+  const out = new Map<string, string>();
+  for (const w of [...(value.match(NAME_WORD_RE) ?? []), ...(canonical.match(NAME_WORD_RE) ?? [])]) {
+    for (const p of [w, ...(w.includes("-") ? w.split("-") : [])]) if (!out.has(fold(p))) out.set(fold(p), capitalise(p));
+  }
+  out.delete(fold(value));
+  out.delete(fold(canonical));
+  return [...out.values()];
+}
+
+export interface NamePart {
+  /** The part, capitalised. */
+  form: string;
+  /** The person value it stands for, or the part itself when it is shared. */
+  value: string;
+  /** The part belongs to two or more different people, or is one person's whole name. */
+  shared: boolean;
+  /** Why it is not matched alone (partExclusion), or null. */
+  exclusion: string | null;
+}
+
+/**
+ * The name parts of the people in `own`: each part of three letters or more (given name, surname)
+ * with its person as the value, so a lone "Quill" gets the pseudonym of "Avery Quill". People are
+ * told apart by canonical form, across `own` and `others` together. A part shared by two different
+ * people (or equal to someone's whole one-word name) is never given either person's pseudonym: its
+ * value is the part itself, so it gets its own, as an ambiguous spec entity part does. Excluded
+ * parts are returned too, with the reason, for callers that still need them. Sorted by form.
+ */
+export function nameParts(
+  own: Iterable<string>,
+  others: Iterable<string>,
+  vocabulary: ReadonlySet<string>,
+  keep: ReadonlySet<string>,
+): NamePart[] {
+  const smallest = new Map<string, string>();
+  const canonicals = new Set<string>();
+  const parts = new Map<string, { form: string; owners: Set<string>; own: boolean }>();
+  const visit = (value: string, isOwn: boolean) => {
+    const c = canonicalize("person", value);
+    canonicals.add(c);
+    if (isOwn) {
+      const prior = smallest.get(c);
+      if (prior === undefined || value < prior) smallest.set(c, value);
+    }
+    for (const w of personWords(value, c)) {
+      const k = fold(w);
+      const e = parts.get(k) ?? { form: w, owners: new Set<string>(), own: false };
+      if (w < e.form) e.form = w;
+      e.owners.add(c);
+      e.own ||= isOwn;
+      parts.set(k, e);
+    }
+  };
+  for (const v of own) visit(v, true);
+  for (const v of others) visit(v, false);
+  const out: NamePart[] = [];
+  for (const [k, e] of parts) {
+    if (!e.own) continue;
+    if (canonicals.has(k)) e.owners.add(k);
+    const shared = e.owners.size > 1;
+    const value = shared ? e.form : (smallest.get([...e.owners][0] as string) as string);
+    out.push({ form: e.form, value, shared, exclusion: partExclusion(e.form, vocabulary, keep) });
+  }
+  return out.sort((a, b) => cmp(a.form, b.form) || cmp(a.value, b.value));
+}
+
 /** A lowercase canonical form, cased so the case rules treat it like the value it came from. */
 function caseCanonical(canonical: string): string {
   // A single word of letters (the "acme" of "Acme Inc") is capitalised, so it gets the capitalised-word
@@ -67,8 +166,9 @@ const isPseudoClass = (k: string): k is PseudoClass => (PSEUDO_CLASSES as readon
  * not depend on the order values were given in; each form's `value` was or will be given to the
  * pseudonymizer anyway, so matching it never derives a pseudonym out of order.
  */
-export function recurrenceForms(values: Iterable<ExtraForm>, entities: Entities, map?: BlindMap): ExtraForm[] {
-  const vocabulary = new Set((entities.vocabulary ?? []).flatMap((e) => [e.canonical, ...e.aliases, ...e.parts]).map(fold));
+export function recurrenceForms(values: Iterable<ExtraForm>, entities: Entities, map?: BlindMap, opts: RecurrenceOptions = {}): ExtraForm[] {
+  const vocabulary = vocabularyForms(entities);
+  const list = [...values];
   const out = new Map<string, ExtraForm>();
   const consider = (cls: PseudoClass, value: string, raw: string): void => {
     const form = raw.trim().replace(/\s+/g, " ");
@@ -82,9 +182,44 @@ export function recurrenceForms(values: Iterable<ExtraForm>, entities: Entities,
     consider(cls, value, value);
     if (fold(canonical) !== fold(value)) consider(cls, value, caseCanonical(canonical));
   };
-  for (const v of values) add(v.cls, v.value, canonicalize(v.cls, v.value));
+  for (const v of list) add(v.cls, v.value, canonicalize(v.cls, v.value));
   for (const e of map?.entries ?? []) if (isPseudoClass(e.kind)) add(e.kind, e.value, e.canonical);
+  // Name parts come after whole values: a part that is also a whole value keeps that value's form.
+  for (const p of personPartForms(list, map, vocabulary, opts)) if (!out.has(`person\0${p.form as string}`)) out.set(`person\0${p.form as string}`, p);
   return [...out.values()].sort((a, b) => cmp(a.cls, b.cls) || cmp(a.form as string, b.form as string) || cmp(a.value, b.value));
+}
+
+export interface RecurrenceOptions {
+  /** The policy keep list: a name part equal to a keep term is not matched alone. */
+  keep?: readonly string[];
+  /** Transcript speakers: their parts are speakerForms', but a part a speaker shares with someone here is ambiguous. */
+  speakers?: readonly string[];
+}
+
+/** Every spec vocabulary form, folded. */
+export function vocabularyForms(entities: Entities): Set<string> {
+  return new Set((entities.vocabulary ?? []).flatMap((e) => [e.canonical, ...e.aliases, ...e.parts]).map(fold));
+}
+
+/** The keep list, folded, as nameParts compares it. */
+export const keepForms = (keep: readonly string[] = []): Set<string> => new Set(keep.map(fold));
+
+/** The person values of `values` and of the map's person entries. */
+export function personValues(values: Iterable<ExtraForm>, map?: BlindMap): string[] {
+  const out = new Set<string>();
+  for (const v of values) if (v.cls === "person") out.add(v.value);
+  for (const e of map?.entries ?? []) if (e.kind === "person") out.add(e.value);
+  return [...out].sort(cmp);
+}
+
+/**
+ * Person forms for the name parts of the people in `values` (a column rule pseudonymised them) and
+ * in the map, as nameParts gives them, leaving out the parts partExclusion excludes.
+ */
+export function personPartForms(values: Iterable<ExtraForm>, map: BlindMap | undefined, vocabulary: ReadonlySet<string>, opts: RecurrenceOptions = {}): ExtraForm[] {
+  return nameParts(personValues(values, map), opts.speakers ?? [], vocabulary, keepForms(opts.keep))
+    .filter((p) => p.exclusion === null)
+    .map((p) => ({ cls: "person", value: p.value, form: p.form }));
 }
 
 /** One scanner for the corpus: the spec's patterns and entities plus the recurring values. */

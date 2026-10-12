@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { applyColumnPolicy, ColumnPolicy, headerGlob, keyName, pathGlob } from "../../src/analyst/policycolumns.ts";
+import { applyColumnPolicy, ColumnPolicy, describeMatch, headerGlob, keyName, keySegments, pathGlob, pathGlobSegments, type RuleMatch, rankReason } from "../../src/analyst/policycolumns.ts";
 import { type BenchReport, REPORT_FILE, runBench } from "../../src/bench/command.ts";
 import { ACCOUNTS_CSV, generateKit, writeKit } from "../../src/bench/synth.ts";
 import { defaultPolicy, parsePolicy, type Policy, PolicyError, renderPolicy } from "../../src/policy.ts";
@@ -58,7 +58,10 @@ class = "person"
     expect(bad('header = []\ntreatment = "drop"')).toThrow(/columns\[0\]\.header must be a non-empty glob/);
     expect(bad('header = " "\ntreatment = "drop"')).toThrow(/columns\[0\]\.header must be a non-empty glob/);
     expect(bad('treatment = "drop"')).toThrow(/columns\[0\]\.header must be an array of strings/);
-    expect(bad('header = "x"\ntreatment = "drop"\nsheet = "S"')).toThrow(/unknown key columns\[0\]\.sheet/);
+    expect(bad('header = "x"\ntreatment = "drop"\nsheets = "S"')).toThrow(/unknown key columns\[0\]\.sheets/);
+    expect(bad('path = "owner.dob"\nsheet = "S"\ntreatment = "drop"')).toThrow(/path \(JSON keys\) and sheet \(worksheet columns\) cannot both be set/);
+    expect(bad('path = " "\ntreatment = "drop"')).toThrow(/columns\[0\]\.path must be a non-empty glob/);
+    expect(bad('sheet = "S"\ntreatment = "drop"')).toThrow(/columns\[0\]\.header must be an array of strings/);
     expect(() => parsePolicy(withColumns('columns = "keep everything"'))).toThrow(PolicyError);
   });
 });
@@ -230,4 +233,224 @@ test("bench: --plan with [[columns]] keeping the kit's money, dates and enums sc
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// AGT-1851: a rule may be scoped to a JSON key path or a worksheet; when several rules match one
+// column the most specific wins, and `blind plan` names every disagreement. Invented values only.
+describe("path and sheet scopes, precedence, overlap notes", () => {
+  const rule = (r: Partial<Policy["columns"][number]> & Pick<Policy["columns"][number], "treatment">): Policy["columns"][number] => ({ class: r.treatment === "keep" ? "vocabulary" : "unknown", ...r });
+
+  test("parses path and sheet, with or without header, and renders them back", () => {
+    const p = parsePolicy(
+      withColumns(`
+[[columns]]
+path = "owner.dob"
+treatment = "redact"
+
+[[columns]]
+header = "dob"
+path = "**.profile.*"
+treatment = "blind"
+class = "id"
+
+[[columns]]
+header = "chip*"
+sheet = "Pets*"
+treatment = "keep"
+`),
+    );
+    expect(p.columns).toEqual([
+      { path: "owner.dob", treatment: "redact", class: "unknown" },
+      { header: ["dob"], path: "**.profile.*", treatment: "blind", class: "id" },
+      { header: ["chip*"], sheet: "Pets*", treatment: "keep", class: "vocabulary" },
+    ]);
+    expect(parsePolicy(renderPolicy(p))).toEqual(p);
+  });
+
+  test("key segments and path globs: [*] ignored, $ optional, * one key, ** any number", () => {
+    expect(keySegments("$.users[*].profile.dob")).toEqual(["users", "profile", "dob"]);
+    expect(keySegments('$["visit date"]')).toEqual(["visit date"]);
+    expect(keySegments("$.clinics.*.phone")).toEqual(["clinics", "*", "phone"]);
+    expect(keySegments("$.clinics.*~")).toBeNull();
+    expect(pathGlobSegments("users[*].profile.*")).toEqual(["users", "profile", "*"]);
+    expect(pathGlobSegments("$.owner.dob")).toEqual(["owner", "dob"]);
+    expect(pathGlobSegments('**["visit date"]')).toEqual(["**", "visit date"]);
+    const cp = (path: string) => new ColumnPolicy({ columns: [rule({ path, treatment: "drop" })] });
+    const at = (jsonPath: string) => ({ file: "u.json", jsonPath });
+    expect(cp("owner.dob").ruleFor(at("$.owner.dob"))).toMatchObject({ treatment: "drop" });
+    expect(cp("owner.dob").ruleFor(at("$.pet.dob"))).toBeUndefined();
+    expect(cp("owner.dob").ruleFor(at("$.x.owner.dob"))).toBeUndefined();
+    expect(cp("users[*].profile.*").ruleFor(at("$.users[*].profile.dob"))).toMatchObject({ treatment: "drop" });
+    expect(cp("users.profile.*").ruleFor(at("$.users[*].profile.dob"))).toMatchObject({ treatment: "drop" });
+    expect(cp("users[*].profile.*").ruleFor(at("$.users[*].profile.address.city"))).toBeUndefined();
+    expect(cp("**.profile.dob").ruleFor(at("$.users[*].profile.dob"))).toMatchObject({ treatment: "drop" });
+    expect(cp("**.profile.dob").ruleFor(at("$.profile.dob"))).toMatchObject({ treatment: "drop" });
+    expect(cp("**").ruleFor(at("$.a.b.c"))).toMatchObject({ treatment: "drop" });
+    expect(cp("Owner.DOB").ruleFor(at("$.owner.dob"))).toMatchObject({ treatment: "drop" });
+    // A path rule names JSON keys only; a sheet rule worksheet columns only.
+    expect(cp("dob").ruleFor({ file: "v.csv", header: "dob" })).toBeUndefined();
+    const sheet = new ColumnPolicy({ columns: [rule({ header: ["dob"], sheet: "Pets", treatment: "keep" })] });
+    expect(sheet.ruleFor({ file: "w.xlsx", sheet: "pets", header: "DOB" })).toMatchObject({ treatment: "keep" });
+    expect(sheet.ruleFor({ file: "w.xlsx", sheet: "Clients", header: "DOB" })).toBeUndefined();
+    expect(sheet.ruleFor({ file: "v.csv", header: "DOB" })).toBeUndefined();
+  });
+
+  test("the most specific rule wins, whatever the file order; a full tie goes to the first", () => {
+    const cp = new ColumnPolicy({
+      columns: [
+        rule({ header: ["owner*"], treatment: "blind", class: "person" }),
+        rule({ header: ["*msg*"], treatment: "drop" }),
+        rule({ header: ["owner_city"], treatment: "blind", class: "location" }),
+        rule({ header: ["dob", "msg_opt_in"], treatment: "keep" }),
+        rule({ header: ["owner_?ity"], treatment: "redact" }),
+        rule({ header: ["*own*"], treatment: "drop" }),
+        rule({ path: "owner.*", treatment: "blind", class: "person" }),
+        rule({ header: ["ab*"], treatment: "drop" }),
+        rule({ header: ["*ab"], treatment: "redact" }),
+      ],
+    });
+    const at = (header: string) => ({ file: "v.csv", header });
+    expect(cp.ruleFor(at("owner_city"))).toMatchObject({ treatment: "blind", class: "location" }); // exact over glob
+    expect(cp.ruleFor(at("msg_opt_in"))).toMatchObject({ treatment: "keep" }); // exact over glob
+    expect(cp.ruleFor(at("owner_name"))).toMatchObject({ treatment: "blind", class: "person" }); // more literal text
+    expect(cp.ruleFor(at("ab"))).toMatchObject({ treatment: "drop" }); // full tie: first written
+    expect(cp.ruleFor({ file: "u.json", jsonPath: "$.owner.dob" })).toMatchObject({ treatment: "blind", class: "person" }); // scoped over exact
+    expect(cp.ruleFor({ file: "u.json", jsonPath: "$.pet.dob" })).toMatchObject({ treatment: "keep" });
+    const m = cp.matches(at("owner_city"));
+    expect(m.map((x) => x.index)).toEqual([2, 4, 0, 5]);
+    expect(rankReason(m[0] as RuleMatch, m[1] as RuleMatch)).toBe("an exact name beats a glob");
+    expect(rankReason(m[1] as RuleMatch, m[2] as RuleMatch)).toBe("more literal text beats less");
+    expect(rankReason(m[2] as RuleMatch, m[3] as RuleMatch)).toBe("fewer wildcards beat more");
+    expect(describeMatch(m[0] as RuleMatch)).toBe('columns[2] (header "owner_city", blind/location)');
+  });
+
+  test("a file-scoped rule beats an unscoped one, and a rule's most specific matching header is the one ranked", () => {
+    const cp = new ColumnPolicy({
+      columns: [
+        rule({ header: ["notes"], treatment: "redact" }),
+        rule({ header: ["note*"], file: "private/*.csv", treatment: "drop" }),
+        rule({ header: ["*", "species"], treatment: "redact" }),
+        rule({ header: ["spec*"], treatment: "keep" }),
+      ],
+    });
+    expect(cp.ruleFor({ file: "private/a.csv", header: "Notes" })).toMatchObject({ treatment: "drop" });
+    expect(cp.ruleFor({ file: "public/a.csv", header: "Notes" })).toMatchObject({ treatment: "redact" });
+    expect(cp.matches({ file: "a.csv", header: "Species" })[0]).toMatchObject({ index: 2, globs: ['header "species"'] });
+  });
+
+  const stats: ValueStats = { count: 1, distinctRatio: 1, digitRatio: 0, dictionaryRatio: 0, meanLength: 5, detectorRates: { ip: 0, email: 0, host: 0, guid: 0, mac: 0, numericId: 0 }, samples: [] };
+  const profile: Profile = {
+    version: 1,
+    sampleCount: 0,
+    files: [
+      { path: "v.csv", format: "csv", size: 10 },
+      { path: "u.json", format: "json", size: 10 },
+    ],
+    tables: [{ file: "v.csv", headerRow: 1, columns: ["owner_name", "owner_city", "msg_opt_in"].map((header) => ({ header, stats })) }],
+    jsonKeys: ["$.owner.name", "$.owner.dob", "$.pet.name", "$.pet.dob"].map((path) => ({ file: "u.json", path, stats })),
+    documents: [],
+    transcripts: [],
+    cooccurrence: [],
+  };
+  const empty: Spec = { version: 1, columns: [], entities: {}, patterns: { ip: true, email: true, host: true, guid: true, mac: true }, questions: [] };
+  const policy = (columns: Policy["columns"]): Pick<Policy, "columns" | "sensitive" | "keep"> => ({ ...defaultPolicy(), columns });
+
+  test("overlaps that disagree are reported with the winner first; agreeing overlaps are not", () => {
+    const r = applyColumnPolicy(
+      empty,
+      profile,
+      policy([rule({ header: ["owner*"], treatment: "blind", class: "person" }), rule({ header: ["*msg*"], treatment: "drop" }), rule({ header: ["owner_city"], treatment: "blind", class: "location" }), rule({ header: ["dob", "msg_opt_in", "owner_name"], treatment: "keep" }), rule({ header: ["owner_n*"], treatment: "keep" })]),
+    );
+    const byHeader = Object.fromEntries(r.overlaps.map((o) => [o.loc.header ?? o.loc.jsonPath, o]));
+    expect(Object.keys(byHeader).sort()).toEqual(["msg_opt_in", "owner_city", "owner_name"]);
+    expect(byHeader.msg_opt_in?.matches.map((m) => m.index)).toEqual([3, 1]);
+    expect(byHeader.msg_opt_in?.reason).toBe("an exact name beats a glob");
+    expect(r.shadowedKeeps).toEqual([]);
+    const at = (h: string) => r.spec.columns.find((c) => c.header === h);
+    expect(at("owner_city")).toMatchObject({ class: "location", treatment: "blind" });
+    expect(at("msg_opt_in")).toMatchObject({ treatment: "keep" });
+  });
+
+  test("a keep rule that wins nowhere is reported as shadowed", () => {
+    const r = applyColumnPolicy(empty, profile, policy([rule({ header: ["dob"], treatment: "keep" }), rule({ path: "**.dob", treatment: "redact" }), rule({ header: ["absent"], treatment: "keep" })]));
+    expect(r.shadowedKeeps).toEqual([{ index: 0, rule: { header: ["dob"], treatment: "keep", class: "vocabulary" }, by: [1], locations: 2 }]);
+    // A keep rule beaten only by another keep rule of the same class is not shadowed.
+    const same = applyColumnPolicy(empty, profile, policy([rule({ header: ["dob"], treatment: "keep" }), rule({ path: "**.dob", treatment: "keep" })]));
+    expect(same.shadowedKeeps).toEqual([]);
+    expect(same.overlaps).toEqual([]);
+  });
+
+  test("back-compat: rules that never overlap decide exactly what first-match did", () => {
+    const columns = [rule({ header: ["owner_name"], treatment: "blind", class: "person" }), rule({ header: ["msg*"], treatment: "drop" }), rule({ header: ["dob"], treatment: "keep" }), rule({ header: ["name"], file: "u.json", treatment: "redact" })];
+    const r = applyColumnPolicy(empty, profile, policy(columns));
+    expect(r.overlaps).toEqual([]);
+    expect(r.shadowedKeeps).toEqual([]);
+    expect(r.spec.columns.map((c) => [c.header ?? c.jsonPath, c.treatment, c.class])).toEqual([
+      ["owner_name", "blind", "person"],
+      ["msg_opt_in", "drop", "unknown"],
+      ["$.owner.name", "redact", "unknown"],
+      ["$.owner.dob", "keep", "vocabulary"],
+      ["$.pet.name", "redact", "unknown"],
+      ["$.pet.dob", "keep", "vocabulary"],
+    ]);
+  });
+});
+
+describe("AGT-1851 repro, end to end through blind plan", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "blind-policy-overlap-"));
+    mkdirSync(join(dir, "in"));
+    writeFileSync(join(dir, "in", "v.csv"), "owner_name,owner_city,msg_opt_in\nDana Example,Springfield,yes\n");
+    writeFileSync(join(dir, "in", "u.json"), '{"owner":{"name":"Dana Example","dob":"1960-01-02"},"pet":{"name":"Biscuit","dob":"2019-05-06"}}\n');
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  const REPRO = `[[columns]]
+header = ["owner*"]
+treatment = "blind"
+class = "person"
+[[columns]]
+header = ["*msg*"]
+treatment = "drop"
+[[columns]]
+header = ["owner_city"]
+treatment = "blind"
+class = "location"
+[[columns]]
+header = ["dob", "msg_opt_in"]
+treatment = "keep"
+`;
+  const plan = (extra: string) => {
+    const p = defaultPolicy();
+    p.privacy.mode = "none";
+    writeFileSync(join(dir, "blind.toml"), `${renderPolicy(p)}\n${REPRO}${extra}`);
+    const r = blind(dir, "plan", "in");
+    expect(r.code).toBe(0);
+    const spec = JSON.parse(readFileSync(join(dir, ".blind", "spec.json"), "utf8")) as Spec;
+    return { out: r.out, at: (k: string) => spec.columns.find((c) => (c.header ?? c.jsonPath) === k) };
+  };
+
+  test("owner_city → location, msg_opt_in kept with a note, owner.dob kept until a path rule scopes it", () => {
+    const first = plan("");
+    expect(first.at("owner_city")).toMatchObject({ class: "location", treatment: "blind", source: "policy" });
+    expect(first.at("msg_opt_in")).toMatchObject({ treatment: "keep" });
+    expect(first.at("$.owner.dob")).toMatchObject({ treatment: "keep" });
+    expect(first.out).toContain(
+      'note: "v.csv" "msg_opt_in": 2 blind.toml rules match: columns[3] (header "msg_opt_in", keep/vocabulary); columns[1] (header "*msg*", drop/unknown); columns[3] wins (an exact name beats a glob)',
+    );
+    expect(first.out).toContain('columns[2] (header "owner_city", blind/location); columns[0] (header "owner*", blind/person); columns[2] wins');
+    // Never a cell value in the notes.
+    const notes = first.out.split("\n").filter((l) => l.startsWith("note:") || l.startsWith("warning:"));
+    for (const v of ["Dana", "Springfield", "1960", "Biscuit", "yes"]) expect(notes.join("\n")).not.toContain(v);
+
+    const second = plan('[[columns]]\npath = "owner.*"\ntreatment = "blind"\nclass = "person"\n');
+    expect(second.at("$.owner.dob")).toMatchObject({ treatment: "blind", class: "person" });
+    expect(second.at("$.pet.dob")).toMatchObject({ treatment: "keep" });
+    expect(second.out).toContain('columns[4] (path "owner.*", blind/person); columns[3] (header "dob", keep/vocabulary); columns[4] wins (a rule scoped by path, sheet or file beats an unscoped one)');
+  });
+
+  test("a keep rule shadowed everywhere gets a warning", () => {
+    const r = plan('[[columns]]\npath = "**.dob"\ntreatment = "redact"\n[[columns]]\nheader = "msg_opt_in"\nfile = "*.csv"\ntreatment = "drop"\n');
+    expect(r.out).toContain('warning: blind.toml columns[3] (header "dob", header "msg_opt_in", keep) decides nothing: at all 3 column(s) and key(s) it matches, columns[4], columns[5] wins instead');
+  });
 });

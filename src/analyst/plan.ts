@@ -18,7 +18,7 @@ import { type ColumnRule, type EntityClassName, type Location, patternOn, REDACT
 import { parseSpec, SchemaError, validateProfile, validateSpec } from "../validate.ts";
 import { AnalystError, answerQuestion, locationKey, proposeSpec, runAnalyst } from "./analyst.ts";
 import { heuristicReason, heuristicSpec, profileLocations } from "./heuristic.ts";
-import { applyColumnPolicy } from "./policycolumns.ts";
+import { applyColumnPolicy, describeMatch, type RuleMatch } from "./policycolumns.ts";
 import {
   ACCEPT_CLASSES,
   type AcceptClass,
@@ -60,10 +60,12 @@ const PLAN_HELP = [
   "is changed until you run `blind apply`. Edit the spec file, or answer questions with --answer.",
   "A column with an unanswered question stays unknown.",
   "",
-  "Column rules in blind.toml ([[columns]]: header glob, optional file glob, treatment keep, drop,",
-  "blind, value or redact, optional class) and headers that are [keep] terms decide their columns",
-  "ahead of the model and the heuristic, on every plan (a human rule in the spec is kept); they are",
-  "saved with source \"policy\".",
+  "Column rules in blind.toml ([[columns]]: header glob and/or JSON key-path glob, optional sheet and",
+  "file globs, treatment keep, scan, drop, blind, value or redact, optional class) and headers that are",
+  "[keep] terms decide their columns ahead of the model and the heuristic, on every plan (a human rule",
+  "in the spec is kept); they are saved with source \"policy\". When rules overlap the most specific",
+  "wins (scoped, then exact, then fewer wildcards, then more literal text, then file order); each",
+  "column two rules disagree on is noted, and a keep rule that decides nothing is warned about.",
   "",
   "When .blind/spec.json exists it is reused: the analyst is sent only the columns, keys and",
   "document excerpts the spec does not cover yet (nothing at all when there are none), and its reply",
@@ -380,6 +382,17 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
     for (const id of overlay.removedQuestions) remarks.push(`question ${id} removed: ${POLICY_FILE} decides its column`);
     for (const l of overlay.human) remarks.push(`${where(l)}: the spec's human rule is kept over the ${POLICY_FILE} rule for it`);
     for (const l of overlay.reverted) remarks.push(`${where(l)}: no ${POLICY_FILE} rule matches it any more; the heuristic rule was used`);
+    // Rules that disagree on one column: name them (globs only, never a value) and say which won and why.
+    for (const o of overlay.overlaps) {
+      const [win, ...rest] = o.matches as [RuleMatch, ...RuleMatch[]];
+      remarks.push(`${where(o.loc)}: ${o.matches.length} ${POLICY_FILE} rules match: ${[win, ...rest].map(describeMatch).join("; ")}; columns[${win.index}] wins (${o.reason})`);
+    }
+    for (const k of overlay.shadowedKeeps) {
+      const globs = [...(k.rule.header ?? []).map((h) => `header ${JSON.stringify(h)}`), ...(k.rule.path === undefined ? [] : [`path ${JSON.stringify(k.rule.path)}`])].join(", ");
+      remarks.push(
+        `warning: ${POLICY_FILE} columns[${k.index}] (${globs}, keep) decides nothing: at all ${k.locations} column(s) and key(s) it matches, ${k.by.map((i) => `columns[${i}]`).join(", ")} wins instead`,
+      );
+    }
 
     // A heuristic rule is blind with its class unlisted only because the policy turned that shape's pattern on.
     const heuristic = new Set(spec.columns.filter((c) => c.source === "heuristic" && c.treatment === "blind").map(locationKey));
@@ -394,7 +407,7 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
     } else {
       io.out.write(renderSpec(spec, policy.patterns));
       if (diff.reused || diff.dropped.length > 0) io.out.write(`\n${renderDiff(diff)}`);
-      for (const n of [...notes, ...remarks]) io.out.write(`note: ${n}\n`);
+      for (const n of [...notes, ...remarks]) io.out.write(n.startsWith("warning: ") ? `${n}\n` : `note: ${n}\n`);
       io.out.write(`\nwrote ${written} (mode 0600). Nothing is changed until you run \`blind apply\`.\n`);
     }
     for (const s of skipped) io.err.write(`blind plan: not profiled: ${q(s.path)}: ${s.reason}\n`);

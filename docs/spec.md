@@ -150,7 +150,13 @@ plan (exit 2) before anything is profiled or sent.
   entity is left out of it and listed. A new question whose id is taken gets the next free `qN`.
 - **Column rules in `blind.toml`.** After the analyst (or the heuristic), every column and key a
   `[[columns]]` rule matches, or whose header is a `[keep]` term, gets the policy's rule with
-  `source: "policy"` and `confidence: 1` ([policy.md](policy.md#columns)). This runs on every
+  `source: "policy"` and `confidence: 1` ([policy.md](policy.md#columns)). A rule may match a
+  header (a JSON key by its last key name), a whole JSON key path (`path`), and be scoped to
+  files (`file`) and worksheets (`sheet`). When several rules match one column, the most specific
+  wins: scoped (`path`, `sheet` or `file`) over unscoped, then exact over glob, then fewer
+  wildcards, then more literal text; only a full tie goes to file order
+  ([policy.md](policy.md#precedence)). Every column two rules disagree on is noted with the rules
+  and the winner, and a `keep` rule that wins nowhere is warned about. This runs on every
   plan, so a rule added to `blind.toml` applies to columns already in the spec, and a policy rule
   whose `blind.toml` rule is gone goes back to the heuristic rule. A rule with `source: "human"` is
   never overridden (the plan notes it), and an unanswered question about a column the policy now

@@ -14,10 +14,15 @@
 //   recurring values (below).
 // - `blind` with a sensitive class: every non-empty cell gets that class's pseudonym.
 // - `blind` with `unknown`/`vocabulary`, or `value` with a sensitive class: a `Value_` pseudonym.
+// - `scan` (any class): kept as written apart from what the free-text scanner
+//   finds in it, exactly as a text file is scanned.
 // - `unknown` with `value`, and any column the spec does not mention: the
-//   identifier-like test decides. Identifier-like columns become `Value_`
+//   identifier-like test decides (or, with ApplyOptions.columns = "scan", the
+//   column is scanned). Identifier-like columns become `Value_`
 //   pseudonyms; the rest are kept, with spec entities and patterns still
-//   replaced inside their cells.
+//   replaced inside their cells. A cell whose value is held whole in a `keep`
+//   or `scan` cell anywhere in the corpus is never pseudonymised by this test:
+//   it is scanned instead (settleFallback).
 // Rows above the header and the header row itself are treated as free text.
 //
 // JSON and JSONL: every key path is a column (see json.ts), with the same
@@ -58,7 +63,7 @@ import { decode, type Encoding, EncodingError, encode } from "./encoding.ts";
 import { isJsonNumber, type JsonFormat, JsonError, type JsonToken, jsonCuts, quote, scanJson, scanJsonl, stringOffsets } from "./json.ts";
 import type { BlindMap } from "./map.ts";
 import { type EntityEntry, Pseudonymizer } from "./pseudonym.ts";
-import { type ColumnOutcome, decide, outcomeOf, removedForms } from "./columns.ts";
+import { type ColumnDefault, type ColumnOutcome, decide, holdsWhole, isFallback, removedForms } from "./columns.ts";
 import { type ContextOptions, type ContextTriggerSpec, pairCells } from "./context.ts";
 import { DocxError, type DocxPlan, docxParagraphs, docxWholes, FONT, IMAGE, planDocx, THUMBNAIL, thumbnailReason, refuseDocxUnrewritten, renderDocx, scanDocx } from "./docx.ts";
 import { OfficeIds } from "./officeid.ts";
@@ -69,7 +74,7 @@ import { keepForms, nameParts, personPartForms, personValues, proseForms, recurr
 import { EntityMatcher, type ExtraForm, keepDomains, type Span } from "./text.ts";
 import { entrySpans, keptSpeakers, planTranscript, shapeParagraphs, speakerForms, speakersOf, type TranscriptPlan, transcriptSpans } from "./transcript.ts";
 import { unrewrittenSpans } from "./unrewritten.ts";
-import { type Env, planXlsx, prepareXlsx, renderXlsx, XlsxError, type XlsxPlan, XlsxSpecError, xlsxValues, ZipError } from "./xlsx.ts";
+import { type Env, planXlsx, prepareXlsx, renderXlsx, settleXlsx, XlsxError, type XlsxPlan, XlsxSpecError, xlsxValues, ZipError } from "./xlsx.ts";
 
 /** XLSX members that are not XML but are copied unchanged and listed as unread. */
 const XLSX_COPIED = (name: string): boolean => !THUMBNAIL.test(name) && (IMAGE.test(name) || FONT.test(name) || /^xl\/printerSettings\/[^/]+\.bin$/i.test(name));
@@ -132,6 +137,12 @@ export interface ColumnReport {
    * cells, left as written because only a rule renumbers a number (AGT-1822). Absent when 0.
    */
   numbersLeft?: number;
+  /**
+   * When the column failed closed with no rule: cells left as text (and scanned) instead of
+   * pseudonymised whole, because the same value is held whole in a `keep` or `scan` cell somewhere
+   * in the corpus. Absent when 0.
+   */
+  heldWhole?: number;
 }
 
 export interface FileReport {
@@ -220,6 +231,8 @@ export interface ApplyOptions {
    * written as REDACTED. On unless `enabled` is false; `triggers` adds words to the built-in list.
    */
   context?: { enabled: boolean; triggers: readonly ContextTriggerSpec[] };
+  /** What a column with no rule (or an unknown/value rule) gets: `fallback` (the default) or `scan`. */
+  columns?: ColumnDefault;
 }
 
 /** The spec does not fit the inputs (a rule names a column that is not there, or a shape this engine cannot apply). */
@@ -264,6 +277,16 @@ interface TablePlan {
   dropped: Set<number>;
   /** Data rows wider than the header; their extra cells continue the last column. */
   overflowRows: number;
+  /** Cells the fail-closed fallback pseudonymised whole, settled once every plan exists (settleFallback). */
+  fallback: Fallback<string>[];
+}
+
+/** A cell the fail-closed fallback pseudonymised whole: its edit, and the recurring form it added. */
+interface Fallback<K> {
+  key: K;
+  value: string;
+  column: ColumnReport;
+  form: ExtraForm;
 }
 
 interface TextPlan {
@@ -293,6 +316,7 @@ interface JsonPlan {
   columns: ColumnReport[];
   /** Text ranges removed for `drop` key paths (jsonCuts), and the tokens inside them. */
   cuts: { ranges: [number, number][]; tokens: Set<number> };
+  fallback: Fallback<number>[];
 }
 
 interface DocxFilePlan {
@@ -352,7 +376,8 @@ function planTable(
   text: string,
   format: "csv" | "tsv",
   rules: readonly ColumnRule[],
-  context?: ContextOptions,
+  context: ContextOptions | undefined,
+  unruled: ColumnDefault,
 ): TablePlan {
   const delim = sniffDelimiter(text, format === "tsv" ? "\t" : undefined);
   const rows = parseCsv(text, delim);
@@ -385,6 +410,7 @@ function planTable(
   const columns: ColumnReport[] = [];
   const dropped = new Set<number>();
   const keptCols = new Set<number>();
+  const fallback: Fallback<string>[] = [];
   const data = rows.slice(headerRow + 1);
   for (let col = 0; col < width; col++) {
     const header = headers[col] as string;
@@ -392,13 +418,13 @@ function planTable(
     // The cells of this column in a row, with their positions: the last column also owns the overflow.
     const owned = (row: Row): { cell: Cell; at: number }[] =>
       (col === lastCol ? row.cells.slice(col) : row.cells.slice(col, col + 1)).map((cell, i) => ({ cell, at: col + i }));
-    const { action, stats } = decide(rule, data.flatMap((r) => (col === lastCol ? owned(r).map((o) => o.cell.value) : [r.cells[col]?.value ?? ""])), { delimiter: delim });
+    const { action, outcome } = decide(rule, data.flatMap((r) => (col === lastCol ? owned(r).map((o) => o.cell.value) : [r.cells[col]?.value ?? ""])), { delimiter: delim }, unruled);
     const column: ColumnReport = {
       index: col,
       header,
       class: rule?.class ?? "unknown",
       treatment: rule?.treatment ?? null,
-      outcome: outcomeOf(action, stats),
+      outcome,
       changed: 0,
       flagged: 0,
     };
@@ -420,7 +446,10 @@ function planTable(
         if (action.kind === "redact") edits.set(key, { kind: "fixed", value: REDACTED_VALUE });
         else if (action.kind === "pseudo") {
           edits.set(key, { kind: "pseudo", cls: action.cls });
-          if (rule?.class !== "vocabulary") mapped.push({ cls: action.cls, value: cell.value });
+          if (rule?.class === "vocabulary") continue;
+          const form: ExtraForm = { cls: action.cls, value: cell.value };
+          mapped.push(form);
+          if (isFallback(outcome)) fallback.push({ key, value: cell.value, column, form });
         } else pending.push({ key, value: cell.value, keep: action.kind === "keep", column });
       }
     });
@@ -467,6 +496,7 @@ function planTable(
     columns,
     dropped,
     overflowRows,
+    fallback,
   };
 }
 
@@ -476,6 +506,7 @@ function planJson(
   text: string,
   format: JsonFormat,
   rules: readonly ColumnRule[],
+  unruled: ColumnDefault,
 ): JsonPlan {
   const tokens = format === "json" ? scanJson(text) : scanJsonl(text);
   // Key paths in first-seen order, with the tokens under each (literals too, so a path holding only nulls still exists).
@@ -501,6 +532,7 @@ function planJson(
   const removed: ExtraForm[] = [];
   const columns: ColumnReport[] = [];
   const dropped: number[] = [];
+  const fallback: Fallback<number>[] = [];
   for (const [path, indices] of byPath) {
     const rule = rules.find((r) => r.jsonPath === path);
     if ((rule?.treatment === "drop" || rule?.treatment === "redact") && (path === "$" || path.endsWith("~"))) {
@@ -509,14 +541,14 @@ function planJson(
       );
     }
     const valued = indices.filter((i) => (tokens[i] as JsonToken).kind !== "literal");
-    const { action, stats } = decide(rule, valued.map((i) => (tokens[i] as JsonToken).value));
+    const { action, outcome } = decide(rule, valued.map((i) => (tokens[i] as JsonToken).value), {}, unruled);
     const column: ColumnReport = {
       index: columns.length,
       header: "",
       jsonPath: path,
       class: rule?.class ?? "unknown",
       treatment: rule?.treatment ?? null,
-      outcome: outcomeOf(action, stats),
+      outcome,
       changed: 0,
       flagged: 0,
     };
@@ -537,7 +569,10 @@ function planJson(
       }
       if (action.kind === "pseudo") {
         edits.set(i, { kind: "pseudo", cls: action.cls });
-        if (rule?.class !== "vocabulary") mapped.push({ cls: action.cls, value });
+        if (rule?.class === "vocabulary") continue;
+        const form: ExtraForm = { cls: action.cls, value };
+        mapped.push(form);
+        if (isFallback(outcome)) fallback.push({ key: i, value, column, form });
       } else pending.push({ key: i, value, keep: action.kind === "keep", column });
     }
   }
@@ -546,7 +581,7 @@ function planJson(
   tokens.forEach((t, i) => {
     if (t.kind === "key" && t.column === null && !cuts.tokens.has(i)) pending.push({ key: i, value: t.value, keep: false, column: null });
   });
-  return { kind: "json", format, input, encoding, text, tokens, edits, pending, mapped, removed, columns, cuts };
+  return { kind: "json", format, input, encoding, text, tokens, edits, pending, mapped, removed, columns, cuts, fallback };
 }
 
 /** A string literal with the spans replaced; every untouched character keeps its original escaping. */
@@ -650,6 +685,47 @@ function textSpeakers(spans: readonly Span[], t: TranscriptPlan | undefined, kep
 
 const keptHostCount = (spans: readonly Span[]): number => spans.filter((s) => s.cls === null && s.source === "pattern").length;
 
+/** Trimmed text of every cell under `keep`, `scan` or the `scan` default, across the corpus. */
+function heldValues(plans: readonly Plan[]): Set<string> {
+  const out = new Set<string>();
+  for (const p of plans) {
+    if (p.kind === "xlsx") {
+      for (const c of p.plan.pending) if (holdsWhole(c.column.outcome)) out.add(c.text.trim());
+    } else if (p.kind === "table" || p.kind === "json") {
+      for (const q of p.pending) if (q.column !== null && holdsWhole(q.column.outcome)) out.add(q.value.trim());
+    }
+  }
+  return out;
+}
+
+/**
+ * Settle every cell the fail-closed fallback pseudonymised whole: one whose value is held whole in a
+ * `keep` or `scan` cell somewhere (heldValues) is left as text instead, scanned like free text, and
+ * counted in its column's `heldWhole`; it no longer recurs. Every plan's own decisions stand.
+ */
+function settleFallback(plans: readonly Plan[]): void {
+  const held = heldValues(plans);
+  const release = <K>(fallback: readonly Fallback<K>[], edits: Map<K, CellEdit>, pending: Pending<K>[], mapped: ExtraForm[]): void => {
+    const freed = new Set<ExtraForm>();
+    for (const f of fallback) {
+      if (!held.has(f.value.trim())) continue;
+      edits.delete(f.key);
+      pending.push({ key: f.key, value: f.value, keep: false, column: f.column });
+      f.column.heldWhole = (f.column.heldWhole ?? 0) + 1;
+      freed.add(f.form);
+    }
+    if (freed.size === 0) return;
+    const rest = mapped.filter((m) => !freed.has(m));
+    mapped.length = 0;
+    mapped.push(...rest);
+  };
+  for (const p of plans) {
+    if (p.kind === "table") release(p.fallback, p.edits, p.pending, p.mapped);
+    else if (p.kind === "json") release(p.fallback, p.edits, p.pending, p.mapped);
+    else if (p.kind === "xlsx") settleXlsx(p.plan, held);
+  }
+}
+
 export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyOptions): ApplyResult {
   const sorted = [...inputs].sort((a, b) => cmp(a.path, b.path));
   for (let i = 1; i < sorted.length; i++) {
@@ -658,6 +734,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     }
   }
   const keep = keepDomains(opts.keep ?? []);
+  const unruled = opts.columns ?? "fallback";
   const rulesByFile = new Map<string, ColumnRule[]>();
   for (const rule of spec.columns) {
     const list = rulesByFile.get(rule.file) ?? [];
@@ -699,7 +776,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     }
     if (format === "xlsx") {
       try {
-        const plan = planXlsx(input.path, input.bytes, rules, contextOf(opts));
+        const plan = planXlsx(input.path, input.bytes, rules, contextOf(opts), unruled);
         if (plan.refusal !== undefined) skipped.push({ path: input.path, reason: `${plan.refusal}; not written` });
         else plans.push({ kind: "xlsx", input, plan });
       } catch (e) {
@@ -731,7 +808,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     }
     if (format === "json" || format === "jsonl") {
       try {
-        plans.push(planJson(input, decoded.encoding, decoded.text, format, rules));
+        plans.push(planJson(input, decoded.encoding, decoded.text, format, rules, unruled));
       } catch (e) {
         if (!(e instanceof JsonError)) throw e;
         skipped.push({ path: input.path, reason: `malformed ${format.toUpperCase()}: ${e.message}; not written` });
@@ -739,12 +816,16 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       continue;
     }
     try {
-      plans.push(planTable(input, decoded.encoding, decoded.text, format, rules, contextOf(opts)));
+      plans.push(planTable(input, decoded.encoding, decoded.text, format, rules, contextOf(opts), unruled));
     } catch (e) {
       if (!(e instanceof CsvError)) throw e;
       skipped.push({ path: input.path, reason: `malformed ${format.toUpperCase()}: ${e.message}; not written` });
     }
   }
+
+  // A value held whole in a `keep` or `scan` cell anywhere is the owner's to keep: the fail-closed
+  // fallback does not pseudonymise it whole elsewhere (an explicit rule still does).
+  settleFallback(plans);
 
   // File and folder names go through the patterns, the spec entities and every cell value a
   // column rule pseudonymises, so a value hidden in a cell is hidden in a name too.

@@ -41,7 +41,9 @@ const APPLY_HELP = [
   "replaced and its timing lines kept. File and folder names are blinded too; the report lists",
   "each renamed file. Host names under a domain in the blind.toml keep list are kept, and its",
   "[patterns] switches win over the spec's patterns. The value after a keyword such as gate code,",
-  "password or acct in free text is written as REDACTED ([context] in blind.toml).",
+  "password or acct in free text is written as REDACTED ([context] in blind.toml). A column with",
+  "no rule gets the fail-closed identifier test, or with [defaults] columns = \"scan\" in blind.toml",
+  "is kept and scanned like free text.",
   "",
   "Options:",
   "  -o, --out <dir>       Output directory (must not overlap an input)",
@@ -131,6 +133,8 @@ const OUTCOME_TEXT: Record<FileReport["columns"][number]["outcome"], string> = {
   kept: "kept",
   dropped: "dropped",
   redacted: "redacted",
+  scanned: "scanned (kept, with what the free-text scanner finds replaced)",
+  "unknown-scanned": "scanned (the [defaults] columns setting)",
   "unknown-pseudonymised": "pseudonymised",
   "unknown-person": "pseudonymised as people (names)",
   "unknown-kept-low-cardinality": "kept (low cardinality)",
@@ -175,7 +179,13 @@ export function renderReport(result: ApplyResult): string {
       }
       if (c.flagged > 0) {
         lines.push(
-          `    warning: ${c.flagged} kept ${unit}${c.flagged === 1 ? "" : "s"} contain a spec entity or a pattern match and were left unchanged as the spec says; review this rule`,
+          `    warning: ${c.flagged} kept ${unit}${c.flagged === 1 ? "" : "s"} contain a spec entity or a pattern match and were left unchanged as the spec says; to replace what the scanner finds and keep the rest, give this column treatment "scan"`,
+        );
+      }
+      if ((c.heldWhole ?? 0) > 0) {
+        const n = c.heldWhole as number;
+        lines.push(
+          `    ${n} ${unit}${n === 1 ? "" : "s"} not pseudonymised whole: the same value is kept in a "keep" or "scan" ${unit} elsewhere; scanned as text instead (a rule here still blinds it)`,
         );
       }
     }
@@ -284,7 +294,7 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
       if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw new Refusal(`${mapPath}: cannot read the map`);
     }
 
-    const result = applySpec(files, spec, { salt, map, keep, ...(policy === null || policy === undefined ? {} : { context: policy.context }) });
+    const result = applySpec(files, spec, { salt, map, keep, ...(policy === null || policy === undefined ? {} : { context: policy.context, columns: policy.defaults.columns }) });
 
     // Never write through a symbolic link already inside the output tree: it could lead outside it.
     // (The output directory itself is the user's to name, link or not.) Checked before anything is written.

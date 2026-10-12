@@ -52,7 +52,7 @@ class = "person"
 
   test("refuses a bad treatment or class, keep with class unknown, an empty header, an unknown key", () => {
     const bad = (body: string) => () => parsePolicy(withColumns(`[[columns]]\n${body}`));
-    expect(bad('header = "x"\ntreatment = "shred"')).toThrow(/columns\[0\]\.treatment must be one of "keep", "drop", "blind", "value", "redact"/);
+    expect(bad('header = "x"\ntreatment = "shred"')).toThrow(/columns\[0\]\.treatment must be one of "keep", "scan", "drop", "blind", "value", "redact"/);
     expect(bad('header = "x"\ntreatment = "blind"\nclass = "pet"')).toThrow(/columns\[0\]\.class must be one of/);
     expect(bad('header = "x"\ntreatment = "keep"\nclass = "unknown"')).toThrow(/class "unknown" cannot use treatment "keep"/);
     expect(bad('header = []\ntreatment = "drop"')).toThrow(/columns\[0\]\.header must be a non-empty glob/);

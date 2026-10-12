@@ -742,8 +742,8 @@ const columnLabel = (r: ColumnRule): string =>
   r.jsonPath !== undefined ? `key ${maskValue(r.jsonPath)}` : `column ${r.header === "" ? "(blank header)" : maskValue(r.header)}`;
 
 /**
- * Declared unknowns (spec rules with class `unknown`, apart from dropped and redacted columns, which
- * are decided) and, for CSV/TSV, columns the spec does not mention, a dropped column still present
+ * Declared unknowns (spec rules with class `unknown`, apart from dropped, redacted and scanned
+ * columns, which are decided) and, for CSV/TSV, columns the spec does not mention, a dropped column still present
  * and a redacted column holding anything but the placeholder.
  */
 function columnFindings(sink: PartSink, bytes: Uint8Array, rules: readonly ColumnRule[]) {
@@ -752,7 +752,8 @@ function columnFindings(sink: PartSink, bytes: Uint8Array, rules: readonly Colum
   const breach = (r: ColumnRule, reason: string) =>
     sink.findings.push({ file: sink.file, part: "", in: "content", offset: null, line: null, class: r.class, source: "spec", severity: "leak", masked: "", reason, encoding: null });
   for (const r of rules) {
-    if (r.class === "unknown" && r.treatment !== "drop" && r.treatment !== "redact") spec(`the spec declares ${columnLabel(r)} as unknown (treatment ${r.treatment})`);
+    // A `scan` column needs no class: it is kept and scanned as free text, and audited as free text.
+    if (r.class === "unknown" && r.treatment !== "drop" && r.treatment !== "redact" && r.treatment !== "scan") spec(`the spec declares ${columnLabel(r)} as unknown (treatment ${r.treatment})`);
   }
   const format = tableFormat(sink.file);
   if (format === null) return;

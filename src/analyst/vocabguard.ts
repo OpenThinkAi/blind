@@ -21,7 +21,7 @@ export type Shields = Map<string, string>;
 
 /**
  * Every form a vocabulary entry may not carry: the values the profile shows in columns the rules
- * pseudonymise (any treatment but `keep`; an `unknown` column counts, apply decides it later) with
+ * pseudonymise (any treatment but `keep` and `scan`; an `unknown` column counts, apply decides it later) with
  * their canonical forms and name parts, the same forms the engine matches as recurrences; the
  * map's values and canonical forms; and every person or org entity form and part in `entities`.
  * `rules` are the column rules the plan will use. The profile holds samples, not whole columns.
@@ -32,7 +32,7 @@ export function shieldedForms(profile: Profile, rules: readonly ColumnRule[], en
   const why = new Map<string, string>();
   for (const { loc, stats } of profileLocations(profile)) {
     const rule = byKey.get(locationKey(loc));
-    if (rule === undefined || rule.treatment === "keep") continue;
+    if (rule === undefined || rule.treatment === "keep" || rule.treatment === "scan") continue;
     const cls: PseudoClass = (PSEUDO_CLASSES as readonly string[]).includes(rule.class) ? (rule.class as PseudoClass) : "value";
     for (const value of stats.samples) {
       values.push({ cls, value });

@@ -55,7 +55,7 @@ host = true
 ```
 
 `[sensitive]`, `[keep]`, `[models.analyst]`, `[profile]` and `[privacy]` must be present.
-`[models.auditor]`, `profile.samples`, `[patterns]`, [`[context]`](#context) and [`[[columns]]`](#columns) rules are optional.
+`[models.auditor]`, `profile.samples`, `[patterns]`, [`[context]`](#context), [`[defaults]`](#defaults) and [`[[columns]]`](#columns) rules are optional.
 
 ## `[sensitive]`
 
@@ -119,6 +119,10 @@ header = ["species", "weight*", "visit date", "microchip"]
 treatment = "keep"
 
 [[columns]]
+header = ["notes", "remarks", "diagnosis"]
+treatment = "scan"
+
+[[columns]]
 header = "gate code"
 treatment = "redact"
 
@@ -137,8 +141,8 @@ class = "person"
 |---|---|---|---|
 | `header` | string or array of strings | yes | Header globs: `*` any run of characters, `?` one. Case and runs of spaces do not matter. A JSON key path matches by its last key name (`$.visits[*].weight` by `weight`); the root and record-ID keys (`.*~`) never match. |
 | `file` | string | no | A glob on the input-relative path (`/`-separated): `*` and `?` within one folder, `**` across folders. Absent: every file. |
-| `treatment` | `"keep"`, `"drop"`, `"blind"`, `"value"` or `"redact"` | yes | What the matching columns get (the spec's treatments, [spec.md](spec.md#columns)). `drop` removes the column or key from the output; `redact` writes `REDACTED` in each non-empty value. The column itself is not in the map, so it cannot be revealed; but every non-empty value still recurs: the same text in another file or column is replaced, and so are a person's name parts, as if the column had been blinded. The class is the rule's `class` when it is sensitive, else `person` for a column of names, `id` for phones, emails and codes, else `value`. |
-| `class` | a spec class (`person`, `org`, `host`, `email`, `id`, `location`, `vocabulary`, `unknown`) | no | Default: `vocabulary` for `keep`, `unknown` otherwise. `keep` with `unknown` is an error. `blind` with a sensitive class gives that class's pseudonyms; with `unknown`, `Value_` ones. `value` with `unknown` leaves the column to the engine's identifier-like test. |
+| `treatment` | `"keep"`, `"scan"`, `"drop"`, `"blind"`, `"value"` or `"redact"` | yes | What the matching columns get (the spec's treatments, [spec.md](spec.md#columns)). `keep` leaves every cell byte-identical, whatever it holds. `scan` keeps the cell as written except for what the free-text scanner finds in it: pattern matches (phone, email, IP), spec entities, values blinded elsewhere, people named only in prose and the value after a [context](#context) keyword; use it for notes, remarks and diagnoses. `drop` removes the column or key from the output; `redact` writes `REDACTED` in each non-empty value. The column itself is not in the map, so it cannot be revealed; but every non-empty value still recurs: the same text in another file or column is replaced, and so are a person's name parts, as if the column had been blinded. The class is the rule's `class` when it is sensitive, else `person` for a column of names, `id` for phones, emails and codes, else `value`. |
+| `class` | a spec class (`person`, `org`, `host`, `email`, `id`, `location`, `vocabulary`, `unknown`) | no | Default: `vocabulary` for `keep`, `unknown` otherwise. `keep` with `unknown` is an error; `scan` needs no class (the audit reads a `scan` column as free text whatever its class). `blind` with a sensitive class gives that class's pseudonyms; with `unknown`, `Value_` ones. `value` with `unknown` leaves the column to the engine's identifier-like test. |
 
 How they apply:
 
@@ -154,6 +158,25 @@ How they apply:
 - **XLSX.** A dropped column keeps its place in the worksheet with its data cells emptied, so
   references stay valid. A number, date or boolean cell in a dropped or redacted column, or a
   pivot or chart cache, stops the workbook from being written; see [spec.md](spec.md#how-blind-apply-uses-the-spec).
+- **Kept values stay kept.** A value that is a whole cell of a `keep` or `scan` column anywhere in
+  the corpus (a pet's name, a clinic's public number) is never pseudonymised whole by the
+  fail-closed fallback in another column: those cells are scanned as text instead, and `blind
+  apply` reports how many per column. A rule that blinds that other column still wins.
+
+## `[defaults]`
+
+```toml
+[defaults]
+columns = "scan"
+```
+
+| Key | Values | Default | Meaning |
+|---|---|---|---|
+| `columns` | `"fallback"` or `"scan"` | `"fallback"` | What a column (or JSON key) gets when no rule decides it: no spec rule, or an `unknown`/`value` one. `fallback` runs the engine's fail-closed identifier-like test ([spec.md](spec.md#how-blind-apply-uses-the-spec)): codes, names and other mostly distinct values are pseudonymised whole, the rest scanned as text. `scan` treats every such column as `scan`: nothing is pseudonymised whole unless a rule says so, and its text is still scanned. Use `scan` when your policy lists what *is* sensitive and everything else should stay. |
+
+`blind apply` reads it at apply time (no re-plan needed); `[[columns]]` rules, keep terms and the
+analyst's or heuristic's classified rules (an email or numeric-ID column, say) still decide their
+columns. The apply report shows such a column as `unknown → scanned (the [defaults] columns setting)`.
 
 ## `[models.analyst]` and `[models.auditor]`
 

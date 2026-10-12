@@ -48,7 +48,8 @@ import type { BlindMap } from "../engine/map.ts";
 import { isPseudonym } from "../engine/pseudonym.ts";
 import { nameWordExcluded, onNameTokens } from "../engine/names.ts";
 import { findPatternSpans, keepDomains, secretSpans, type Span } from "../engine/text.ts";
-import { recurrenceExclusion, vocabularyForms } from "../engine/recur.ts";
+import { nameShaped, recurrenceExclusion, vocabularyForms } from "../engine/recur.ts";
+import { isLabelWord } from "../engine/labels.ts";
 import { keptCells } from "./keptcells.ts";
 import { detectHeaderRow } from "../profile/table.ts";
 import { DICTIONARY } from "../engine/words.ts";
@@ -283,9 +284,11 @@ export function buildNeedles(spec: Spec, map: BlindMap, keep: readonly string[] 
     add(unrecurred(needle(e.value, "fold", e.kind, "find", "map", component), e.value));
     add(unrecurred(needle(e.canonical, "fold", e.kind, "find", "map", component), e.canonical));
     add(needle(e.pseudonym, "fold", e.kind, "mask", "map"));
-    if (e.kind === "person") {
+    // Only a name-shaped value has name parts, as the engine reads it (AGT-1852): a date or an
+    // organisation blinded as a person ("17-Sep-1983", "Hill Valley Rescue") survives only whole.
+    if (e.kind === "person" && nameShaped(e.value)) {
       for (const [w, rule] of personWords(e.value, e.canonical)) {
-        const ordinary = DICTIONARY.has(w.toLowerCase()) || keepFolds.has(fold(w));
+        const ordinary = DICTIONARY.has(w.toLowerCase()) || isLabelWord(w) || keepFolds.has(fold(w));
         add(needle(w, rule, "person", "find", "map", false, ordinary ? "word" : "name"));
       }
     }

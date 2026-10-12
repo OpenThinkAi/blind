@@ -215,7 +215,8 @@ same blinded output tree. No model is called.
   `--reject` decides them, and an `--accept` or `--reject` of a leak wins. A leak that cannot be
   accepted (a saved vocabulary form) is listed with why and left undecided; the rest are still
   accepted. So is a leak that is not sensitive, with the reason printed: a value whose every word
-  is a dictionary word (an entity would replace it everywhere, headers and file names included), a
+  is a dictionary or field-label word (`Card`, `Phone`; an entity would replace it everywhere, headers
+  and file names included), even when an earlier round's map holds it, a
   value that occurs whole in a `keep` column of the output or equals a `[keep].terms` entry, a
   measure (a date, decimal, amount or quantity) and a number of under 5 digits with no letters.
   A value that matches a shape pattern (an email, say) is never left out for its words. Until two classes share a pseudonym, a map value accepted as `id` gets an `Id_`
@@ -283,7 +284,7 @@ Widgets" for "Example Widgets, Inc."). Matching is by whole token, with the enti
 all-capitals code only exactly, a single capitalised word only where the text is capitalised too,
 anything else in any case. The longest form wins at each position, and a spec entity wins a tie. Left
 out, so ordinary prose is not rewritten: values with fewer than 3 letters and digits (`42`, `N/A`),
-values made only of dictionary words (`open`, `Main Office`), spec vocabulary forms, values from
+values made only of dictionary or field-label words (`open`, `Main Office`, `Card`), spec vocabulary forms, values from
 columns classed `vocabulary`, and the host labels and email local parts of a blinded host or email.
 `blind audit` still reports any of these that survive, and spellings the case rules leave, so add
 them to the spec as entities if they must go.
@@ -292,14 +293,34 @@ them to the spec as entities if they must go.
 of their name replaced on its own, with that person's pseudonym: `Quill approved it; Avery agreed`
 after `Avery Quill` was blinded in an Owner column. A part is each word of the name as written and of
 its canonical form, and each piece of a hyphenated word, matched like a single capitalised word (so
-`quill` in lowercase is left alone). Left out, as the audit leaves them out: parts with fewer than 3
-letters, dictionary words (`Will`, `Price`), honorific and role words (`Dr`, `Mrs`, `Front`, `Desk`,
-`Nurse`, `Vet`, ...), keep-list terms and vocabulary forms. A part two
+`quill` in lowercase is left alone). Only a value shaped like a name has parts: no digit, and one
+to four words of letters per segment (`Quill, Avery` and `Avery & Bea Quill` qualify), with no
+organisation word (`Rescue`, `Clinic`, `LLC`, ...). A date, a licence number, an email or an
+organisation in a person column (`17-Sep-1983`, `Hill Valley Rescue`) recurs only whole, so `Sep` in
+`1-Sep-2024` or `Valley` in a kept `Example Valley Clinic` is never touched. Left out, as the audit
+leaves them out: parts with fewer than 3 letters, dictionary words (`Will`, `Price`), field-label
+words (`Card`, `Phone`, `Email`, `Address`, `Agency`, `Fax`, ...), honorific and role words (`Dr`,
+`Mrs`, `Front`, `Desk`, `Nurse`, `Vet`, ...), keep-list terms and vocabulary forms. A column
+person's part that is also a word of a value in a `keep` column written as a proper name (at most
+six capitalised words, such as `Example Valley Clinic`) is left out too; kept prose (`spoke to
+Quill again`) shields nothing. The whole name still recurs in every case, and the apply report
+says `N name parts not recurred (common words)`. A month or weekday part (`Jan` of `Jan
+Vellacourt`) is matched alone except in a date: next to a day number or year (`9 Jan.`, `Jan 2026`)
+or joined to one by `-`, `/` or `.` (`1-Jan-2026`, `Jan-2026`, `01/Jan/26`). A part two
 different people share (`Quill` for `Avery Quill` and `Bea Quill`, or a column person and a
 transcript speaker) gets its own pseudonym, never either person's, and the apply report lists those
 pseudonyms. Spec entities are not split this way: their parts are the ones the spec lists. A cell
 pseudonymised as `value` that reads as a person's name (`Avery Quill`, `Quill, Avery`; the same test
 as a column of people) has name parts too, which carry that cell's `Value_` pseudonym.
+
+**Key/value blocks.** A vertical record (`Client | Dana Example`, then `Phone | ...`, `Card | ...`,
+`Email | ...` below) puts labels in one column and values in the next. When a rule pseudonymises a
+CSV or XLSX column that has a column to its right and whose cells are short labels (at least two
+filled, each at most three words, and at least 60% of them made only of dictionary, field-label,
+honorific or role words), the label cells stay as written and are scanned as text: they are never
+values of the rule's class, so `Card` never becomes a person. A cell in that column that is not a
+label is still pseudonymised. The value beside the column's own header (`Dana Example` beside
+`Client`) is what the rule meant: it gets the rule's pseudonym, and recurs like any column value.
 
 **One person, one span.** Parts of the same person next to each other, in any order, are replaced
 once, as one span, when only a joiner separates them: spaces, a comma, `+`, `.`, `_`, `-`, or a
@@ -757,7 +778,7 @@ up to three layers, mechanical, semantic, then model; the report lists the layer
   `redact`, or class `secret` under `blind`) with a cell that is neither empty nor `REDACTED`.
 - **`candidate`**: a case, accent or width variant; a value inside a longer word (4 characters or
   more); a value under 3 characters; a whole value from the map that blind never recurs (the
-  engine's own rule: only dictionary words, under 3 letters and digits, or a spec vocabulary form);
+  engine's own rule: only dictionary or field-label words, under 3 letters and digits, or a spec vocabulary form);
   a pattern match, spec entity or map value inside a cell of a CSV/TSV column the spec keeps (the
   reason ends "kept by rule"; only for a table read as UTF-8 or Latin-1); a host label or email local part of a blinded value; a column
   the spec declares `unknown` (unless it is dropped, redacted or scanned, which is a decision; a `scan` column is audited as free text, never explained away as vocabulary); a CSV/TSV column with no spec rule; an unanswered spec question; and

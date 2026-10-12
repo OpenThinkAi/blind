@@ -72,8 +72,9 @@ import { NameRewriter, rewriteSpans } from "./names.ts";
 import { canonicalize } from "./canonical.ts";
 import { proseNamesWithTitles } from "./prose.ts";
 import { isHonorificOrRole } from "./honorifics.ts";
+import { isLabelCell, isLabelColumn } from "./labels.ts";
 import { personAliases } from "./identity.ts";
-import { keepForms, nameParts, personPartForms, personValues, proseForms, recurrenceForms, TextScanner, vocabularyForms } from "./recur.ts";
+import { commonNamePartCount, keepForms, keptWords, nameParts, personPartForms, personValues, proseForms, recurrenceForms, TextScanner, vocabularyForms } from "./recur.ts";
 import { EntityMatcher, type ExtraForm, keepDomains, type Span } from "./text.ts";
 import { entrySpans, keptSpeakers, planTranscript, shapeParagraphs, speakerForms, speakersOf, type TranscriptPlan, transcriptSpans } from "./transcript.ts";
 import { unrewrittenSpans } from "./unrewritten.ts";
@@ -223,6 +224,12 @@ export interface ApplyResult {
    * blinded in a column): each got its own pseudonym, never either person's. Sorted.
    */
   sharedNameParts: string[];
+  /**
+   * How many name parts of blinded people are not matched alone because they are common words
+   * (a dictionary, field-label, honorific or role word, a keep term or a word of a kept value;
+   * AGT-1852). Their whole names still recur.
+   */
+  commonNameParts: number;
 }
 
 export interface ApplyOptions {
@@ -415,6 +422,8 @@ function planTable(
   const columns: ColumnReport[] = [];
   const dropped = new Set<number>();
   const keptCols = new Set<number>();
+  /** Header cells pseudonymised as the value of a key/value block's label header. */
+  const headerPaired = new Set<number>();
   const fallback: Fallback<string>[] = [];
   const data = rows.slice(headerRow + 1);
   for (let col = 0; col < width; col++) {
@@ -438,6 +447,19 @@ function planTable(
     if (action.kind === "drop" || action.kind === "redact") {
       removed.push(...removedForms(rule, data.map((r) => r.cells[col]?.value ?? "")));
     }
+    // A key/value block (AGT-1852): a rule pseudonymises a column of field labels ("Phone", "Card",
+    // "Email") with values to its right. The labels are not values of the rule's class: they stay
+    // as text. The value paired with the label column's own header ("Client" | "Dana Example") is.
+    const labels = action.kind === "pseudo" && col < width - 1 && isLabelColumn(data.map((r) => r.cells[col]?.value ?? ""));
+    if (labels && action.kind === "pseudo" && headerRow >= 0) {
+      const paired = headerCells[col + 1];
+      if (isFilled(paired) && !isLabelCell(paired.value) && rule?.class !== "vocabulary") {
+        edits.set(`${headerRow}:${col + 1}`, { kind: "pseudo", cls: action.cls });
+        mapped.push({ cls: action.cls, value: paired.value });
+        headerPaired.add(col + 1);
+        column.changed++;
+      }
+    }
     if (action.kind === "drop") {
       dropped.add(col);
       if (col === lastCol) for (let c = width; c < maxCells; c++) dropped.add(c);
@@ -449,6 +471,7 @@ function planTable(
         if (!isFilled(cell)) continue;
         const key = `${headerRow + 1 + i}:${at}`;
         if (action.kind === "redact") edits.set(key, { kind: "fixed", value: REDACTED_VALUE });
+        else if (labels && isLabelCell(cell.value)) pending.push({ key, value: cell.value, keep: false, column });
         else if (action.kind === "pseudo") {
           edits.set(key, { kind: "pseudo", cls: action.cls });
           if (rule?.class === "vocabulary") continue;
@@ -463,6 +486,7 @@ function planTable(
   // preamble row (a title, a note) is not part of any column and is never cut.
   for (let r = 0; r <= headerRow; r++) {
     (rows[r] as Row).cells.forEach((cell, col) => {
+      if (r === headerRow && headerPaired.has(col)) return;
       if (r < headerRow || !dropped.has(col)) pending.push({ key: `${r}:${col}`, value: cell.value, keep: false, column: null });
     });
   }
@@ -877,8 +901,13 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   const formKey = (f: ExtraForm): string => `${f.cls}\0${f.value}`;
   const mappedKeys = new Set(columnMapped.map(formKey));
   const removedKeys = new Set(removedValues.map(formKey).filter((k) => !mappedKeys.has(k)));
+  // The words of values in keep columns: a column person's name part that is one of them is not
+  // matched alone, so it never rewrites a kept cell (AGT-1852). The whole value still recurs.
+  const read = proseInputs(plans);
+  const shield = keptWords(read.kept, personValues([...columnMapped, ...removedValues], opts.map));
   // A name part is the person's, or its own when another person shares it, so it is traced by its form.
-  const partKeys = (values: ExtraForm[]): Set<string> => new Set(personPartForms(values, undefined, vocabularyForms(spec.entities), { keep: opts.keep }).map((f) => `${f.cls}\0${f.form}`));
+  const partKeys = (values: ExtraForm[]): Set<string> =>
+    new Set(personPartForms(values, undefined, vocabularyForms(spec.entities), { keep: opts.keep, keptWords: shield }).map((f) => `${f.cls}\0${f.form}`));
   const columnParts = partKeys(columnMapped);
   const removedParts = new Set([...partKeys(removedValues.filter((f) => removedKeys.has(formKey(f))))].filter((k) => !columnParts.has(k)));
   const asRemoved = (f: ExtraForm): ExtraForm =>
@@ -890,7 +919,6 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   const keepSet = keepForms(opts.keep);
   const people = personValues(mapped, opts.map);
   // People named only in prose (AGT-1830), in the text the scanner reads, less anyone already known.
-  const read = proseInputs(plans);
   const known = new Set([...people, ...voiceNames].map((v) => canonicalize("person", v)));
   const found = proseNamesWithTitles(read.free, { keep: keepSet, vocabulary: vocabularySet, kept: read.kept });
   // Who is who (AGT-1842): "J. Sample" and "Dr. Sample" resolve to one known person when nothing else
@@ -914,8 +942,11 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   const voices = speakerForms(voiceNames, spoken, vocabularySet, people, keepSet, aliases);
   // They count as other people for the known people's name parts, so a surname both share is ambiguous.
   const others = [...voiceNames, ...prosePeople];
-  const parts = personPartForms(mapped, opts.map, vocabularySet, { keep: opts.keep, speakers: others, aliases }).map(asRemoved);
-  const forms = recurrenceForms(mapped, spec.entities, opts.map, { keep: opts.keep, speakers: others, aliases }).map(asRemoved);
+  const recurOpts = { keep: opts.keep, speakers: others, aliases, keptWords: shield };
+  const parts = personPartForms(mapped, opts.map, vocabularySet, recurOpts).map(asRemoved);
+  const forms = recurrenceForms(mapped, spec.entities, opts.map, recurOpts).map(asRemoved);
+  // Name parts that are common words (dictionary, label, role, keep or kept-value words): reported, never matched alone.
+  const commonNameParts = commonNamePartCount(mapped, opts.map, vocabularySet, recurOpts);
   // A form already matched for a known value or a speaker keeps that value's pseudonym.
   const claimed = new Set([...forms, ...voices, ...parts].map((f) => `${f.cls}\0${f.form ?? f.value}`));
   // A titled lone name ("Dr. Sample") that resolves to one person is matched with its title, which stays
@@ -1249,9 +1280,9 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     byOutput.set(f.outputPath, f.path);
   }
   // Name parts two people share were replaced with a pseudonym of their own: report the ones used.
-  const sharedNameParts = nameParts([...people, ...voiceNames, ...prosePeople], [], vocabularySet, keepSet, aliases)
+  const sharedNameParts = nameParts([...people, ...voiceNames, ...prosePeople], [], vocabularySet, new Set([...keepSet, ...shield]), aliases)
     .filter((p) => p.shared && p.exclusion === null && requests.has(`person\0${p.value}`))
     .map((p) => pz.pseudonym("person", p.value))
     .sort(cmp);
-  return { outputs, files, skipped, map: pz.toMap(), sharedNameParts: [...new Set(sharedNameParts)] };
+  return { outputs, files, skipped, map: pz.toMap(), sharedNameParts: [...new Set(sharedNameParts)], commonNameParts };
 }

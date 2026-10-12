@@ -54,6 +54,7 @@ import { type HexNamer, rewriteOfficeId } from "./officeid.ts";
 import type { TextScanner } from "./recur.ts";
 import type { ExtraForm, Span } from "./text.ts";
 import { customDataPart, customPartRefusal } from "./customxml.ts";
+import { isLabelCell, isLabelColumn } from "./labels.ts";
 import { refuseUnrewritten } from "./unrewritten.ts";
 
 /** The spec does not fit the workbook; the caller turns this into its ApplyError (exit 2). */
@@ -188,6 +189,8 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
       byCol.set(c.col, list);
     }
     const plans = new Map<string, CellPlan>();
+    /** Header cells that are the value of a key/value block's label header, with the class they get. */
+    const headerPairs = new Map<number, PseudoClass>();
     for (let col = 0; col < width; col++) {
       const header = headers[col] as string;
       const rule = sheetRules.find((r) => (r.header as string).trim() === header.trim());
@@ -206,6 +209,14 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
       };
       // Recurring values: what this column pseudonymises, unless the column is classed vocabulary.
       const recur = action.kind === "pseudo" && rule?.class !== "vocabulary";
+      // A key/value block (AGT-1852): a rule pseudonymises a column of field labels ("Phone", "Card")
+      // with values to its right. The labels stay as text; the value paired with the label column's
+      // own header ("Client" | "Dana Example") is pseudonymised instead.
+      const labels = action.kind === "pseudo" && col < width - 1 && isLabelColumn(texts);
+      if (labels && action.kind === "pseudo" && headerRow >= 0) {
+        const paired = headerCells[col + 1] ?? "";
+        if (isFilled(paired) && !isLabelCell(paired) && rule?.class !== "vocabulary") headerPairs.set(col + 1, action.cls);
+      }
       const removes = action.kind === "drop" || action.kind === "redact";
       // Their text recurs elsewhere although the cells go; a number cell refuses the workbook below.
       if (removes) {
@@ -223,8 +234,9 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
         // column. Under the fail-closed fallback (`stats` set) it is left as written, like free
         // text: renumbering an amount gives a different, plausible number, which is silent
         // corruption (AGT-1822). A whole-value spec match is still renumbered (prepareXlsx).
-        const cellAction: ColumnAction = c.type === "n" && stats !== undefined && action.kind === "pseudo" ? { kind: "free" } : action;
-        if (cellAction !== action) column.numbersLeft = (column.numbersLeft ?? 0) + 1;
+        const label = labels && c.type !== "n" && isLabelCell(text);
+        const cellAction: ColumnAction = label || (c.type === "n" && stats !== undefined && action.kind === "pseudo") ? { kind: "free" } : action;
+        if (cellAction !== action && !label) column.numbersLeft = (column.numbersLeft ?? 0) + 1;
         const plan: CellPlan = { action: cellAction, renumber: cellAction.kind === "pseudo" && c.type === "n", date: isDateCell(wb, c) };
         plans.set(c.ref, plan);
         if (c.type === "s") (uses[Number(c.v)] as CellPlan[]).push(plan);
@@ -248,7 +260,13 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
     // Rows above the header and the header row itself are free text.
     for (const c of sheet.cells) {
       if (c.row > headerRow) continue;
-      const plan: CellPlan = { action: { kind: "header" }, renumber: false };
+      const pairedCls = c.row === headerRow && (c.type === "s" || c.type === "str" || c.type === "inlineStr") ? headerPairs.get(c.col) : undefined;
+      if (pairedCls !== undefined) {
+        const form: ExtraForm = { cls: pairedCls, value: cellText(c, wb.sharedStrings) };
+        columnValues.push(form);
+        mapped.push(form);
+      }
+      const plan: CellPlan = { action: pairedCls !== undefined ? { kind: "pseudo", cls: pairedCls } : { kind: "header" }, renumber: false };
       plans.set(c.ref, plan);
       if (c.type === "s") (uses[Number(c.v)] as CellPlan[]).push(plan);
     }

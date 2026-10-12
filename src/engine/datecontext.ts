@@ -21,15 +21,23 @@ export function isDateWord(word: string): boolean {
 const AFTER_RE = /^[.,]?[ \t ]+(?:(?:[12]\d{3})|(?:0?[1-9]|[12]\d|3[01])(?:st|nd|rd|th)?)(?![\p{L}\p{N}])(?![.,]\d)/u;
 const BEFORE_RE = /(?<![\p{L}\p{N}.,])(?:(?:[12]\d{3})|(?:0?[1-9]|[12]\d|3[01])(?:st|nd|rd|th)?)[.,]?[ \t ]+$/u;
 
+// A day number or a year (two or four digits) joined straight to the word by "-", "/" or "." (AGT-1852):
+// "1-Sep-2024", "Sep-2024", "01/Sep/24", "Sep.01". No space on either side of the joiner.
+const JOINED_AFTER_RE = /^[-/.](?:\d{4}|\d{1,2})(?![\p{L}\p{N}])/u;
+const JOINED_BEFORE_RE = /(?<![\p{L}\p{N}])(?:\d{4}|\d{1,2})[-/.]$/u;
+
 /**
  * Whether the word at text[s, e) sits in a date context: a day number (1-31) or a four-digit year
  * right after it ("Jan. 9", "Jan 2026", "May 3rd", "Jan, 2026") or right before it ("9 Jan.",
- * "2026 Jan"), with one optional dot or comma and spaces between. Anywhere else it is a name.
+ * "2026 Jan"), with one optional dot or comma and spaces between, or joined to it by "-", "/" or "."
+ * with no space ("1-Sep-2024", "Sep-2024", "01/Sep/24"). Anywhere else it is a name.
  *
  * Deliberate trade-off (AGT-1813 AC 1): "next to a day number" is all that is checked, so "Jan 14 tasks"
  * counts as a date although "Jan" could be a name there. A full name ("Jan Vellacourt") is still
  * blinded by its own multi-word form; only the lone part is exempt.
  */
 export function inDateContext(text: string, s: number, e: number): boolean {
-  return AFTER_RE.test(text.slice(e, e + 16)) || BEFORE_RE.test(text.slice(Math.max(0, s - 16), s));
+  const after = text.slice(e, e + 16);
+  const before = text.slice(Math.max(0, s - 16), s);
+  return AFTER_RE.test(after) || BEFORE_RE.test(before) || JOINED_AFTER_RE.test(after) || JOINED_BEFORE_RE.test(before);
 }

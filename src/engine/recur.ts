@@ -15,17 +15,21 @@
 // - not a value with fewer than MIN_RECUR_LENGTH letters and digits: the audit
 //   only ever calls a survivor that short a candidate, and "42" or "N/A"
 //   would otherwise be rewritten in every sentence;
-// - not a value whose every word is in the built-in dictionary (src/engine/words.ts),
-//   such as "open" or "Main Office": ordinary words are left to the spec, which
-//   can still list them as entities. The audit still reports them;
+// - not a value whose every word is in the built-in dictionary (src/engine/words.ts)
+//   or is a field-label word (labels.ts), such as "open", "Main Office" or "Card":
+//   ordinary words are left to the spec, which can still list them as entities.
+//   The audit still reports them;
 // - not a spec vocabulary form, and (the caller's part) not a value from a
 //   column classed `vocabulary`.
 // The name parts of each person among them (and among the map's person
 // entries) recur on their own too (AGT-1803), so a lone "Quill" in a note gets
 // the pseudonym of "Avery Quill" from the Owner column, as the audit requires:
 // each word of 3+ letters, capitalised so it matches only where the text is
-// capitalised, not a dictionary word, keep term or vocabulary form
-// (partExclusion). A part two different people share is never given either's
+// capitalised, not a dictionary, field-label, honorific or role word, keep term or
+// vocabulary form (partExclusion), nor a word of a kept proper-name value
+// (keptWords). Only a name-shaped value (nameShaped: no digit, at most four words
+// per segment, no organisation word) has parts at all (AGT-1852): a date or an
+// organisation in a person column recurs whole. A part two different people share is never given either's
 // pseudonym: it is pseudonymised as itself (nameParts), and apply reports it.
 // Matching uses the entity case rules (text.ts): a short acronym only exactly,
 // a single capitalised word only where the text is capitalised too, anything
@@ -34,6 +38,7 @@
 
 import type { Entities, PatternName, Patterns } from "../schema.ts";
 import { DICTIONARY } from "./words.ts";
+import { isCommonWord, isLabelWord } from "./labels.ts";
 import { canonicalize, PSEUDO_CLASSES, type PseudoClass } from "./canonical.ts";
 import { isHonorificOrRole } from "./honorifics.ts";
 import type { SecretCarry } from "./secret.ts";
@@ -58,6 +63,8 @@ export function recurrenceExclusion(form: string, vocabulary: ReadonlySet<string
   const w = words(form);
   if ([...w.join("")].length < MIN_RECUR_LENGTH) return `fewer than ${MIN_RECUR_LENGTH} letters and digits`;
   if (w.every((x) => DICTIONARY.has(x))) return "only dictionary words";
+  // A field label ("Card", "Phone", "Email address") is no more a value than a dictionary word (AGT-1852).
+  if (w.every((x) => isCommonWord(x))) return "only dictionary or field-label words";
   if (vocabulary.has(fold(form))) return "a spec vocabulary form";
   return null;
 }
@@ -68,6 +75,7 @@ export function partExclusion(part: string, vocabulary: ReadonlySet<string>, kee
   // The whole word, as the audit checks it: "Rose-May" is a name even though "rose" and "may" are words.
   if (DICTIONARY.has(fold(part))) return "a dictionary word";
   if (isHonorificOrRole(part)) return "an honorific or role word";
+  if (isLabelWord(part)) return "a field-label word";
   if (vocabulary.has(fold(part))) return "a spec vocabulary form";
   if (keep.has(fold(part))) return "a keep term";
   return null;
@@ -96,6 +104,46 @@ function personWords(value: string, canonical: string): string[] {
   out.delete(fold(value));
   out.delete(fold(canonical));
   return [...out.values()];
+}
+
+/** Words that make a value an organisation, not a person: "Hill Valley Rescue", "Example Pet Clinic LLC". */
+const ORG_WORDS: ReadonlySet<string> = new Set(
+  (
+    "inc incorporated llc llp lp ltd plc gmbh corp corporation company co group holdings partners associates " +
+    "clinic clinics hospital hospitals veterinary services supplies foods labs laboratory laboratories insurance " +
+    "university college school academy foundation society shelter rescue kennels pharmacy solutions technologies " +
+    "consulting enterprises industries international trust bank agency"
+  ).split(" "),
+);
+
+/** A word of a name as a value writes it: letters and marks, joined by an apostrophe, a hyphen or a dot ("O'Neil", "J.", "St.-Pierre"). */
+const NAME_TOKEN_RE = /^[\p{L}\p{M}]+(?:['\u2019.-][\p{L}\p{M}]*)*$/u;
+
+/** A name (one segment of a value) has at most this many words. */
+export const MAX_NAME_WORDS = 4;
+
+/**
+ * Whether a value is shaped like a person's name (AGT-1852), so its words may stand alone as name
+ * parts: no digit anywhere, and every segment (split at ",", ";", "&", "/", "+", " and ", " or ",
+ * so "Quill, Avery" and "Avery & Bea Quill" qualify) one to four words of letters, with no
+ * organisation word ("Rescue", "Clinic", "LLC"). Case is not checked: "avery quill" is a name
+ * written in lowercase, and failing closed keeps its parts. A date ("17-Sep-1983"), a licence
+ * number, an email, a host or an organisation is not: it recurs only whole.
+ */
+export function nameShaped(value: string): boolean {
+  const v = value.normalize("NFKC").trim();
+  if (v === "" || /\p{N}/u.test(v)) return false;
+  let words = 0;
+  for (const seg of v.split(/\s*[,;&/+]\s*|\s+(?:and|or)\s+/iu)) {
+    const tokens = seg.replace(/[()"\u201c\u201d]/gu, " ").trim().split(/\s+/u).filter((t) => t !== "");
+    if (tokens.length > MAX_NAME_WORDS) return false;
+    for (const t of tokens) {
+      if (!NAME_TOKEN_RE.test(t)) return false;
+      if (ORG_WORDS.has(t.toLowerCase().replace(/\.$/u, ""))) return false;
+    }
+    words += tokens.length;
+  }
+  return words > 0;
 }
 
 export interface NamePart {
@@ -130,6 +178,8 @@ export function nameParts(
   const canonicals = new Map<string, string>();
   const parts = new Map<string, { form: string; owners: Set<string>; own: boolean }>();
   const visit = (value: string, isOwn: boolean) => {
+    // A date, a number, an email or an organisation in a person column recurs whole, never as parts.
+    if (!nameShaped(value)) return;
     const written = canonicalize("person", value);
     const c = identityOf(aliases, written);
     canonicals.set(written, c);
@@ -208,6 +258,52 @@ export interface RecurrenceOptions {
   speakers?: readonly string[];
   /** Person forms that stand for another person (identity.ts). */
   aliases?: PersonAliases;
+  /**
+   * Words of values in `keep` columns, folded (keptWords): a column person's name part that is one
+   * of them is not matched alone (AGT-1852), so "Valley" of an owner never rewrites a kept
+   * "Example Valley Clinic". The whole value still recurs.
+   */
+  keptWords?: ReadonlySet<string>;
+}
+
+/** A kept value with more words than this is prose (a kept notes cell), not a name or a label: its words do not shield name parts. */
+const MAX_KEPT_VALUE_WORDS = 6;
+
+/** Lowercase words a kept proper name may hold ("Bank of the West", "Clinique du Lac"). */
+const NAME_JOINERS: ReadonlySet<string> = new Set(["of", "and", "the", "de", "del", "du", "la", "le", "van", "von", "der", "y", "e", "&"]);
+
+/**
+ * The words of the values held in `keep` columns, folded, that shield a column person's name part
+ * (RecurrenceOptions.keptWords). Only a kept value written as a proper name or a label shields
+ * ("Example Valley Clinic", "Dr. Marisol Okonkwo", "Canine"): at most six words, each capitalised
+ * or a joiner ("of", "the"). Kept prose ("Avery says hi") shields nothing, so a person's name
+ * written in a kept notes cell is still replaced there; nor does a kept value that is itself one of
+ * `people` (a value the column pass blinded elsewhere).
+ */
+export function keptWords(kept: Iterable<string>, people: Iterable<string> = []): Set<string> {
+  const known = new Set([...people].map((v) => canonicalize("person", v)));
+  const out = new Set<string>();
+  for (const v of kept) {
+    const ws = v.match(NAME_WORD_RE) ?? [];
+    if (ws.length === 0 || ws.length > MAX_KEPT_VALUE_WORDS || known.has(canonicalize("person", v))) continue;
+    if (!ws.every((w) => /^\p{Lu}/u.test(w) || NAME_JOINERS.has(w))) continue;
+    for (const w of ws) for (const piece of [w, ...(w.includes("-") ? w.split("-") : [])]) out.add(fold(piece));
+  }
+  return out;
+}
+
+/** The keep set name parts are checked against: the keep list and the words of kept values. */
+const partKeep = (opts: RecurrenceOptions): Set<string> => new Set([...keepForms(opts.keep), ...(opts.keptWords ?? [])]);
+
+/**
+ * How many name parts of the people in `values` and `map` are not matched alone because they are
+ * common words (AGT-1852): dictionary, field-label, honorific or role words, keep terms, words of
+ * kept values and vocabulary forms. Parts under three letters are not counted.
+ */
+export function commonNamePartCount(values: Iterable<ExtraForm>, map: BlindMap | undefined, vocabulary: ReadonlySet<string>, opts: RecurrenceOptions = {}): number {
+  return nameParts(personValues(values, map), opts.speakers ?? [], vocabulary, partKeep(opts), opts.aliases).filter(
+    (p) => p.exclusion !== null && !p.exclusion.startsWith("fewer than"),
+  ).length;
 }
 
 /** Every spec vocabulary form, folded. */
@@ -243,7 +339,7 @@ export function personPartForms(values: Iterable<ExtraForm>, map: BlindMap | und
   const clsOf = (value: string): PseudoClass => (persons.has(identityOf(opts.aliases, canonicalize("person", value))) ? "person" : "value");
   const people = personValues(list, map);
   const surnames = surnameSet(people);
-  return nameParts(people, opts.speakers ?? [], vocabulary, keepForms(opts.keep), opts.aliases)
+  return nameParts(people, opts.speakers ?? [], vocabulary, partKeep(opts), opts.aliases)
     .filter((p) => p.exclusion === null)
     .map((p) => ({
       cls: p.shared ? "person" : clsOf(p.value),

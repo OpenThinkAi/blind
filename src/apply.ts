@@ -225,6 +225,11 @@ export function renderReport(result: ApplyResult): string {
       lines.push(`  copied without reading (not XML; the audit still reads them): ${f.unread.join(", ")}`);
     }
   }
+  if (result.commonNameParts > 0) {
+    lines.push(
+      `${result.commonNameParts} name part${result.commonNameParts === 1 ? "" : "s"} not recurred (common words: dictionary, field-label, role or kept words); the whole names still recur`,
+    );
+  }
   const shared = result.sharedNameParts;
   if (shared.length > 0) {
     lines.push(

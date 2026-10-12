@@ -15,6 +15,7 @@ domain is under `.example`, and every IP address is from the RFC 5737 documentat
 ```sh
 bun src/bench/synth.ts /tmp/kit                 # seed 1739, 60 rows
 bun src/bench/synth.ts /tmp/kit --seed 42 --rows 200
+bun src/bench/synth.ts /tmp/kit --kit 2           # kit v2: adds XLSX, DOCX, VTT, JSON and a container log
 ```
 
 This writes:
@@ -32,18 +33,26 @@ This writes:
 
 The oracle and the spec sit next to `input/`, not inside it, so blinding `input/` never reads them.
 
-From code, `generateKit(seed, { rows })` returns the files, the oracle and the spec in memory, and
+Kit v2 adds `workbooks/tenant-access.xlsx`, `meetings/renewal-call.docx`, `meetings/renewal-call.vtt`,
+`exports/scopes.json` and `logs/agent-container.log` to the same tree (see [What kit v2
+adds](#what-kit-v2-adds)).
+
+From code, `generateKit(seed, { rows, version })` returns the files, the oracle and the spec in memory, and
 `writeKit(dir, kit)` writes them as above. The spec (`kitSpec()`) is the one a reviewer would save
 for kit v1: the organisation, person, host and ID columns blinded, `Status`, `Region`, `Amount` and
 `Opened` kept, `client_scope_code` left a declared unknown, the cast as entities (nicknames and
-misspellings as aliases, given names and surnames as parts) and the two decoys as vocabulary.
+misspellings as aliases, given names and surnames as parts) and the two decoys as vocabulary. Kit
+v2's spec adds a rule for every worksheet column and JSON key path, and the cloud account ID as an
+`id` entity.
 
 ### Determinism
 
 A kit depends only on its seed and options. The generator uses its own seeded PRNG (mulberry32),
 no clock and no environment, so the same seed gives byte-identical files and oracle on every
 machine and every run. The seed is recorded in the oracle. The PRNG lives in `src/bench/`, outside
-the engine.
+the engine. Kit v2 holds kit v1's four files byte for byte: its own files draw from a second PRNG
+stream, so adding them never moves a v1 value. The XLSX and DOCX files are built from XML in code
+(`src/bench/office.ts`, a stored zip with a fixed timestamp); no real file is copied.
 
 ## What kit v1 contains
 
@@ -80,16 +89,51 @@ apart.
 scope codes from `accounts.csv` in the review notes. These are column values that are neither spec
 entities nor pattern matches.
 
+## What kit v2 adds
+
+Everything in kit v1, plus:
+
+**`workbooks/tenant-access.xlsx`**, three worksheets:
+
+- `Contents`: the sheet list, each name with a description that names a person or an organisation,
+  and a hyperlink to each sheet. Its two columns are declared unknowns in the spec.
+- `Access`: identity columns `User` (people), `Email`, `Employee No` (4-digit IDs as number cells),
+  `Booked Under` (organisation names under header wording no rule anticipates) and `Path` (the
+  vendor's service-account home directories, named after the customer, such as
+  `/var/lib/tenanthub/home/svc-quillfeather-sync`), then `Role` and `Last Login`, kept.
+- a sheet **named after an organisation** (`Quarter`, `Amount`, kept), with a defined name
+  `<name>_Total` that refers to it.
+
+It also has a shared string **no cell uses** that holds an IP address, a **pivot cache** over the
+people and organisations of `Access`, the sheet list in `docProps/app.xml`, and a creator and a
+nickname as last editor in `docProps/core.xml`.
+
+**`meetings/renewal-call.docx`** and **`meetings/renewal-call.vtt`**: one Teams meeting, saved
+both ways. The Word copy has a speaker-and-time paragraph per turn (`Marisol Penhallow   0:17`,
+every other one split across two runs, as Word does after an edit) followed by the turn's text; the
+WebVTT copy has a voice tag per turn. It has no cue identifiers: Teams' cue GUIDs are replaced with
+GUIDs drawn from the salt, whose groups can be all digits and equal a real 4-digit ID, which would
+fail the bench at random (a known engine gap). The turns mention people in all
+their forms and organisations by name, short name and acronym.
+
+**`exports/scopes.json`**: a scope list with snake_case keys, `scope_id` hex IDs (8 characters),
+`account_no` 4-digit IDs written as strings, organisation names, emails, tenant hosts, an access
+level and a date.
+
+**`logs/agent-container.log`**: a container log that pulls images from a registry host whose first
+label is the customer's cloud account ID (`<12 digits>.dkr.registry.cloudvendor.example`), cites
+the account ID on its own, and lists tenant hosts and peer IP addresses.
+
 ## The oracle
 
 `oracle.json`:
 
 | Field | Meaning |
 |---|---|
-| `version` | Kit version, `1`. |
+| `version` | Kit version, `1` or `2`. |
 | `seed`, `rows`, `recurInProse` | The inputs that produced the kit. |
-| `columns` | Each CSV column's `file`, `header`, true `class` (`person`, `org`, `host`, `email`, `id`, or `vocabulary` for values that identify no one) and a note. This is ground truth, not a spec: `client_scope_code` holds IDs even though a reviewer may leave it undecided. |
-| `values` | Every sensitive value as written, sorted by class then value: `value`, `class`, the `canonical` entity or value it stands for, its `form` (`canonical`, `alias`, `part`, or `value` for cells and pattern matches) and the `files` it occurs in. |
+| `columns` | Each column's `file`, `header` (and `sheet` for a worksheet) or `jsonPath` for a JSON key path, true `class` (`person`, `org`, `host`, `email`, `id`, or `vocabulary` for values that identify no one) and a note. This is ground truth, not a spec: `client_scope_code` holds IDs even though a reviewer may leave it undecided. |
+| `values` | Every sensitive value as written, sorted by class then value: `value`, `class`, the `canonical` entity or value it stands for, its `form` (`canonical`, `alias`, `part`, or `value` for cells and pattern matches) and the `files` it occurs in. Kit v2 also gives each value its `scope`: every place it is planted, as `{file, where}` (`column Owner`, `sheet Access, column Path`, `key path $.scopes[*].scope_id`, `orphaned shared string`, `pivot cache`, `sheet name`, `speaker`, `registry host label`, …). |
 | `decoys` | Each decoy's `text`, the name part it `resembles`, why it is not a name, and its `files`. |
 
 A blinded output passes the oracle when no `values[].value` occurs in it as a whole word, in any
@@ -119,13 +163,13 @@ are set aside: the rule in [The oracle](#the-oracle).
 | Score | Counts |
 |---|---|
 | **leaks** | Oracle values left anywhere in the output: every file's bytes in each decoding the audit reads (Latin-1, UTF-8, UTF-16, with escapes undone), XML text joined across runs, zip members and their names, file and folder names. One item per value per file, part and place (content or name). |
-| **damage** | Changes the oracle does not explain. A CSV/TSV cell that changed, unless it is a data cell of a column the spec blinds (`blind` or `value`, which includes declared unknowns) or the original cell holds an oracle value. Header and preamble rows count like kept cells. A file or folder name that changed and holds no oracle value. A decoy with fewer occurrences in the output than in the input. A table whose row or cell count changed. |
+| **damage** | Changes the oracle does not explain. A CSV/TSV or worksheet cell that changed, unless it is a data cell of a column the spec blinds (`blind` or `value`, which includes declared unknowns) or the original cell holds an oracle value. Header and preamble rows count like kept cells; each worksheet uses its own header row and rules, and is named by position, never by name. A JSON key or value that changed, unless it is a value (or a record-ID key) of a key path the spec blinds, or holds an oracle value. A DOCX paragraph (body, headers, footers, comments) that changed and holds no oracle value. A file, folder, worksheet or defined name that changed and holds no oracle value. A decoy with fewer occurrences in the output than in the input (text, cells, paragraphs). A table, workbook, JSON document or DOCX whose row, cell, sheet, token or paragraph count changed. Plain text, Markdown, logs and transcripts are scored for decoys only. |
 | **honesty** | Files (and folders) the audit called `clean` that have a leak. |
 | **speed** | Wall time of apply and of audit, in `timing`. |
 
 Anything the bench cannot score is listed as **unscored**, never assumed fine: files apply did not
-write, damage in formats it does not compare yet (JSON, JSONL, XLSX and DOCX, so sheet renames are not
-scored yet either), archive members it cannot decode, symbolic links. Kit v1 has none of these.
+write, inputs or outputs it cannot parse in their format, workbook parts it cannot read, archive
+members it cannot decode, symbolic links. Kits v1 and v2 have none of these.
 
 ### Output
 

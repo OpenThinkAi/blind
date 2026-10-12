@@ -1,22 +1,30 @@
-// The synthetic corpus generator (kit v1): a small CSV and text corpus with the
-// shapes that break document blinding, plus an oracle listing every sensitive
+// The synthetic corpus generator. Kit v1 is a small CSV and text corpus with the
+// shapes that break document blinding; kit v2 adds a workbook, a Teams
+// transcript saved as Word and as WebVTT, a JSON scope list and a container log
+// (see src/bench/kit2.ts). Each comes with an oracle listing every sensitive
 // value in it with its class. Everything is invented: people, organisations,
 // hosts under `.example`, RFC 5737 IP addresses. Nothing comes from a real
-// corpus.
+// corpus, and the Office files are built from XML in code (src/bench/office.ts).
 //
 // Deterministic: the only input is the seed. The PRNG is a local mulberry32,
 // so the same seed gives byte-identical files and oracle on every machine. No
 // clock, no unseeded randomness, no environment.
 //
-// `bun src/bench/synth.ts <dir> [--seed N] [--rows N]` writes a kit to <dir>,
+// `bun src/bench/synth.ts <dir> [--seed N] [--rows N] [--kit 2]` writes a kit to <dir>,
 // which `blind bench <dir>` scores; see docs/bench.md.
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Spec } from "../schema.ts";
+import { type CastOrg, type CastPerson, cmp, mention, OracleBuilder, type OracleClass, type OracleValue, orgMention, ORGS, PEOPLE, Rng, tenantHost, emailOf } from "./cast.ts";
+import { generateV2, kitSpecV2 } from "./kit2.ts";
 
-export const KIT_VERSION = 1;
+export { type CastOrg, type CastPerson, emailOf, mulberry32, OracleBuilder, type OracleClass, type OracleScope, type OracleValue, ORGS, PEOPLE, Rng, tenantHost, VENDOR_DOMAIN } from "./cast.ts";
+
+export type KitVersion = 1 | 2;
+/** The default kit version. Kit v1 stays byte-identical for its seed; v2 is asked for with `version: 2`. */
+export const KIT_VERSION: KitVersion = 1;
 export const DEFAULT_SEED = 1739;
 export const DEFAULT_ROWS = 60;
 
@@ -25,20 +33,6 @@ export const ACCOUNTS_CSV = "accounts.csv";
 export const NOTES_MD = "notes/review.md";
 export const STANDUP_TXT = "notes/standup.txt";
 export const SYNC_LOG = "sync.log";
-
-export type OracleClass = "person" | "org" | "host" | "email" | "id";
-
-/** One sensitive value as it is written somewhere in the kit's input. */
-export interface OracleValue {
-  value: string;
-  class: OracleClass;
-  /** The entity or value it stands for; equal to `value` for column and pattern values. */
-  canonical: string;
-  /** How it is written: the canonical form, a nickname or misspelling, a name part, or a cell or pattern value. */
-  form: "canonical" | "alias" | "part" | "value";
-  /** Input files it occurs in, sorted. */
-  files: string[];
-}
 
 /** A word that looks like a name part but is not one in its context. It must survive blinding. */
 export interface Decoy {
@@ -49,17 +43,22 @@ export interface Decoy {
   files: string[];
 }
 
-/** Ground truth for one CSV column: what it holds, independent of any spec. */
+/** Ground truth for one column (CSV, or v2 worksheet or JSON key path): what it holds, independent of any spec. */
 export interface OracleColumn {
   file: string;
-  header: string;
+  /** XLSX only. */
+  sheet?: string;
+  /** Absent for a JSON key path. */
+  header?: string;
+  /** JSON only. */
+  jsonPath?: string;
   /** `vocabulary`: ordinary values that identify no one. */
   class: OracleClass | "vocabulary";
   note: string;
 }
 
 export interface Oracle {
-  version: typeof KIT_VERSION;
+  version: KitVersion;
   seed: number;
   rows: number;
   /** Whether values from blinded columns were also written into free text (see `recurInProse`). */
@@ -70,9 +69,11 @@ export interface Oracle {
   decoys: Decoy[];
 }
 
+/** An input file: text (`text`), or binary (`bytes`, kit v2's XLSX and DOCX). Exactly one is set. */
 export interface KitFile {
   path: string;
-  text: string;
+  text?: string;
+  bytes?: Uint8Array;
 }
 
 export interface Kit {
@@ -84,6 +85,8 @@ export interface Kit {
 }
 
 export interface KitOptions {
+  /** Kit version (default 1). Version 2 is version 1's files plus the v2 files, with the same oracle rule. */
+  version?: KitVersion;
   /** Data rows in accounts.csv (default 60, at least 8). */
   rows?: number;
   /**
@@ -94,47 +97,8 @@ export interface KitOptions {
   recurInProse?: boolean;
 }
 
-/** A person: canonical name, given name and surname (parts), nicknames and misspellings (aliases). */
-export interface CastPerson {
-  canonical: string;
-  given: string;
-  surname: string;
-  aliases: string[];
-  /** Email local part; the domain is the person's organisation's. */
-  local: string;
-}
-
-export interface CastOrg {
-  canonical: string;
-  /** Short name used alone in prose, and the tenant label of its vendor-hosted host. */
-  short: string;
-  acronym: string;
-  slug: string;
-}
-
-// The cast is fixed; the seed decides who appears where. "Sam" and "Jan" are given names that are
-// also an acronym (SAM) and a month (Jan.) elsewhere in the prose.
-export const PEOPLE: readonly CastPerson[] = [
-  { canonical: "Bartholomew Quince", given: "Bartholomew", surname: "Quince", aliases: ["Bart", "Bartholemew Quince", "B. Quince"], local: "bart.quince" },
-  { canonical: "Marisol Penhallow", given: "Marisol", surname: "Penhallow", aliases: ["Mari", "Marisole Penhallow", "Penhalow"], local: "mpenhallow" },
-  { canonical: "Sam Ettrickfold", given: "Sam", surname: "Ettrickfold", aliases: ["Sammy", "Sam Etrickfold"], local: "sam.ettrickfold" },
-  { canonical: "Jan Vellacourt", given: "Jan", surname: "Vellacourt", aliases: ["Jan Velacourt", "J. Vellacourt"], local: "jvellacourt" },
-  { canonical: "Ignatius Dunmorrow", given: "Ignatius", surname: "Dunmorrow", aliases: ["Iggy", "Ignatious Dunmorrow"], local: "idunmorrow" },
-  { canonical: "Theodora Wrexley", given: "Theodora", surname: "Wrexley", aliases: ["Teddie", "Theadora Wrexley"], local: "teddie.wrexley" },
-];
-
-export const ORGS: readonly CastOrg[] = [
-  { canonical: "Quillfeather Holdings", short: "Quillfeather", acronym: "QFH", slug: "quillfeather" },
-  { canonical: "Brambleworth Freight", short: "Brambleworth", acronym: "BWF", slug: "brambleworth" },
-  { canonical: "Vantmoor Analytics", short: "Vantmoor", acronym: "VMA", slug: "vantmoor" },
-  { canonical: "Ossory Pinewick Partners", short: "Pinewick", acronym: "OPP", slug: "pinewick" },
-];
-
-/** The vendor whose platform hosts every organisation's tenant (`<slug>.tenanthub.example`). */
-export const VENDOR_DOMAIN = "tenanthub.example";
-
 /** CSV columns, in file order. The headers are fixed; only the values depend on the seed. */
-export const COLUMNS: readonly OracleColumn[] = [
+export const COLUMNS: readonly (OracleColumn & { header: string })[] = [
   { file: ACCOUNTS_CSV, header: "Acct No", class: "id", note: "short ID: 4 digits" },
   { file: ACCOUNTS_CSV, header: "Counterparty Label", class: "org", note: "organisation names under a header no rule names" },
   { file: ACCOUNTS_CSV, header: "client_scope_code", class: "id", note: "snake_case header; internal codes a reviewer cannot place" },
@@ -151,70 +115,10 @@ const STATUSES = ["open", "closed", "pending", "on hold"] as const;
 const REGIONS = ["north", "south", "east", "west"] as const;
 const MONTHS = ["Jan.", "Feb.", "Mar.", "Apr."] as const;
 
-/** mulberry32: a small 32-bit PRNG. Deterministic for a seed; not for anything secret. */
-export function mulberry32(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-class Rng {
-  private readonly next: () => number;
-  constructor(seed: number) {
-    this.next = mulberry32(seed);
-  }
-  /** Integer in [lo, hi]. */
-  int(lo: number, hi: number): number {
-    return lo + Math.floor(this.next() * (hi - lo + 1));
-  }
-  pick<T>(xs: readonly T[]): T {
-    return xs[this.int(0, xs.length - 1)] as T;
-  }
-  /** `n` distinct values from `make`, in generation order. */
-  distinct(n: number, make: () => string): string[] {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    while (out.length < n) {
-      const v = make();
-      if (seen.has(v)) continue;
-      seen.add(v);
-      out.push(v);
-    }
-    return out;
-  }
-}
-
 const HEX = "0123456789abcdef";
 const LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ";
 
 const pad2 = (n: number): string => String(n).padStart(2, "0");
-
-/** Code-unit order, never locale order. */
-const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
-
-const tenantHost = (o: CastOrg): string => `${o.slug}.${VENDOR_DOMAIN}`;
-const emailOf = (p: CastPerson, o: CastOrg): string => `${p.local}@${o.slug}.example`;
-
-class OracleBuilder {
-  private readonly byKey = new Map<string, OracleValue>();
-  add(value: string, cls: OracleClass, canonical: string, form: OracleValue["form"], file: string): void {
-    const key = `${cls}\0${value}`;
-    const hit = this.byKey.get(key);
-    if (hit !== undefined) {
-      if (!hit.files.includes(file)) hit.files = [...hit.files, file].sort(cmp);
-      return;
-    }
-    this.byKey.set(key, { value, class: cls, canonical, form, files: [file] });
-  }
-  values(): OracleValue[] {
-    return [...this.byKey.values()].sort((a, b) => cmp(a.class, b.class) || cmp(a.value, b.value));
-  }
-}
 
 interface Account {
   acct: string;
@@ -228,30 +132,6 @@ interface Account {
   opened: string;
 }
 
-/** A person mention in prose, in one of their written forms; records it in the oracle. */
-function mention(rng: Rng, p: CastPerson, oracle: OracleBuilder, file: string): string {
-  const forms: [string, OracleValue["form"]][] = [
-    [p.canonical, "canonical"],
-    [p.given, "part"],
-    [p.surname, "part"],
-    ...p.aliases.map((a): [string, OracleValue["form"]] => [a, "alias"]),
-  ];
-  const [text, form] = rng.pick(forms);
-  oracle.add(text, "person", p.canonical, form, file);
-  return text;
-}
-
-function orgMention(rng: Rng, o: CastOrg, oracle: OracleBuilder, file: string): string {
-  const forms: [string, OracleValue["form"]][] = [
-    [o.canonical, "canonical"],
-    [o.short, "part"],
-    [o.acronym, "alias"],
-  ];
-  const [text, form] = rng.pick(forms);
-  oracle.add(text, "org", o.canonical, form, file);
-  return text;
-}
-
 /**
  * The reviewed spec for kit v1, as a reviewer would save it after `blind plan`: the organisation,
  * person, host and ID columns blinded, the enums, money and dates kept, `client_scope_code` left a
@@ -259,6 +139,10 @@ function orgMention(rng: Rng, o: CastOrg, oracle: OracleBuilder, file: string): 
  * headers and the cast are fixed.
  */
 export function kitSpec(): Spec {
+  return kitSpecV1();
+}
+
+function kitSpecV1(): Spec {
   return {
     version: 1,
     columns: COLUMNS.map((c) =>
@@ -279,8 +163,14 @@ export function kitSpec(): Spec {
   };
 }
 
-/** Generate kit v1 for `seed`. Pure: same seed and options, same kit. */
+/**
+ * Generate a kit for `seed` (v1 unless `options.version` is 2). Pure: same seed and options, same
+ * kit. Kit v2 holds kit v1's files byte for byte, plus its own, drawn from a second PRNG stream so
+ * that adding v2 never moves a v1 value.
+ */
 export function generateKit(seed: number = DEFAULT_SEED, options: KitOptions = {}): Kit {
+  const version = options.version ?? KIT_VERSION;
+  if (version !== 1 && version !== 2) throw new RangeError(`version must be 1 or 2, got ${String(version)}`);
   const rows = options.rows ?? DEFAULT_ROWS;
   if (!Number.isInteger(rows) || rows < 8) throw new RangeError(`rows must be an integer of 8 or more, got ${rows}`);
   const recur = options.recurInProse ?? false;
@@ -314,12 +204,12 @@ export function generateKit(seed: number = DEFAULT_SEED, options: KitOptions = {
   const csv = [COLUMNS.map((c) => c.header).join(",")];
   for (const a of accounts) {
     csv.push([a.acct, a.org.canonical, a.scope, a.ledger, a.owner.canonical, tenantHost(a.org), a.status, a.region, a.amount, a.opened].join(","));
-    oracle.add(a.acct, "id", a.acct, "value", ACCOUNTS_CSV);
-    oracle.add(a.org.canonical, "org", a.org.canonical, "canonical", ACCOUNTS_CSV);
-    oracle.add(a.scope, "id", a.scope, "value", ACCOUNTS_CSV);
-    oracle.add(a.ledger, "id", a.ledger, "value", ACCOUNTS_CSV);
-    oracle.add(a.owner.canonical, "person", a.owner.canonical, "canonical", ACCOUNTS_CSV);
-    oracle.add(tenantHost(a.org), "host", tenantHost(a.org), "value", ACCOUNTS_CSV);
+    oracle.add(a.acct, "id", a.acct, "value", ACCOUNTS_CSV, "column Acct No");
+    oracle.add(a.org.canonical, "org", a.org.canonical, "canonical", ACCOUNTS_CSV, "column Counterparty Label");
+    oracle.add(a.scope, "id", a.scope, "value", ACCOUNTS_CSV, "column client_scope_code");
+    oracle.add(a.ledger, "id", a.ledger, "value", ACCOUNTS_CSV, "column Ledger Ref");
+    oracle.add(a.owner.canonical, "person", a.owner.canonical, "canonical", ACCOUNTS_CSV, "column Owner");
+    oracle.add(tenantHost(a.org), "host", tenantHost(a.org), "value", ACCOUNTS_CSV, "column Tenant Host");
   }
 
   // notes/review.md: prose with nicknames, misspellings, name parts, org aliases and the decoys.
@@ -347,25 +237,25 @@ export function generateKit(seed: number = DEFAULT_SEED, options: KitOptions = {
   }
   // Both decoys always appear at least once, next to the people they resemble.
   md.push(`- ${sam.given} reran the SAM reconciliation; ${jan.given} confirms the figures from 9 Jan.`);
-  oracle.add(sam.given, "person", sam.canonical, "part", NOTES_MD);
-  oracle.add(jan.given, "person", jan.canonical, "part", NOTES_MD);
+  oracle.add(sam.given, "person", sam.canonical, "part", NOTES_MD, "prose");
+  oracle.add(jan.given, "person", jan.canonical, "part", NOTES_MD, "prose");
   decoys.push({ text: "SAM", resembles: sam.given, why: "an acronym (software asset management), not the given name", files: [NOTES_MD] });
   decoys.push({ text: "Jan.", resembles: jan.given, why: "a month abbreviation, not a given name", files: [NOTES_MD] });
   md.push("", "## Contacts", "");
   for (const p of PEOPLE) {
     const o = rng.pick(ORGS);
     md.push(`- ${p.canonical}: ${emailOf(p, o)}, tenant ${tenantHost(o)}`);
-    oracle.add(p.canonical, "person", p.canonical, "canonical", NOTES_MD);
-    oracle.add(emailOf(p, o), "email", emailOf(p, o), "value", NOTES_MD);
-    oracle.add(tenantHost(o), "host", tenantHost(o), "value", NOTES_MD);
+    oracle.add(p.canonical, "person", p.canonical, "canonical", NOTES_MD, "contacts");
+    oracle.add(emailOf(p, o), "email", emailOf(p, o), "value", NOTES_MD, "contacts");
+    oracle.add(tenantHost(o), "host", tenantHost(o), "value", NOTES_MD, "contacts");
   }
   if (recur) {
     md.push("", "## Open items", "");
     for (const a of [accounts[0], accounts[1]] as Account[]) {
       md.push(`- Account ${a.acct} (ledger ${a.ledger}, scope ${a.scope}) is still open.`);
-      oracle.add(a.acct, "id", a.acct, "value", NOTES_MD);
-      oracle.add(a.ledger, "id", a.ledger, "value", NOTES_MD);
-      oracle.add(a.scope, "id", a.scope, "value", NOTES_MD);
+      oracle.add(a.acct, "id", a.acct, "value", NOTES_MD, "prose");
+      oracle.add(a.ledger, "id", a.ledger, "value", NOTES_MD, "prose");
+      oracle.add(a.scope, "id", a.scope, "value", NOTES_MD, "prose");
     }
   }
   md.push("");
@@ -378,7 +268,7 @@ export function generateKit(seed: number = DEFAULT_SEED, options: KitOptions = {
     const who = mention(rng, p, oracle, STANDUP_TXT);
     const org = orgMention(rng, a.org, oracle, STANDUP_TXT);
     standup.push(`${p.canonical}: ${who === p.canonical ? "I" : who} will chase ${org} about the ${a.region} region.`);
-    oracle.add(p.canonical, "person", p.canonical, "canonical", STANDUP_TXT);
+    oracle.add(p.canonical, "person", p.canonical, "canonical", STANDUP_TXT, "speaker label");
   }
   standup.push("");
 
@@ -391,9 +281,9 @@ export function generateKit(seed: number = DEFAULT_SEED, options: KitOptions = {
     const ip = rng.pick(ips);
     const ts = `2026-0${rng.int(1, 9)}-${pad2(rng.int(1, 28))} ${pad2(rng.int(0, 23))}:${pad2(rng.int(0, 59))}:${pad2(rng.int(0, 59))}`;
     log.push(`${ts} INFO sync tenant=${tenantHost(a.org)} user=${emailOf(p, a.org)} from ${ip} ok`);
-    oracle.add(tenantHost(a.org), "host", tenantHost(a.org), "value", SYNC_LOG);
-    oracle.add(emailOf(p, a.org), "email", emailOf(p, a.org), "value", SYNC_LOG);
-    oracle.add(ip, "host", ip, "value", SYNC_LOG);
+    oracle.add(tenantHost(a.org), "host", tenantHost(a.org), "value", SYNC_LOG, "log line");
+    oracle.add(emailOf(p, a.org), "email", emailOf(p, a.org), "value", SYNC_LOG, "log line");
+    oracle.add(ip, "host", ip, "value", SYNC_LOG, "log line");
   }
   log.push("");
 
@@ -402,7 +292,16 @@ export function generateKit(seed: number = DEFAULT_SEED, options: KitOptions = {
     { path: NOTES_MD, text: md.join("\n") },
     { path: STANDUP_TXT, text: standup.join("\n") },
     { path: SYNC_LOG, text: log.join("\n") },
-  ].sort((x, y) => cmp(x.path, y.path));
+  ];
+  let columns: OracleColumn[] = [...COLUMNS];
+  let spec = kitSpec();
+  if (version === 2) {
+    const v2 = generateV2(seed, rows, oracle);
+    files.push(...v2.files);
+    columns = [...columns, ...v2.columns];
+    spec = kitSpecV2(spec, v2);
+  }
+  files.sort((x, y) => cmp(x.path, y.path));
 
   const decoyKeys = new Set<string>();
   const uniqueDecoys = decoys.filter((d) => {
@@ -415,9 +314,15 @@ export function generateKit(seed: number = DEFAULT_SEED, options: KitOptions = {
 
   return {
     files,
-    oracle: { version: KIT_VERSION, seed, rows, recurInProse: recur, columns: [...COLUMNS], values: oracle.values(), decoys: uniqueDecoys },
-    spec: kitSpec(),
+    oracle: { version, seed, rows, recurInProse: recur, columns, values: oracle.values(version === 2), decoys: uniqueDecoys },
+    spec,
   };
+}
+
+/** A kit file's content as written to disk. */
+export function kitFileBytes(f: KitFile): Uint8Array {
+  if ((f.text === undefined) === (f.bytes === undefined)) throw new Error(`internal error: kit file ${f.path} needs exactly one of text and bytes`);
+  return f.bytes ?? new TextEncoder().encode(f.text);
 }
 
 /**
@@ -428,7 +333,7 @@ export function writeKit(dir: string, kit: Kit): void {
   for (const f of kit.files) {
     const dest = join(dir, "input", ...f.path.split("/"));
     mkdirSync(dirname(dest), { recursive: true });
-    writeFileSync(dest, f.text);
+    writeFileSync(dest, kitFileBytes(f));
   }
   writeFileSync(join(dir, "oracle.json"), `${JSON.stringify(kit.oracle, null, 2)}\n`);
   writeFileSync(join(dir, "spec.json"), `${JSON.stringify(kit.spec, null, 2)}\n`);
@@ -438,11 +343,11 @@ if (import.meta.main) {
   const { values, positionals } = parseArgs({
     args: process.argv.slice(2),
     allowPositionals: true,
-    options: { seed: { type: "string" }, rows: { type: "string" }, "recur-in-prose": { type: "boolean", default: false } },
+    options: { seed: { type: "string" }, rows: { type: "string" }, kit: { type: "string" }, "recur-in-prose": { type: "boolean", default: false } },
   });
   const dir = positionals[0];
   if (dir === undefined || positionals.length !== 1) {
-    process.stderr.write("Usage: bun src/bench/synth.ts <dir> [--seed N] [--rows N] [--recur-in-prose]\n");
+    process.stderr.write("Usage: bun src/bench/synth.ts <dir> [--seed N] [--rows N] [--kit 1|2] [--recur-in-prose]\n");
     process.exit(2);
   }
   const seed = values.seed === undefined ? DEFAULT_SEED : Number(values.seed);
@@ -451,7 +356,12 @@ if (import.meta.main) {
     process.stderr.write(`--seed must be an integer from 0 to 4294967295, got ${values.seed}\n`);
     process.exit(2);
   }
-  const kit = generateKit(seed, { rows, recurInProse: values["recur-in-prose"] });
+  if (values.kit !== undefined && values.kit !== "1" && values.kit !== "2") {
+    process.stderr.write(`--kit must be 1 or 2, got ${values.kit}\n`);
+    process.exit(2);
+  }
+  const version: KitVersion = values.kit === "2" ? 2 : 1;
+  const kit = generateKit(seed, { version, rows, recurInProse: values["recur-in-prose"] });
   writeKit(dir, kit);
-  process.stdout.write(`wrote kit v${KIT_VERSION} (seed ${seed}, ${rows} rows, ${kit.oracle.values.length} oracle values) to ${dir}\n`);
+  process.stdout.write(`wrote kit v${version} (seed ${seed}, ${rows} rows, ${kit.oracle.values.length} oracle values) to ${dir}\n`);
 }

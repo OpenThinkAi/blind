@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import type { Entities, PatternName, Patterns } from "../../src/schema.ts";
 import { EntityMatcher, findPatternSpans, findSpans } from "../../src/engine/text.ts";
 
-const ALL: Record<PatternName, boolean> = { ip: true, email: true, host: true, guid: true, mac: true, phone: true };
-const NONE: Record<PatternName, boolean> = { ip: false, email: false, host: false, guid: false, mac: false, phone: false };
+const ALL: Record<PatternName, boolean> = { ip: true, email: true, host: true, guid: true, mac: true, phone: true, secret: false };
+const NONE: Record<PatternName, boolean> = { ip: false, email: false, host: false, guid: false, mac: false, phone: false, secret: false };
 
 const matched = (text: string, patterns: Patterns = ALL) => findPatternSpans(text, patterns).map((s) => [s.value, s.cls]);
 
@@ -64,7 +64,7 @@ describe("patterns", () => {
   });
 
   test("phone follows its switch, and is on when the spec predates it", () => {
-    expect(matched("call 801-555-0100", { ...ALL, phone: false })).toEqual([]);
+    expect(matched("call 801-555-0100", { ...ALL, phone: false, secret: false })).toEqual([]);
     // A spec written before the pattern existed has no `phone`: absent means on.
     expect(matched("call 801-555-0100", { ip: true, email: true, host: true, guid: true, mac: true })).toEqual([["801-555-0100", "id"]]);
   });

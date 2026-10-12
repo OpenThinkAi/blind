@@ -14,9 +14,9 @@ import { completeProposal, locationKey } from "./analyst.ts";
 import { profileLocations } from "./heuristic.ts";
 import { shieldedForms, shieldReason } from "./vocabguard.ts";
 
-type EntityClass = Exclude<EntityClassName, "unknown">;
+type EntityClass = Exclude<EntityClassName, "unknown" | "secret">;
 const ENTITY_CLASSES: readonly EntityClass[] = ["person", "org", "host", "email", "id", "location", "vocabulary"];
-const PATTERN_NAMES: readonly PatternName[] = ["ip", "email", "host", "guid", "mac", "phone"];
+const PATTERN_NAMES: readonly PatternName[] = ["ip", "email", "host", "guid", "mac", "phone", "secret"];
 
 export type Dropped =
   | { kind: "column"; location: Location; reason: string }

@@ -18,7 +18,7 @@ export class AnalystError extends Error {
 }
 
 /** Options a question about a column may offer: a treatment, or a class to give the column. */
-export const COLUMN_ANSWERS: readonly string[] = ["blind", "keep", "value", "person", "org", "host", "email", "id", "location", "vocabulary"];
+export const COLUMN_ANSWERS: readonly string[] = ["blind", "keep", "value", "person", "org", "host", "email", "id", "location", "vocabulary", "secret"];
 
 /**
  * What the analyst may reply: the spec schema without `seen`, which only blind writes (it
@@ -50,6 +50,10 @@ export function checkProposal(spec: Spec, profile: Profile): SchemaIssue[] {
     // pseudonymising it, is the policy's or the human's call, never the analyst's.
     if (c.treatment === "drop" || c.treatment === "redact" || c.treatment === "scan") {
       issues.push({ path: `$.columns[${i}].treatment`, message: `must be "blind", "keep" or "value"; only blind.toml or a human may drop, redact or scan a column` });
+    }
+    // Class `secret` under `blind` redacts the column (columns.ts), which is the same call.
+    if (c.class === "secret" && c.treatment === "blind") {
+      issues.push({ path: `$.columns[${i}].class`, message: `a "secret" column under "blind" is redacted; only blind.toml or a human may redact a column (ask a question instead)` });
     }
   });
   const asked = new Map<string, number>();

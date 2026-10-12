@@ -32,9 +32,9 @@ export class FromAuditError extends Error {
 }
 
 /** Classes an accepted candidate may become: every entity class but vocabulary, which is what a rejection writes. */
-export type AcceptClass = Exclude<EntityClassName, "unknown" | "vocabulary">;
+export type AcceptClass = Exclude<EntityClassName, "unknown" | "vocabulary" | "secret">;
 export const ACCEPT_CLASSES: readonly AcceptClass[] = ["person", "org", "host", "email", "id", "location"];
-const PATTERN_NAMES: readonly PatternName[] = ["email", "ip", "mac", "guid", "phone", "host"];
+const PATTERN_NAMES: readonly PatternName[] = ["email", "ip", "mac", "guid", "phone", "host", "secret"];
 
 type Source = "entity" | "map" | "pattern" | "spec" | "scan" | "semantic" | "model";
 const SOURCES: readonly Source[] = ["entity", "map", "pattern", "spec", "scan", "semantic", "model"];
@@ -300,7 +300,8 @@ const SEMANTIC_CLASS: Record<string, AcceptClass | null> = {
   "semantic:host": "host",
   "semantic:phrase": null,
 };
-const PATTERN_CLASS: Record<PatternName, AcceptClass> = { email: "email", ip: "host", host: "host", guid: "id", mac: "id", phone: "id" };
+// A surviving secret is accepted as an `id` entity: the value is pseudonymised from then on.
+const PATTERN_CLASS: Record<PatternName, AcceptClass> = { email: "email", ip: "host", host: "host", guid: "id", mac: "id", phone: "id", secret: "id" };
 
 /** The class a finding suggests for its value, or null when only the human can say. */
 function suggestion(f: ReportFinding): AcceptClass | null {
@@ -324,7 +325,7 @@ function suggestion(f: ReportFinding): AcceptClass | null {
 /** The shape pattern the whole value matches, or null. */
 export function shapeOf(value: string): PatternName | null {
   for (const name of PATTERN_NAMES) {
-    const only = { ip: false, email: false, host: false, guid: false, mac: false, phone: false, [name]: true };
+    const only = { ip: false, email: false, host: false, guid: false, mac: false, phone: false, secret: false, [name]: true };
     const [s] = findPatternSpans(value, only);
     if (s !== undefined && s.start === 0 && s.end === value.length) return name;
   }

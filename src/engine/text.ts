@@ -2,7 +2,7 @@
 // into non-overlapping spans. Pure and deterministic; the caller decides what
 // each span becomes.
 //
-// Order: pattern matches (email, IP, MAC, GUID, host) and spoken values (spelled
+// Order: pattern matches (email, IP, MAC, GUID, phone, host, secret) and spoken values (spelled
 // digits, spoken emails; spelled.ts) are found first and are atomic, so
 // "avery@example.com" is one email, not a name plus a host. Entity
 // forms are then matched in the gaps, longest form first at each position,
@@ -34,6 +34,7 @@ import { PSEUDO_CLASSES, phoneDigits, type PseudoClass, type RealPseudoClass } f
 import { type Entities, type PatternName, type Patterns, patternOn } from "../schema.ts";
 import { inDateContext, isDateWord } from "./datecontext.ts";
 import { type CellRule, cellValueSpan, type ContextOptions, findContextSpans } from "./context.ts";
+import { findSecretSpans, type SecretCarry, type SecretOptions, type SecretSpan } from "./secret.ts";
 import { findSpelledDigits, findSpokenEmails } from "./spelled.ts";
 
 export interface Span {
@@ -62,7 +63,7 @@ export interface Span {
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 const IPV4_OCTET = "(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)";
-const PATTERN_RES: Record<PatternName, RegExp> = {
+const PATTERN_RES: Record<Exclude<PatternName, "secret">, RegExp> = {
   email: /(?<![\p{L}\p{N}._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+(?![\p{L}\p{N}-]|\.[A-Za-z0-9])/gu,
   ip: new RegExp(
     `(?<![\\d.])${IPV4_OCTET}(?:\\.${IPV4_OCTET}){3}(?!\\d|\\.\\d)|(?<![\\p{L}\\p{N}:])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![\\p{L}\\p{N}:]|\\.\\d)`,
@@ -91,10 +92,16 @@ export const PATTERN_CLASS: Record<PatternName, PseudoClass> = {
   guid: "id",
   host: "host",
   phone: "id",
+  // Not a pseudonym: a secret is written as the fixed placeholder (secret.ts).
+  secret: "redact",
 };
 
 // Fixed order: when two patterns match the same span, the earlier one wins.
-const PATTERN_ORDER: readonly PatternName[] = ["email", "ip", "mac", "guid", "phone", "host"];
+// `secret` is last: a token another pattern matches is never a secret.
+const PATTERN_ORDER: readonly PatternName[] = ["email", "ip", "mac", "guid", "phone", "host", "secret"];
+
+/** Every shape but `secret`: what secret.ts asks about a token ("is this whole token an email, a phone ...?"). */
+const OTHER_SHAPES: Patterns = { email: true, ip: true, mac: true, guid: true, phone: true, host: true, secret: false };
 
 // Two-label names count as hosts only under these suffixes, so "notes.txt" or
 // "report.md" is not a host; three or more labels ("db01.example.com") always count.
@@ -146,10 +153,16 @@ export function underKeptDomain(host: string, domains: readonly string[]): boole
  * Pattern matches in `text`. A host match under one of `keep` (from keepDomains) is returned with
  * `cls: null`: kept as written, and still shielding its text from entity forms.
  */
-export function findPatternSpans(text: string, patterns: Patterns, keep: readonly string[] = []): Span[] {
+export function findPatternSpans(text: string, patterns: Patterns, keep: readonly string[] = [], carry?: SecretCarry): Span[] {
   const found: (Span & { rank: number })[] = [];
   PATTERN_ORDER.forEach((name, rank) => {
     if (!patternOn(patterns, name)) return;
+    if (name === "secret") {
+      for (const s of findSecretSpans(text, wholeOtherShape, carry === undefined ? {} : { carry })) {
+        found.push({ start: s.start, end: s.end, cls: "redact", value: text.slice(s.start, s.end), source: "pattern", rank });
+      }
+      return;
+    }
     for (const m of text.matchAll(PATTERN_RES[name])) {
       if (!accept(name, m[0])) continue;
       const start = m.index;
@@ -167,6 +180,16 @@ export function findPatternSpans(text: string, patterns: Patterns, keep: readonl
     taken = s.end;
   }
   return out;
+}
+
+/** Whether another shape (email, IP, MAC, GUID, phone, host) matches all of `token`. */
+function wholeOtherShape(token: string): boolean {
+  return findPatternSpans(token, OTHER_SHAPES).some((s) => s.start === 0 && s.end === token.length);
+}
+
+/** The secret pattern's matches in `text`, read exactly as the engine reads them (for the audit). */
+export function secretSpans(text: string, opts: SecretOptions = {}): SecretSpan[] {
+  return findSecretSpans(text, wholeOtherShape, opts);
 }
 
 type CaseRule = "exact" | "capital" | "fold";
@@ -430,9 +453,9 @@ function findRedactSpans(text: string, context: ContextOptions, spelled: readonl
  * Pattern matches and spoken values together, leftmost first and longest at the same start, without
  * overlaps: "jane at example.com" is one spoken email, not a lone host.
  */
-function shapeSpans(text: string, patterns: Patterns, keep: readonly string[], context?: ContextOptions): Span[] {
+function shapeSpans(text: string, patterns: Patterns, keep: readonly string[], context?: ContextOptions, carry?: SecretCarry): Span[] {
   const spelled = findSpelledSpans(text, patterns);
-  const p = findPatternSpans(text, patterns, keep);
+  const p = findPatternSpans(text, patterns, keep, carry);
   const secrets = context === undefined ? [] : findRedactSpans(text, context, spelled);
   if (spelled.length === 0 && secrets.length === 0) return p;
   // At the same start and length a redaction comes first: the placeholder says more than a pseudonym.
@@ -447,15 +470,20 @@ function shapeSpans(text: string, patterns: Patterns, keep: readonly string[], c
   return out;
 }
 
-/** Every span to act on: pattern matches, spoken values and, when `context` is given, redactions after context keywords, then entity forms in the gaps, sorted by position. */
+/**
+ * Every span to act on: pattern matches, spoken values and, when `context` is given, redactions after
+ * context keywords, then entity forms in the gaps, sorted by position. `carry` is the secret
+ * pattern's trigger boost across calls over one document (secret.ts).
+ */
 export function findSpans(
   text: string,
   matcher: EntityMatcher,
   patterns: Patterns,
   keep: readonly string[] = [],
   context?: ContextOptions,
+  carry?: SecretCarry,
 ): Span[] {
-  const p = shapeSpans(text, patterns, keep, context);
+  const p = shapeSpans(text, patterns, keep, context, carry);
   const e = matcher.find(text, p);
   return [...p, ...e].sort((a, b) => a.start - b.start);
 }

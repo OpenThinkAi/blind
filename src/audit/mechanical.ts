@@ -47,7 +47,7 @@ import { decode, EncodingError } from "../engine/encoding.ts";
 import type { BlindMap } from "../engine/map.ts";
 import { isPseudonym } from "../engine/pseudonym.ts";
 import { nameWordExcluded, onNameTokens } from "../engine/names.ts";
-import { findPatternSpans, keepDomains, type Span } from "../engine/text.ts";
+import { findPatternSpans, keepDomains, secretSpans, type Span } from "../engine/text.ts";
 import { detectHeaderRow } from "../profile/table.ts";
 import { DICTIONARY } from "../engine/words.ts";
 import { fold, foldWithMap, stringView, type View, viewsOf, xmlBaseView } from "./views.ts";
@@ -346,6 +346,8 @@ interface Context {
   keep: string[];
   /** The keep list, folded: a lone word among them is never replaced in another case inside a name. */
   keepTerms: ReadonlySet<string>;
+  /** The spec's patterns less `secret`, which is read in document text only (secretHits), never in every view. */
+  shapes: Patterns;
 }
 
 // The same shapes unanchored, for "is this pattern match made only of pseudonyms?": a blinded name
@@ -358,11 +360,11 @@ const SHAPED_ANY_RE = new RegExp(SHAPED_RE.source.replace("(?<![A-Za-z0-9_.-])",
  * domain are dropped: the engine keeps them because the policy says to.
  */
 function patternSpans(text: string, ctx: Context, isName: boolean): Span[] {
-  const spans = findPatternSpans(text, ctx.spec.patterns, ctx.keep);
+  const spans = findPatternSpans(text, ctx.shapes, ctx.keep);
   if (isName && text.includes("_")) {
     let offset = 0;
     for (const piece of text.split("_")) {
-      for (const s of findPatternSpans(piece, ctx.spec.patterns, ctx.keep)) {
+      for (const s of findPatternSpans(piece, ctx.shapes, ctx.keep)) {
         const start = s.start + offset;
         const end = s.end + offset;
         if (!spans.some((x) => x.start === start && x.end === end)) spans.push({ ...s, start, end });
@@ -484,13 +486,13 @@ function scanView(view: View, ctx: Context, isName: boolean): Hit[] {
   return hits;
 }
 
-const PATTERN_NAMES: readonly PatternName[] = ["email", "ip", "mac", "guid", "phone", "host"];
+const PATTERN_NAMES: readonly PatternName[] = ["email", "ip", "mac", "guid", "phone", "host", "secret"];
 
 /** Which enabled pattern matches the whole value (the span itself only records the pseudonym class). */
 function patternName(value: string, patterns: Patterns): PatternName | "pattern" {
   for (const name of PATTERN_NAMES) {
     if (!patternOn(patterns, name)) continue;
-    const only = { ip: false, email: false, host: false, guid: false, mac: false, phone: false, [name]: true };
+    const only = { ip: false, email: false, host: false, guid: false, mac: false, phone: false, secret: false, [name]: true };
     const [s] = findPatternSpans(value, only);
     if (s !== undefined && s.start === 0 && s.end === value.length) return name;
   }
@@ -605,6 +607,7 @@ function scanBytes(sink: PartSink, part: string, bytes: Uint8Array, depth: numbe
       unscanned(sink, part, `${kind} content: raw bytes and text encodings were scanned, but compressed or otherwise encoded content inside it cannot be checked`);
     }
     pushHits(sink, part, "content", scanViews(viewsOf(bytes), ctx));
+    if (kind === null) secretHits(sink, part, bytes, ctx);
     return;
   }
   if (depth >= MAX_ZIP_DEPTH) {
@@ -655,6 +658,86 @@ function customXmlFinding(sink: PartSink, part: string, member: string, bytes: U
   const reason = customPartRefusal(member, xmlBaseView(bytes).text);
   if (reason === null) return;
   sink.findings.push({ file: sink.file, part, in: "content", offset: null, line: null, class: "custom-xml", source: "scan", severity: "leak", masked: "", reason, encoding: null });
+}
+
+// Tables and JSON: each cell or value is its own text to the engine, so no trigger reaches past it.
+const STRUCTURED_RE = /\.(?:csv|tsv|tab|json|jsonl)$/i;
+// XML elements whose text runs on into the next one's: a run and its text, and the wrappers around runs.
+const INLINE_XML = new Set(["t", "r", "rPr", "hyperlink", "smartTag", "ins", "del", "sdt", "sdtContent", "fldSimple", "customXml", "moveFrom", "moveTo"]);
+const XML_ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+
+/**
+ * Document text of an XML member, as the engine reads it: the text of runs joined, a line break
+ * between paragraphs, cells and other elements, entities undone. `at[i]` is the view offset of
+ * character i.
+ */
+function xmlDocumentText(t: string): { text: string; at: number[] } {
+  let text = "";
+  const at: number[] = [];
+  const add = (s: string, from: number) => {
+    for (let k = 0; k < s.length; k++) at.push(from);
+    text += s;
+  };
+  walkXml(t, {
+    text(start, end, parent) {
+      if (parent === undefined) return;
+      const run = localName(parent) === "t";
+      if (!run) add("\n", start);
+      for (const m of t.slice(start, end).matchAll(/&(#x[0-9a-f]+|#\d+|[a-z]+);|[^&]+|&/giu)) {
+        const from = start + m.index;
+        const e = m[1];
+        if (e === undefined) {
+          for (let k = 0; k < m[0].length; k++) at.push(from + k);
+          text += m[0];
+          continue;
+        }
+        const cp = e.startsWith("#x") || e.startsWith("#X") ? Number.parseInt(e.slice(2), 16) : e.startsWith("#") ? Number(e.slice(1)) : undefined;
+        add(cp === undefined ? (XML_ENTITIES[e] ?? m[0]) : Number.isFinite(cp) && cp <= 0x10ffff ? String.fromCodePoint(cp) : m[0], from);
+      }
+      if (!run) add("\n", end);
+    },
+    tag(name, closing, selfClosing) {
+      const local = localName(name);
+      if (selfClosing && (local === "br" || local === "tab" || local === "cr")) add(" ", text.length === 0 ? 0 : (at[at.length - 1] as number));
+      else if (closing && !INLINE_XML.has(local)) add("\n", text.length === 0 ? 0 : (at[at.length - 1] as number));
+    },
+  });
+  return { text, at };
+}
+
+/**
+ * Secret pattern matches (secret.ts) that survive in a part's document text: the whole text of a
+ * plain file, read with the trigger boost unless it is a table or JSON, and the text nodes of an
+ * XML member (never its markup or attributes). Images and binary parts are not read for secrets:
+ * their bytes are not document text, and random bytes look like keys. Every match is a leak.
+ */
+function secretHits(sink: PartSink, part: string, bytes: Uint8Array, ctx: Context) {
+  if (!patternOn(ctx.spec.patterns, "secret") || bytes.length === 0) return;
+  const name = part === "" ? sink.file : part.slice(part.lastIndexOf("!") + 1);
+  const view = xmlBaseView(bytes);
+  const xml = looksLikeXml(name, view.text);
+  const doc = xml ? xmlDocumentText(view.text) : null;
+  const text = doc === null ? view.text : doc.text;
+  const viewAt = (i: number): number => (doc === null ? i : (doc.at[i] as number));
+  const found: PlacedHit[] = [];
+  for (const s of secretSpans(text, { boost: xml || !STRUCTURED_RE.test(name) })) {
+    const a = viewAt(s.start);
+    const b = viewAt(s.end - 1) + 1;
+    found.push({
+      start: a,
+      end: b,
+      value: text.slice(s.start, s.end),
+      encoding: view.encoding,
+      line: lineAt(view.text, undefined, a)[0],
+      class: "pattern:secret",
+      source: "pattern",
+      severity: "leak",
+      reason: "secret pattern match (a password, key or token shape) that is not the placeholder",
+      byteStart: view.byteAt(a),
+      byteEnd: view.byteAt(b),
+    });
+  }
+  pushHits(sink, part, "content", found);
 }
 
 /** app.xml elements whose text is a path. */
@@ -780,7 +863,9 @@ function columnFindings(sink: PartSink, bytes: Uint8Array, rules: readonly Colum
   const width = headers.length;
   const named = new Set(rules.filter((r) => r.header !== undefined).map((r) => (r.header as string).trim()));
   for (const r of rules) {
-    if (r.header === undefined || (r.treatment !== "drop" && r.treatment !== "redact")) continue;
+    // A `secret` column under `blind` is redacted too (columns.ts).
+    const redacts = r.treatment === "redact" || (r.treatment === "blind" && r.class === "secret");
+    if (r.header === undefined || (r.treatment !== "drop" && !redacts)) continue;
     const col = headers.findIndex((h) => h.trim() === (r.header as string).trim());
     if (col < 0) continue;
     if (r.treatment === "drop") {
@@ -864,7 +949,7 @@ export function addLayer(
 
 /** Audit an output tree (every entry under it, paths relative to its root) against the spec and map. */
 export function auditTree(entries: readonly TreeEntry[], spec: Spec, map: BlindMap, keep: readonly string[] = []): AuditReport {
-  const ctx: Context = { spec, map, index: new NeedleIndex(buildNeedles(spec, map, keep)), keep: keepDomains(keep), keepTerms: new Set(keep.map(fold)) };
+  const ctx: Context = { spec, map, index: new NeedleIndex(buildNeedles(spec, map, keep)), keep: keepDomains(keep), keepTerms: new Set(keep.map(fold)), shapes: { ...spec.patterns, secret: false } };
   const rulesByFile = new Map<string, ColumnRule[]>();
   for (const r of spec.columns) rulesByFile.set(r.file, [...(rulesByFile.get(r.file) ?? []), r]);
 

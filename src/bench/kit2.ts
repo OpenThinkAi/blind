@@ -15,7 +15,8 @@
 //   The meeting also has a phone number spelled out digit by digit, an email
 //   address spoken word by word, and number words in ordinary prose (a decoy). It also has secrets
 //   said after a keyword (a gate code, a password, an account ending) and the same keywords in
-//   prose with nothing after them (a decoy).
+//   prose with nothing after them (a decoy), a password read out two turns after it was named and
+//   one in a list (the secret pattern), and codes, a version and a dose that are no secret (a decoy).
 // - exports/scopes.json: a scope list with snake_case keys, hex IDs and
 //   four-digit IDs written as strings.
 // - logs/agent-container.log: a container log whose registry host carries the
@@ -83,6 +84,20 @@ export const CONTEXT_SECRETS = [
 ] as const;
 /** Ordinary prose with the same keywords. A decoy: it must survive blinding. */
 export const CONTEXT_DECOY = "the account manager said the password was reset";
+
+/**
+ * Secrets no keyword introduces (AGT-1844), found by the secret pattern: a password read out two
+ * turns after another speaker named it, and one written in a list. Invented values. `said` is the
+ * turn, `secret` the part that must go. The turn between them says nothing secret.
+ */
+export const SHAPE_SECRET_TURNS = [
+  { said: "Has the backup box password been rotated?", secret: null },
+  { said: "Not yet.", secret: null },
+  { said: "It is taped under the monitor - Harbor2031! - until Friday.", secret: "Harbor2031!" },
+  { said: "Guest wifi: ExampleNet / Tr0ub4dor&3 for visitors.", secret: "Tr0ub4dor&3" },
+] as const;
+/** Codes, a version, a CamelCase word and a dose that mix letters, digits and symbols. A decoy: it must survive blinding. */
+export const SHAPE_DECOY = "Invoice AB-2026-0001 covers v2.10.3 of HelloWorld and the Amoxi500mg order";
 
 /** Speakers of the meeting. Sam and Jan stay out: their given names are kit v1's decoys. */
 const SPEAKERS: readonly CastPerson[] = PEOPLE.filter((p) => p.given !== "Sam" && p.given !== "Jan");
@@ -216,8 +231,11 @@ export function generateV2(seed: number, rows: number, oracle: OracleBuilder): K
   turns.push({ speaker: caller, text: `Sure. No rush, I have ${SPOKEN_DECOY} at home and a train to catch.` });
   for (const [i, c] of CONTEXT_SECRETS.entries()) turns.push({ speaker: i % 2 === 0 ? mailer : caller, text: c.said });
   turns.push({ speaker: mailer, text: `Noted, and ${CONTEXT_DECOY} so nothing is stale.` });
+  for (const [i, c] of SHAPE_SECRET_TURNS.entries()) turns.push({ speaker: i % 2 === 0 ? caller : mailer, text: c.said });
+  turns.push({ speaker: caller, text: `${SHAPE_DECOY}.` });
   for (const f of [CALL_DOCX, CALL_VTT]) {
     for (const c of CONTEXT_SECRETS) oracle.add(c.secret, "id", c.secret, "value", f, "context secret");
+    for (const c of SHAPE_SECRET_TURNS) if (c.secret !== null) oracle.add(c.secret, "id", c.secret, "value", f, "secret pattern");
     oracle.add(SPOKEN_PHONE, "id", SPOKEN_PHONE_DIGITS, "alias", f, "spelled digits");
     oracle.add(spokenEmail, "email", emailOf(caller, mailOrg), "alias", f, "spoken email");
   }
@@ -303,6 +321,7 @@ export function generateV2(seed: number, rows: number, oracle: OracleBuilder): K
   const decoys: Decoy[] = [
     { text: SPOKEN_DECOY, resembles: "spelled digits", why: "number words in ordinary prose, not a value read aloud", files: [CALL_DOCX, CALL_VTT] },
     { text: CONTEXT_DECOY, resembles: "context keyword", why: "the keywords account and password in prose, with no secret after them", files: [CALL_DOCX, CALL_VTT] },
+    { text: SHAPE_DECOY, resembles: "secret pattern", why: "a product code, a version, a CamelCase word and a dose: mixed shapes that are no secret", files: [CALL_DOCX, CALL_VTT] },
   ];
   return { files, columns, sheetOrg, cloudAccounts: [account], decoys };
 }

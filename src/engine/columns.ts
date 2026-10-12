@@ -42,6 +42,8 @@ function ruleAction(rule: ColumnRule): ColumnAction | "heuristic" {
   if (rule.treatment === "drop") return { kind: "drop" };
   if (rule.treatment === "redact") return { kind: "redact" };
   if (rule.treatment === "scan") return { kind: "free" };
+  // A credential column: no pseudonym could be safer than the placeholder, and none is revealable.
+  if (rule.treatment === "blind" && rule.class === "secret") return { kind: "redact" };
   if (rule.treatment === "blind" && SENSITIVE.has(rule.class)) return { kind: "pseudo", cls: rule.class as PseudoClass };
   if (rule.treatment === "value" && rule.class === "unknown") return "heuristic";
   return { kind: "pseudo", cls: "value" };

@@ -251,7 +251,8 @@ describe("name parts of people blinded in a column (AGT-1803)", () => {
     const [avery, bea, rowan] = [pseudonymOf(res, "Avery Quill"), pseudonymOf(res, "Bea Quill"), pseudonymOf(res, "Rowan Tamsin-Vale")];
     const quill = pseudonymOf(res, "Quill");
     expect(new Set([avery, bea, quill]).size).toBe(3);
-    expect(out(res, "notes.txt")).toBe(`${quill} signed; ${avery} and ${bea} agreed. ${rowan}, ${rowan} and ${rowan} too.\n`);
+    // "Rowan, Tamsin-Vale" is two parts of one person next to each other: one span (AGT-1842).
+    expect(out(res, "notes.txt")).toBe(`${quill} signed; ${avery} and ${bea} agreed. ${rowan} and ${rowan} too.\n`);
     expect(res.sharedNameParts).toEqual([quill]);
     expect(audited(res).summary.leaks).toBe(0);
   });

@@ -7,6 +7,12 @@
 // "(801) 555-0100", "801-555-0100" and "+1 801.555.0100" are one number. A
 // value of bare digits is never phone-shaped: it is left as written, so a
 // numeric ID keeps its length and its leading digits.
+//
+// A person's canonical form leaves out leading honorifics and role words
+// (honorifics.ts), so "Dr. Jo Sample", "Jo Sample" and "Sample, Jo" are one
+// person, and writes an initial or a title without its dot ("J. Sample" is
+// "j sample"). A title with a single name after it ("Dr. Sample") keeps the
+// title: it is a reference of its own, which identity.ts may resolve.
 
 export const PSEUDO_CLASSES = ["person", "org", "host", "email", "id", "location", "value"] as const;
 /**
@@ -23,6 +29,8 @@ const ORG_SUFFIXES = new Set([
   "incorporated", "kk", "limited", "llc", "llp", "lp", "ltd", "nv", "oy", "plc",
   "pllc", "pte", "pty", "sa", "sarl", "sas", "srl",
 ]);
+
+import { isHonorificOrRole } from "./honorifics.ts";
 
 const GUID_CORE = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const GUID_RE = new RegExp(`^(?:\\{(${GUID_CORE})\\}|(${GUID_CORE}))$`, "i");
@@ -80,6 +88,21 @@ function unifyPersonOrder(name: string): string {
   return `${first} ${last}`;
 }
 
+/**
+ * "dr. jo sample" → "jo sample"; "j. sample" → "j sample"; "dr. sample" → "dr sample". Leading honorific
+ * and role words go only when two or more words are left, so a title with a lone surname stays a
+ * reference of its own (identity.ts may resolve it to one person) and "Front Desk" stays whole.
+ */
+function personIdentity(name: string): string {
+  const words = name.split(" ").filter((w) => w !== "");
+  let i = 0;
+  while (i < words.length - 2 && isHonorificOrRole(words[i] as string)) i++;
+  return words
+    .slice(i)
+    .map((w) => (/^\p{L}\.$/u.test(w) || isHonorificOrRole(w) ? w.replace(/\.$/, "") : w))
+    .join(" ");
+}
+
 export function guidCore(value: string): string | undefined {
   const m = GUID_RE.exec(value.trim());
   return (m?.[1] ?? m?.[2])?.toLowerCase();
@@ -91,7 +114,7 @@ export function canonicalize(cls: PseudoClass, value: string): string {
   if (phone !== undefined) return phone;
   switch (cls) {
     case "person":
-      return unifyPersonOrder(v);
+      return personIdentity(unifyPersonOrder(v));
     case "org": {
       const stripped = stripOrgSuffixes(v);
       return stripped === "" ? v : stripped;

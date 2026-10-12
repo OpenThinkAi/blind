@@ -31,9 +31,9 @@ describe("a dropped column's values recur", () => {
     const b = out(r, "b.txt");
     expect(b).toMatch(/^Person_[0-9A-F]+ called; Mr\. Person_[0-9A-F]+ will pick up Biscuit\.\n$/);
     expect(b).not.toContain("Quillfeather");
-    // The two pseudonyms differ: whole name and surname alone.
+    // "Mr. Quillfeather" is the one known Quillfeather, so it gets the whole name's pseudonym (AGT-1842).
     const [whole, part] = [...b.matchAll(/Person_[0-9A-F]+/g)].map((m) => m[0]);
-    expect(whole).not.toBe(part);
+    expect(part).toBe(whole as string);
     const text = r.files.find((f) => f.path === "b.txt");
     expect(text?.removedReplacements).toBe(2);
     expect(text?.mappedReplacements).toBe(0);

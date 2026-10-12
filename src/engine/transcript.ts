@@ -23,6 +23,7 @@ import { DICTIONARY } from "./words.ts";
 import { isDateWord } from "./datecontext.ts";
 import { isOnlyHonorificsOrRoles } from "./honorifics.ts";
 import { nameParts, recurrenceExclusion } from "./recur.ts";
+import type { PersonAliases } from "./identity.ts";
 import type { ExtraForm, Span } from "./text.ts";
 
 export type TranscriptKind = "vtt" | "srt" | "text";
@@ -401,6 +402,7 @@ export function speakerForms(
   vocabulary: ReadonlySet<string>,
   others: Iterable<string> = [],
   keep: ReadonlySet<string> = new Set(),
+  aliases?: PersonAliases,
 ): ExtraForm[] {
   const names = [...new Set([...speakers].map(normName))].filter((n) => n !== "").sort(cmp);
   const out = new Map<string, ExtraForm>();
@@ -409,7 +411,7 @@ export function speakerForms(
   };
   for (const name of names) if (recurrenceExclusion(name, vocabulary) === null) add(name, name);
   // "Speaker 2" has only the dictionary word "Speaker" as a part, which is excluded.
-  const parts = nameParts(names, others, vocabulary, keep);
+  const parts = nameParts(names, others, vocabulary, keep, aliases);
   for (const p of parts) if (p.exclusion === null) add(p.form, p.value, isDateWord(p.form));
   // Misspellings: capitalised spoken words one edit from a part (an excluded part too: "Rosy" for "Rose").
   const byFold = new Map(parts.map((p) => [fold(p.form), p]));

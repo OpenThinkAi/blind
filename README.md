@@ -95,7 +95,9 @@ documents ------------ engine (deterministic) ---------------+--> blinded docume
   Nothing is applied without a saved spec, and a later plan only sends what the spec does not
   already cover.
 - **Engine** (no model): applies the spec byte for byte. The same value gets the same
-  pseudonym everywhere (`Person_A7F3`, `Org_2C9E`), IPs stay IPs and emails stay emails, formulas,
+  pseudonym everywhere (`Person_A7F3`, `Org_2C9E`), and so does one person however the name is
+  written (`Quill, Avery`, `Avery+Quill`, `Dr. A. Quill` when nothing else fits), while a pet and
+  an owner who share a name stay apart. IPs stay IPs and emails stay emails, formulas,
   joins and formatting survive. A column nobody classified that looks like identifiers is
   pseudonymised, not passed through; dates, amounts, quantities with units and small repeating
   categories (species, status) are not identifiers, and pass. People named only in prose are

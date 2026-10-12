@@ -69,7 +69,9 @@ import { DocxError, type DocxPlan, docxParagraphs, docxWholes, FONT, IMAGE, plan
 import { OfficeIds } from "./officeid.ts";
 import { NameRewriter, rewriteSpans } from "./names.ts";
 import { canonicalize } from "./canonical.ts";
-import { proseNames } from "./prose.ts";
+import { proseNamesWithTitles } from "./prose.ts";
+import { isHonorificOrRole } from "./honorifics.ts";
+import { personAliases } from "./identity.ts";
 import { keepForms, nameParts, personPartForms, personValues, proseForms, recurrenceForms, TextScanner, vocabularyForms } from "./recur.ts";
 import { EntityMatcher, type ExtraForm, keepDomains, type Span } from "./text.ts";
 import { entrySpans, keptSpeakers, planTranscript, shapeParagraphs, speakerForms, speakersOf, type TranscriptPlan, transcriptSpans } from "./transcript.ts";
@@ -871,29 +873,59 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   const mappedKeys = new Set(columnMapped.map(formKey));
   const removedKeys = new Set(removedValues.map(formKey).filter((k) => !mappedKeys.has(k)));
   // A name part is the person's, or its own when another person shares it, so it is traced by its form.
-  const partKeys = (values: ExtraForm[]): Set<string> => new Set(personPartForms(values, undefined, vocabularyForms(spec.entities), { keep: opts.keep }).map((f) => `person\0${f.form}`));
+  const partKeys = (values: ExtraForm[]): Set<string> => new Set(personPartForms(values, undefined, vocabularyForms(spec.entities), { keep: opts.keep }).map((f) => `${f.cls}\0${f.form}`));
   const columnParts = partKeys(columnMapped);
   const removedParts = new Set([...partKeys(removedValues.filter((f) => removedKeys.has(formKey(f))))].filter((k) => !columnParts.has(k)));
   const asRemoved = (f: ExtraForm): ExtraForm =>
-    f.source === undefined && (removedKeys.has(formKey(f)) || (f.cls === "person" && removedParts.has(`person\0${f.form}`))) ? { ...f, source: "removed" } : f;
+    f.source === undefined && (removedKeys.has(formKey(f)) || ((f.cls === "person" || f.cls === "value") && removedParts.has(`${f.cls}\0${f.form}`))) ? { ...f, source: "removed" } : f;
   const mapped = [...columnMapped, ...removedValues];
   columnValues.push(...removedValues);
   const voiceNames = speakers.filter((n) => !kept(n));
   const vocabularySet = vocabularyForms(spec.entities);
   const keepSet = keepForms(opts.keep);
   const people = personValues(mapped, opts.map);
-  const voices = speakerForms(voiceNames, spoken, vocabularySet, people, keepSet);
   // People named only in prose (AGT-1830), in the text the scanner reads, less anyone already known.
   const read = proseInputs(plans);
   const known = new Set([...people, ...voiceNames].map((v) => canonicalize("person", v)));
-  const prosePeople = proseNames(read.free, { keep: keepSet, vocabulary: vocabularySet, kept: read.kept }).filter((v) => !known.has(canonicalize("person", v)));
+  const found = proseNamesWithTitles(read.free, { keep: keepSet, vocabulary: vocabularySet, kept: read.kept });
+  // Who is who (AGT-1842): "J. Sample" and "Dr. Sample" resolve to one known person when nothing else
+  // fits (identity.ts). A lone name found after a title is considered with its title, as written.
+  const titledSingles = [...found.titles].flatMap(([name, titles]) => (/\s/.test(name) ? [] : titles.map((t) => `${t} ${name}`)));
+  const titled = new Set<string>();
+  for (const v of [...people, ...voiceNames]) {
+    const first = v.trim().split(/\s+/)[0] ?? "";
+    if (isHonorificOrRole(first) && !canonicalize("person", v).startsWith(first.toLowerCase().replace(/\.$/, ""))) titled.add(canonicalize("person", v));
+  }
+  for (const name of found.titles.keys()) titled.add(canonicalize("person", name));
+  const unknownProse = found.names.filter((v) => !known.has(canonicalize("person", v)));
+  const aliases = personAliases([...people, ...voiceNames, ...unknownProse, ...titledSingles], titled);
+  // A lone name seen only after titles that all resolve to one person is that person, not a second
+  // person sharing the name, so it does not make that person's own name part ambiguous.
+  const resolvedSingle = (name: string): boolean => {
+    const targets = new Set((found.titles.get(name) ?? []).map((t) => aliases.get(canonicalize("person", `${t} ${name}`))?.key));
+    return !/\s/.test(name) && targets.size === 1 && !targets.has(undefined);
+  };
+  const prosePeople = unknownProse.filter((v) => !resolvedSingle(v));
+  const voices = speakerForms(voiceNames, spoken, vocabularySet, people, keepSet, aliases);
   // They count as other people for the known people's name parts, so a surname both share is ambiguous.
   const others = [...voiceNames, ...prosePeople];
-  const parts = personPartForms(mapped, opts.map, vocabularySet, { keep: opts.keep, speakers: others }).map(asRemoved);
-  const forms = recurrenceForms(mapped, spec.entities, opts.map, { keep: opts.keep, speakers: others }).map(asRemoved);
+  const parts = personPartForms(mapped, opts.map, vocabularySet, { keep: opts.keep, speakers: others, aliases }).map(asRemoved);
+  const forms = recurrenceForms(mapped, spec.entities, opts.map, { keep: opts.keep, speakers: others, aliases }).map(asRemoved);
   // A form already matched for a known value or a speaker keeps that value's pseudonym.
   const claimed = new Set([...forms, ...voices, ...parts].map((f) => `${f.cls}\0${f.form ?? f.value}`));
-  const prose = proseForms(prosePeople, [...people, ...voiceNames], vocabularySet, keepSet).filter((f) => !claimed.has(`${f.cls}\0${f.form ?? f.value}`));
+  // A titled lone name ("Dr. Sample") that resolves to one person is matched with its title, which stays
+  // as written, and counted with that person's other spans (a removed column's person stays `removed`).
+  // One that does not resolve keeps the lone name's pseudonym, as before.
+  const identity = (v: string): string => aliases.get(canonicalize("person", v))?.key ?? canonicalize("person", v);
+  const sourceOf = (key: string): ExtraForm["source"] => [...forms, ...parts, ...voices].find((f) => f.cls === "person" && identity(f.value) === key)?.source ?? "map";
+  const titledForms: ExtraForm[] = titledSingles.map((form) => {
+    const name = form.slice(form.lastIndexOf(" ") + 1);
+    const alias = aliases.get(canonicalize("person", form));
+    return alias !== undefined ? { cls: "person", value: form, form, source: sourceOf(alias.key), lead: 1 } : { cls: "person", value: name, form, source: "prose", lead: 1 };
+  });
+  const prose = [...proseForms(prosePeople, [...people, ...voiceNames], vocabularySet, keepSet, aliases), ...titledForms].filter(
+    (f) => !claimed.has(`${f.cls}\0${f.form ?? f.value}`),
+  );
   const nameMatcher = new EntityMatcher(spec.entities, [...columnValues, ...voices, ...parts, ...prose]);
   const names = new NameRewriter(nameMatcher, spec.patterns, keep, { vocabulary: vocabularySet, keep: keepSet });
   for (const p of plans) names.planPath(p.input.path);
@@ -974,7 +1006,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   for (const [cls, list] of Object.entries(spec.entities)) {
     if (cls !== "vocabulary" && list !== undefined) entities[cls as PseudoClass] = list;
   }
-  const pz = new Pseudonymizer({ salt: opts.salt, map: opts.map, entities, avoid });
+  const pz = new Pseudonymizer({ salt: opts.salt, map: opts.map, entities, avoid, personAliases: aliases });
   const officeIds = new OfficeIds(opts.salt);
 
   // Pass 1 ends here: derive every pseudonym in sorted order.
@@ -1203,7 +1235,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     byOutput.set(f.outputPath, f.path);
   }
   // Name parts two people share were replaced with a pseudonym of their own: report the ones used.
-  const sharedNameParts = nameParts([...people, ...voiceNames, ...prosePeople], [], vocabularySet, keepSet)
+  const sharedNameParts = nameParts([...people, ...voiceNames, ...prosePeople], [], vocabularySet, keepSet, aliases)
     .filter((p) => p.shared && p.exclusion === null && requests.has(`person\0${p.value}`))
     .map((p) => pz.pseudonym("person", p.value))
     .sort(cmp);

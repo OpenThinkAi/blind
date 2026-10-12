@@ -260,12 +260,12 @@ export function buildProfile(inputs: readonly string[], k: number, cwd: string):
     }
     let text: string;
     try {
-      // The same decode() apply uses (UTF-8, BOM-marked UTF-8/16, else Latin-1), so a file the
-      // engine will rewrite is never one the profile skipped.
+      // The same decode() apply uses (UTF-8, BOM-marked UTF-8/16; 8-bit text that is not UTF-8 is
+      // refused by both), so a file the profile lists is one the engine will handle.
       text = decode(bytes).text;
     } catch (e) {
       if (!(e instanceof EncodingError)) throw e;
-      skipped.push({ path: f.path, reason: `cannot decode: ${e.message}` });
+      skipped.push({ path: f.path, reason: e.message });
       continue;
     }
     if (format === "csv" || format === "tsv") {

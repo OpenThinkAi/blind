@@ -64,15 +64,14 @@ describe("blind apply", () => {
     expect(r.out).toContain("sub/notes.md (text, utf8)");
   });
 
-  test("a cp1252 text file is blinded, never written through raw (AGT-1816)", async () => {
+  test("a cp1252 text file is refused, never written (AGT-1816 decoded it; AGT-1857 refuses it)", async () => {
     const spec = { ...SPEC, entities: { person: [{ canonical: "\u00d3scar Example", aliases: [], parts: ["\u00d3scar"] }] } };
     writeFileSync(join(dir, ".blind", "spec.json"), JSON.stringify(spec));
     writeFileSync(join(dir, "in", "cp.txt"), Buffer.from("Call \xd3scar Example back.\n", "latin1"));
     const r = await apply("in", "-o", "out");
-    expect(r.code).toBe(0);
-    const out = readFileSync(join(dir, "out", "cp.txt")).toString("latin1");
-    expect(out).not.toContain("\xd3scar");
-    expect(out).toMatch(/^Call Person_[0-9A-F]{4} back\.\n$/);
+    expect(existsSync(join(dir, "out", "cp.txt"))).toBe(false);
+    expect(r.code).toBe(1);
+    expect(r.out + r.err).toContain("not UTF-8: save the file as UTF-8 and run again");
   });
 
   test("blind.toml [patterns] switches a pattern on or off with no spec edit", async () => {

@@ -136,18 +136,18 @@ describe("buildProfile", () => {
       { path: ".hidden.csv", reason: "hidden" },
       { path: "a.vtt", reason: "not a WebVTT transcript (no cue timing found)" },
       { path: "b.bin", reason: "unsupported file type .bin" },
-      { path: "bad16.txt", reason: "cannot decode: marked UTF-16LE but has an odd number of bytes" },
+      { path: "bad16.txt", reason: "marked UTF-16LE but has an odd number of bytes" },
       { path: "broken.csv", reason: "cannot parse: unterminated quoted field starting on line 2" },
       { path: "broken.json", reason: "cannot parse: unexpected end of input at line 1, column 7" },
       { path: "link.txt", reason: "symbolic link (not followed)" },
     ]);
   });
 
-  test("a non-UTF-8 text file is profiled through the shared decode, not skipped (AGT-1816)", () => {
+  test("a non-UTF-8 text file is skipped with the same refusal apply gives (AGT-1816 profiled it; AGT-1857 refuses it)", () => {
     put("kit/cp1252.txt", new Uint8Array(Buffer.from("Contact \xd3scar Example today.\n", "latin1")));
     const { profile, skipped } = buildProfile(["kit"], 5, dir);
-    expect(skipped).toEqual([]);
-    expect(profile.files.map((f) => f.path)).toEqual(["cp1252.txt"]);
+    expect(skipped).toEqual([{ path: "cp1252.txt", reason: "not UTF-8: save the file as UTF-8 and run again" }]);
+    expect(profile.files.map((f) => f.path)).not.toContain("cp1252.txt");
   });
 
   test("each worksheet of a workbook is a table with its sheet, header row and columns", () => {

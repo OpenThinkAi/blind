@@ -851,7 +851,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       decoded = decode(input.bytes);
     } catch (e) {
       if (!(e instanceof EncodingError)) throw e;
-      skipped.push({ path: input.path, reason: `cannot decode: ${e.message}; not written` });
+      skipped.push({ path: input.path, reason: `${e.message}; not written` });
       continue;
     }
     if (format === "text" || format === "vtt" || format === "srt") {

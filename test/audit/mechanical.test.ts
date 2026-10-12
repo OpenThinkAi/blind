@@ -154,6 +154,16 @@ describe("auditTree", () => {
     ]);
   });
 
+  test("an 8-bit text file in the output is a leak (AGT-1857), and its raw bytes are still scanned", () => {
+    const { entries, map } = kit();
+    const r = auditTree([...entries, file("f.txt", Buffer.from("Zoë said EXW", "latin1")), file("g.txt", "Zoë said EXW")], SPEC, map);
+    const f = r.files.find((x) => x.path === "f.txt");
+    expect(f?.status).toBe("leak");
+    expect(f?.findings.some((x) => x.class === "encoding" && x.severity === "leak")).toBe(true);
+    expect(f?.findings.some((x) => x.class === "org" && x.severity === "leak")).toBe(true);
+    expect(r.files.find((x) => x.path === "g.txt")?.findings.some((x) => x.class === "encoding")).toBe(false);
+  });
+
   test("survivors are found in UTF-16 (either byte order, BOM or not), escapes and Latin-1", () => {
     const { entries, map } = kit();
     const le = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("x Avery Quill", "utf16le")]);
@@ -166,7 +176,6 @@ describe("auditTree", () => {
         file("c.xml", "<t>Av&#101;ry Qu&#x69;ll</t>"),
         file("d.url", "https://example.org/?q=Avery%20Quill"),
         file("e.json", '{"n":"Avery\\u0020Quill"}'),
-        file("f.txt", Buffer.from("Zoë said EXW", "latin1")),
       ],
       SPEC,
       map,
@@ -178,7 +187,6 @@ describe("auditTree", () => {
       "c.xml": [3, "person"],
       "d.url": [23, "person"],
       "e.json": [6, "person"],
-      "f.txt": [9, "org"],
     });
     // Fully read, so no "unscanned" candidate for the BOM-less UTF-16 file.
     expect(findings(r).filter((f) => f.class === "unscanned")).toEqual([]);

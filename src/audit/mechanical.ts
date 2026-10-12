@@ -45,7 +45,7 @@ import { type ColumnRule, type PatternName, type Patterns, patternOn, REDACTED_V
 import { customDataPart, customPartRefusal } from "../engine/customxml.ts";
 import { CsvError, parseCsv, sniffDelimiter } from "../engine/csv.ts";
 import { inDateContext, isDateWord } from "../engine/datecontext.ts";
-import { decode, EncodingError } from "../engine/encoding.ts";
+import { decode, EncodingError, isEightBit } from "../engine/encoding.ts";
 import type { BlindMap } from "../engine/map.ts";
 import { isPseudonym } from "../engine/pseudonym.ts";
 import { nameWordExcluded, onNameTokens } from "../engine/names.ts";
@@ -943,6 +943,19 @@ function shapedColumns(sink: PartSink, rows: readonly { cells: { value: string }
 }
 
 /**
+ * 8-bit text that is not UTF-8 in an output tree. The engine refuses to read or write such a file
+ * (AGT-1857), so one present in the output was never blinded: a leak whatever its values are.
+ */
+const TEXT_FORMAT_RE = /\.(?:csv|tsv|tab|json|jsonl|ndjson|txt|text|md|markdown|log|vtt|srt)$/i;
+function eightBitFinding(sink: PartSink, path: string, bytes: Uint8Array) {
+  if (!TEXT_FORMAT_RE.test(path) || !isEightBit(bytes)) return;
+  sink.findings.push({
+    file: sink.file, part: "", in: "content", offset: null, line: null, class: "encoding", source: "scan", severity: "leak", masked: "",
+    reason: "8-bit text that is not UTF-8 is in the output; blind refuses such files, so it was never blinded", encoding: null,
+  });
+}
+
+/**
  * A pattern match, entity or map value inside a cell of a column the spec keeps is kept on purpose:
  * blind leaves that cell as it is, so the finding is a candidate saying so, not a leak. Only a
  * table read as UTF-8 or Latin-1 is placed (byte offsets are exact there); in any other the
@@ -958,12 +971,11 @@ function keptByRule(sink: PartSink, bytes: Uint8Array, rules: readonly ColumnRul
     if (!(e instanceof EncodingError)) throw e;
     return;
   }
-  if (decoded.encoding !== "utf8" && decoded.encoding !== "utf8-bom" && decoded.encoding !== "latin1") return;
+  if (decoded.encoding !== "utf8" && decoded.encoding !== "utf8-bom") return;
   const cells = keptCells(decoded.text, format === "tsv", rules);
   if (cells.length === 0) return;
   const bom = decoded.encoding === "utf8-bom" ? 3 : 0;
-  const latin = decoded.encoding === "latin1";
-  const place = (at: number): number => (latin ? at : Buffer.byteLength(decoded.text.slice(0, at), "utf8")) + bom;
+  const place = (at: number): number => Buffer.byteLength(decoded.text.slice(0, at), "utf8") + bom;
   const ranges = cells.map((c) => [place(c.start), place(c.end)] as const);
   sink.findings = sink.findings.map((f) => {
     if (f.severity !== "leak" || f.part !== "" || f.in !== "content" || f.offset === null) return f;
@@ -1078,6 +1090,7 @@ export function auditTree(entries: readonly TreeEntry[], spec: Spec, map: BlindM
     switch (entry.kind) {
       case "file":
         scanBytes(sink, "", entry.bytes, 0, ctx, zipBudget());
+        eightBitFinding(sink, entry.path, entry.bytes);
         columnFindings(sink, entry.bytes, rulesByFile.get(entry.path) ?? []);
         keptByRule(sink, entry.bytes, rulesByFile.get(entry.path) ?? []);
         break;

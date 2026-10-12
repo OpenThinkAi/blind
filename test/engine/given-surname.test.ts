@@ -1,5 +1,5 @@
 // A given name right before a known surname (AGT-1854): another person's full name, not the known
-// person's lone surname; and 8-bit text read as windows-1252. Everything here is invented.
+// person's lone surname; and 8-bit text that is not UTF-8 is refused (AGT-1857). Everything here is invented.
 
 import { describe, expect, test } from "bun:test";
 import { type ApplyResult, applySpec, type InputFile } from "../../src/engine/apply.ts";
@@ -88,7 +88,7 @@ describe("a word that is not a given name stays a lone surname", () => {
   });
 });
 
-describe("8-bit text is read as windows-1252", () => {
+describe("8-bit text that is not UTF-8 is refused (AGT-1857)", () => {
   const bytes = Buffer.concat([
     Buffer.from("Dana Quillfeather\n"),
     Buffer.from([0x4e, 0x6f, 0xe9]),
@@ -102,29 +102,20 @@ describe("8-bit text is read as windows-1252", () => {
     Buffer.from([0x94, 0x81, 0x8d, 0x0a]),
   ]);
   const r = run([bytesFile("legacy.txt", bytes), file("v.csv", "owner_name,emergency_contact\nDana Quillfeather,x\n")]);
-  const o = outBytes(r, "legacy.txt");
 
-  test("names are replaced whole and the phone is replaced", () => {
-    const text = o.toString("latin1");
-    expect(text).not.toMatch(/Quillfeather|Ann|No.mie|555-555-0104/);
-    expect(r.files.find((f) => f.path === "legacy.txt")?.encoding).toBe("latin1");
+  test("the 8-bit file is listed as not written, with the stated reason", () => {
+    expect(r.outputs.some((o) => o.path === "legacy.txt")).toBe(false);
+    expect(r.skipped).toEqual([{ path: "legacy.txt", reason: "not UTF-8: save the file as UTF-8 and run again; not written" }]);
   });
 
-  test("bytes outside replacements are identical, including the cp1252 punctuation and undefined bytes", () => {
-    const masked = (b: Buffer) => b.toString("latin1").replace(/Person_[0-9A-F]{4}|Id_[0-9A-F]{4}|Id_[0-9A-F]+/g, "#");
-    // 0x97 em dash and 0x93/0x94 quotes survive; 0x81 and 0x8d (undefined in cp1252) keep their bytes.
-    expect(o.includes(Buffer.from([0x20, 0x97, 0x20]))).toBe(true);
-    expect(o.includes(Buffer.from([0x93, 0x71]))).toBe(true);
-    expect(o.includes(Buffer.from([0x94, 0x81, 0x8d, 0x0a]))).toBe(true);
-    expect(masked(o).split("\n").length).toBe(masked(bytes).split("\n").length);
+  test("other files in the same run are still blinded", () => {
+    expect(out(r, "v.csv")).not.toContain("Quillfeather");
   });
 
-  test("the dash is punctuation: a phone joined by dashes is still found", () => {
+  test("a cp1252 dash alone is refused too, never decoded", () => {
     const only = Buffer.concat([Buffer.from("call "), Buffer.from([0x97]), Buffer.from("555-555-0104"), Buffer.from([0x97]), Buffer.from("now\n")]);
     const res = run([bytesFile("a.txt", only)]);
-    const text = outBytes(res, "a.txt").toString("latin1");
-    expect(text).not.toContain("555-555-0104");
-    expect(text.startsWith("call \x97")).toBe(true);
-    expect(text.endsWith("\x97now\n")).toBe(true);
+    expect(res.outputs).toEqual([]);
+    expect(res.skipped[0]?.reason).toContain("not UTF-8");
   });
 });

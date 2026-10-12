@@ -319,10 +319,11 @@ describe("format fidelity (AC5)", () => {
     expect([...out.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
   });
 
-  test("Latin-1 bytes outside the replaced spans are untouched", () => {
+  test("Latin-1 text is refused, not written (AGT-1857)", () => {
     const bytes = Buffer.from("Owner,Ort\nAvery Quill,K\xf6ln\n", "latin1");
-    const out = Buffer.from(applySpec([{ path: "t.csv", bytes }], OWNER_ORT, { salt: SALT }).outputs[0]?.bytes as Uint8Array);
-    expect(out.toString("latin1")).toMatch(/^Owner,Ort\nPerson_[0-9A-F]{4},K\xf6ln\n$/);
+    const res = applySpec([{ path: "t.csv", bytes }], OWNER_ORT, { salt: SALT });
+    expect(res.outputs).toEqual([]);
+    expect(res.skipped).toEqual([{ path: "t.csv", reason: "not UTF-8: save the file as UTF-8 and run again; not written" }]);
   });
 
   test("a file with nothing to replace is returned byte for byte", () => {

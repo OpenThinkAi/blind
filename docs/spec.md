@@ -662,10 +662,12 @@ person, but two kinds are treated differently:
   GUIDs), and `val` on `w:tmpl` (a list template's code).
 
 **Output.** Delimiter, quoting, line endings and encoding (UTF-8 with or without BOM, UTF-16 with
-BOM, otherwise 8-bit bytes) are preserved (8-bit text is scanned as windows-1252, so the dashes, curly
-quotes and ellipsis of bytes 0x80-0x9F count as punctuation; the five bytes cp1252 leaves undefined
-are read as Latin-1; untouched bytes are written back exactly, and replacements are ASCII), and a file with nothing to replace is copied byte for
-byte. The reversal map goes to `.blind/map.json`, or to `--map-out <path>`, created with mode 0600.
+BOM) are preserved; untouched bytes are written back exactly, and replacements are ASCII. Text in
+any other encoding (8-bit bytes that are not valid UTF-8, with no byte-order mark) is refused by
+`profile`, `plan`, `apply` and `reveal` with the reason `not UTF-8: save the file as UTF-8 and run
+again`: it is listed as not written, and never guessed at or decoded. An 8-bit text file found in an
+output tree is a leak in `audit`. A file with nothing to replace is copied byte for byte.
+The reversal map goes to `.blind/map.json`, or to `--map-out <path>`, created with mode 0600.
 It may not sit inside the output or an input. An existing map at that path is reused, so earlier
 pseudonyms stay the same.
 
@@ -813,7 +815,7 @@ up to three layers, mechanical, semantic, then model; the report lists the layer
   more); a value under 3 characters; a whole value from the map that blind never recurs (the
   engine's own rule: only dictionary or field-label words, under 3 letters and digits, or a spec vocabulary form);
   a pattern match, spec entity or map value inside a cell of a CSV/TSV column the spec keeps (the
-  reason ends "kept by rule"; only for a table read as UTF-8 or Latin-1); a host label or email local part of a blinded value; a column
+  reason ends "kept by rule"; only for a table read as UTF-8); a host label or email local part of a blinded value; a column
   the spec declares `unknown` (unless it is dropped, redacted or scanned, which is a decision; a `scan` column is audited as free text, never explained away as vocabulary); a CSV/TSV column with no spec rule; an unanswered spec question; and
   anything the audit could not read in full (undecodable or encrypted archive members, binary
   content, images, symbolic links, unreadable files).

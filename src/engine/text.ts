@@ -259,7 +259,7 @@ export class EntityMatcher {
   }
 
   /** End offset of `form` matched at `pos`, or -1. */
-  private matchAt(text: string, pos: number, form: Form): number {
+  private matchAt(text: string, pos: number, form: Form, caseless = false): number {
     let i = pos;
     for (let w = 0; w < form.words.length; w++) {
       if (w > 0) {
@@ -272,7 +272,7 @@ export class EntityMatcher {
       if (form.rule === "exact") {
         if (got !== word) return -1;
       } else if (got.toLowerCase() !== form.folded[w]) return -1;
-      if (form.rule === "capital" && !/^\p{Lu}/u.test(got)) return -1;
+      if (form.rule === "capital" && !caseless && !/^\p{Lu}/u.test(got)) return -1;
       i += word.length;
     }
     const lastWord = form.words[form.words.length - 1] as string;
@@ -280,8 +280,12 @@ export class EntityMatcher {
     return i;
   }
 
-  /** Entity spans in `text` that do not overlap any of `taken` (sorted, non-overlapping). */
-  find(text: string, taken: readonly Span[] = []): Span[] {
+  /**
+   * Entity spans in `text` that do not overlap any of `taken` (sorted, non-overlapping). `caseless`
+   * drops the capitalised-word rule, so a single name word matches in any case ("sample" for
+   * "Sample"): for names written as identifiers (names.ts); short acronyms still match exactly.
+   */
+  find(text: string, taken: readonly Span[] = [], caseless = false): Span[] {
     if (this.empty) return [];
     const out: Span[] = [];
     let t = 0;
@@ -297,7 +301,7 @@ export class EntityMatcher {
       const candidates = isWordChar(text[pos - 1]) && isWordChar(ch) ? undefined : this.byFirst.get(ch.toLowerCase());
       let matched = false;
       for (const form of candidates ?? []) {
-        const end = this.matchAt(text, pos, form);
+        const end = this.matchAt(text, pos, form, caseless);
         if (end < 0 || (block !== undefined && end > block.start)) continue;
         if (form.datePart && inDateContext(text, pos, end)) continue;
         out.push({ start: pos, end, cls: form.cls, value: form.value, source: form.source });

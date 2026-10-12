@@ -13,7 +13,7 @@ import {
   splitText,
 } from "../src/model.ts";
 import { type ModelConfig, type Policy, type PrivacyMode, defaultPolicy, parsePolicy, renderPolicy } from "../src/policy.ts";
-import { buildProfile, forPrivacyMode } from "../src/profile/profile.ts";
+import { buildProfile, forPrivacyMode, MAX_SPEAKERS } from "../src/profile/profile.ts";
 import { tokeniseProfile } from "../src/profile/tokens.ts";
 import type { Profile } from "../src/schema.ts";
 
@@ -203,6 +203,23 @@ describe("profile-only", () => {
       }),
     );
     expect(msg).toContain("must use https");
+  });
+});
+
+describe("profile-only transcript sample lines", () => {
+  const withLines = (speakers: string[], sampleLines: string[]): Profile => ({ ...FIXTURE, transcripts: [{ file: "standup.vtt", speakers, sampleLines }] });
+  const sent = (p: Profile) => forPrivacyMode({ profile: p, skipped: [], notes: [] }, "profile-only").profile.transcripts[0];
+
+  test("a sample line's speaker label goes as speaker_N, never as the name", () => {
+    const t = sent(withLines(["Avery Quill", "Avery Quill Jr", "Robin Example"], ["Avery Quill Jr: hi", "Robin Example: see you", "Avery Quill: ok", "no label here"]));
+    expect(t?.speakers).toEqual([]);
+    expect(t?.sampleLines).toEqual(["speaker_2: hi", "speaker_3: see you", "speaker_1: ok", "no label here"]);
+    expect(JSON.stringify(PROFILE_ONLY.transcripts)).not.toContain("Robin Example:");
+  });
+
+  test("a capped speaker list may not name every speaker, so the sample lines are left out", () => {
+    const many = Array.from({ length: MAX_SPEAKERS }, (_, i) => `Speaker ${String.fromCharCode(65 + (i % 26))}${i}`);
+    expect(sent(withLines(many, ["Unlisted Person: hello"]))?.sampleLines).toEqual([]);
   });
 });
 

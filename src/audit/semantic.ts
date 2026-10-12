@@ -53,7 +53,7 @@ import {
 } from "./mechanical.ts";
 import { fold, stringView, unescapeView, type View, viewsOf, xmlBaseView } from "./views.ts";
 import { localName, looksLikeXml, officeDisplayName, officeIdAttribute, ooxmlUriAttribute, walkXml } from "./xml.ts";
-import { looksLikeZip, readZip, ZipError } from "./zip.ts";
+import { looksLikeZip, readZip, type ZipBudget, ZipError, zipBudget } from "./zip.ts";
 
 /** Distinct candidates listed per file; the rest are counted in one extra finding. */
 export const MAX_PER_FILE = 200;
@@ -611,11 +611,11 @@ function scanViewsInto(w: Walk, part: string, where: Finding["in"], views: reado
   }
 }
 
-function scanContent(w: Walk, name: string, part: string, bytes: Uint8Array, depth: number) {
+function scanContent(w: Walk, name: string, part: string, bytes: Uint8Array, depth: number, budget: ZipBudget) {
   if (looksLikeZip(bytes) && depth < MAX_ZIP_DEPTH) {
     let members;
     try {
-      members = readZip(bytes);
+      members = readZip(bytes, budget);
     } catch (e) {
       if (!(e instanceof ZipError)) throw e;
       // The mechanical layer reports the archive as unreadable; read its raw bytes here too.
@@ -632,7 +632,7 @@ function scanContent(w: Walk, name: string, part: string, bytes: Uint8Array, dep
       const memberPart = part === "" ? m.name : `${part}!${m.name}`;
       scanViewsInto(w, memberPart, "name", stringView(m.name));
       // A member that could not be decoded is already an `unscanned` mechanical candidate.
-      if (m.bytes !== undefined) scanContent(w, m.name, memberPart, m.bytes, depth + 1);
+      if (m.bytes !== undefined) scanContent(w, m.name, memberPart, m.bytes, depth + 1, budget);
     }
     return;
   }
@@ -781,7 +781,7 @@ export function semanticFindings(entries: readonly TreeEntry[], spec: Spec, map:
     const w: Walk = { map, terms, kept, keptIps, found: [] };
     const nameAt = entry.path.lastIndexOf("/") + 1;
     scanViewsInto(w, "", "name", stringView(entry.path.slice(nameAt)), nameAt);
-    if (entry.kind === "file") scanContent(w, entry.path, "", entry.bytes, 0);
+    if (entry.kind === "file") scanContent(w, entry.path, "", entry.bytes, 0, zipBudget());
     else if (entry.kind === "symlink") scanViewsInto(w, "", "link", stringView(entry.target));
     const found = withoutInitialOnlyNames(w.found);
     if (found.length > 0) out.set(entry.path, toFindings(entry.path, found));

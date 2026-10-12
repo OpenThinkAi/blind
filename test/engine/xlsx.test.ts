@@ -307,6 +307,20 @@ describe("XLSX apply: fail closed", () => {
     expect(r.files[0]?.unread).toEqual(["xl/printerSettings/printerSettings1.bin"]);
   });
 
+  test("an embedded file, macro or ActiveX part stops the workbook, as in a DOCX", () => {
+    for (const name of ["xl/embeddings/oleObject1.bin", "xl/embeddings/Microsoft_Excel_Worksheet1.xlsx", "xl/vbaProject.bin", "xl/activeX/activeX1.bin"]) {
+      const r = run(buildWorkbook({ extra: [{ name, data: "Avery Quill" }] }));
+      expect({ name, outputs: r.outputs.length, reason: r.skipped[0]?.reason }).toEqual({
+        name, outputs: 0, reason: `embedded file ${name} cannot be blinded inside an XLSX; not written`,
+      });
+    }
+    const thumb = run(buildWorkbook({ extra: [{ name: "docProps/thumbnail.wmf", data: new Uint8Array([1, 2]) }] }));
+    expect(thumb.skipped[0]?.reason).toBe("docProps/thumbnail.wmf is a picture of the original document and cannot be blinded; save the file without a thumbnail; not written");
+    const ok = run(buildWorkbook({ extra: [{ name: "xl/media/image1.png", data: new Uint8Array([0x89, 0x50]) }] }));
+    expect(ok.skipped).toEqual([]);
+    expect(ok.files[0]?.unread).toEqual(["xl/media/image1.png"]);
+  });
+
   test("spec rules must name an existing sheet and header", () => {
     const { sheet: _, ...noSheet } = rule("Name", "person", "blind");
     expect(() => run(buildWorkbook(), { ...SPEC, columns: [noSheet as ColumnRule] })).toThrow(/has no sheet/);

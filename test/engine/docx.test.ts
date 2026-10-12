@@ -334,6 +334,13 @@ describe("DOCX: fail closed", () => {
     expect(skippedReason(run(docx(e)))).toBe("embedded file word/embeddings/oleObject1.bin cannot be blinded inside a DOCX; not written");
   });
 
+  test("a package thumbnail is a picture of the original, so the document is not written", () => {
+    const e = entries({ extra: [{ name: "docProps/thumbnail.jpeg", data: "\xff\xd8\xff" }] });
+    expect(skippedReason(run(docx(e)))).toBe(
+      "docProps/thumbnail.jpeg is a picture of the original document and cannot be blinded; save the file without a thumbnail; not written",
+    );
+  });
+
   test("an unknown part with text is refused; one without text is fine and its attributes are free text", () => {
     const withText = entries({ extra: [{ name: "customXml/item1.xml", data: `${DECL}<props xmlns="urn:example:props"><client>Dana Pell</client></props>` }] });
     expect(skippedReason(run(docx(withText)))).toBe("part customXml/item1.xml is not a part this handler knows and holds text it cannot blind; not written");

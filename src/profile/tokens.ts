@@ -31,7 +31,9 @@ const KEY_PATTERNS = [DETECTORS.host, DETECTORS.email, DETECTORS.ip];
 /** Header patterns: every shape finder, so a host, email, IP, GUID or MAC as a header is caught. */
 const HEADER_PATTERNS = [DETECTORS.host, DETECTORS.email, DETECTORS.ip, DETECTORS.guid, DETECTORS.mac];
 /** Two or more capitalised words ("Avery Quill", "Jean-Luc O'Brien", "McAllister Group"). */
-const TITLE_WORD = String.raw`\p{Lu}[\p{Ll}\p{M}]*(?:['’-]?\p{Lu}?[\p{Ll}\p{M}]+)*`;
+// Each repetition starts with a separator or a capital, so a lowercase run splits only one way: the
+// same words as `\p{Lu}[\p{Ll}\p{M}]*(?:['’-]?\p{Lu}?[\p{Ll}\p{M}]+)*` without its exponential backtracking.
+const TITLE_WORD = String.raw`\p{Lu}[\p{Ll}\p{M}]*(?:(?:['’-]\p{Lu}?|\p{Lu})[\p{Ll}\p{M}]+)*`;
 const TITLE_CASE_WORDS = new RegExp(`^${TITLE_WORD}(?: ${TITLE_WORD})+$`, "u");
 /** A header row is value-like when at least this share of its filled cells are title-case words. */
 export const TITLE_CASE_SHARE = 0.5;

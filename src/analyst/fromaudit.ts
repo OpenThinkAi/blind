@@ -18,7 +18,7 @@ import { maskValue } from "../audit/mechanical.ts";
 import { xmlViews } from "../audit/semantic.ts";
 import { fold, stringView, type View, viewsOf, xmlBaseView } from "../audit/views.ts";
 import { looksLikeXml } from "../audit/xml.ts";
-import { looksLikeZip, readZip } from "../audit/zip.ts";
+import { looksLikeZip, readZip, type ZipBudget, zipBudget } from "../audit/zip.ts";
 import type { BlindMap } from "../engine/map.ts";
 import { isPseudonym } from "../engine/pseudonym.ts";
 import { findPatternSpans } from "../engine/text.ts";
@@ -158,6 +158,10 @@ class OutputTree {
     }
     const segs = file.split("/");
     if (isAbsolute(file) || file.includes("\\") || segs.some((s) => s === "" || s === "." || s === "..")) throw new Error("not a path inside the output tree");
+    // Every folder on the way must be a real directory: a symbolic link to one would lead outside the tree.
+    for (let k = 1; k < segs.length; k++) {
+      if (!lstatSync(join(this.root, ...segs.slice(0, k))).isDirectory()) throw new Error("a folder on its path is not a directory (symbolic links are never followed)");
+    }
     return join(this.root, ...segs);
   }
 
@@ -181,14 +185,14 @@ class OutputTree {
   }
 
   /** The member `part` ("a.xlsx!xl/x.xml", nested with "!") of `bytes`, with its own name. */
-  private member(bytes: Uint8Array, part: string): { name: string; bytes: Uint8Array } {
+  private member(bytes: Uint8Array, part: string, budget: ZipBudget = zipBudget()): { name: string; bytes: Uint8Array } {
     if (!looksLikeZip(bytes)) throw new Error("not an archive any more");
     // Longest name first: a member name may itself contain "!".
-    const members = readZip(bytes).sort((a, b) => b.name.length - a.name.length);
+    const members = readZip(bytes, budget).sort((a, b) => b.name.length - a.name.length);
     for (const m of members) {
       if (part !== m.name && !part.startsWith(`${m.name}!`)) continue;
       if (m.bytes === undefined) throw new Error(`member cannot be read (${m.error ?? "not decoded"})`);
-      return part === m.name ? { name: m.name, bytes: m.bytes } : this.member(m.bytes, part.slice(m.name.length + 1));
+      return part === m.name ? { name: m.name, bytes: m.bytes } : this.member(m.bytes, part.slice(m.name.length + 1), budget);
     }
     throw new Error("no such archive member any more");
   }

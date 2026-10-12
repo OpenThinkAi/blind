@@ -91,8 +91,8 @@ export interface KitOptions {
   rows?: number;
   /**
    * Also cite account numbers, ledger refs and scope codes from accounts.csv in the notes. These are
-   * column values, not spec entities or pattern matches, so the engine leaves them in free text until
-   * AGT-1779 lands. Off by default.
+   * column values, not spec entities or pattern matches: the engine replaces them in free text only
+   * through its corpus-wide recurrence scan (src/engine/recur.ts). Off by default.
    */
   recurInProse?: boolean;
 }
@@ -339,15 +339,34 @@ export function writeKit(dir: string, kit: Kit): void {
   writeFileSync(join(dir, "spec.json"), `${JSON.stringify(kit.spec, null, 2)}\n`);
 }
 
+const SYNTH_USAGE = "Usage: bun src/bench/synth.ts <dir> [--seed N] [--rows N] [--kit 1|2] [--recur-in-prose]\n";
+
 if (import.meta.main) {
-  const { values, positionals } = parseArgs({
-    args: process.argv.slice(2),
-    allowPositionals: true,
-    options: { seed: { type: "string" }, rows: { type: "string" }, kit: { type: "string" }, "recur-in-prose": { type: "boolean", default: false } },
-  });
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args: process.argv.slice(2),
+      allowPositionals: true,
+      options: {
+        seed: { type: "string" },
+        rows: { type: "string" },
+        kit: { type: "string" },
+        "recur-in-prose": { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
+      },
+    });
+  } catch (e) {
+    process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n${SYNTH_USAGE}`);
+    process.exit(2);
+  }
+  const { values, positionals } = parsed;
+  if (values.help) {
+    process.stdout.write(SYNTH_USAGE);
+    process.exit(0);
+  }
   const dir = positionals[0];
   if (dir === undefined || positionals.length !== 1) {
-    process.stderr.write("Usage: bun src/bench/synth.ts <dir> [--seed N] [--rows N] [--kit 1|2] [--recur-in-prose]\n");
+    process.stderr.write(SYNTH_USAGE);
     process.exit(2);
   }
   const seed = values.seed === undefined ? DEFAULT_SEED : Number(values.seed);

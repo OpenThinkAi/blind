@@ -334,6 +334,16 @@ export function buildProfile(inputs: readonly string[], k: number, cwd: string):
  * saved profile and spec name real locations); they are tokenised for each model call
  * (tokeniseProfile in tokens.ts), and a note says so.
  */
+/** A transcript's sample lines with each speaker label replaced by `speaker_N`; none when its speaker list was capped. */
+function unlabelled(t: ProfileTranscript): string[] {
+  if (t.speakers.length >= MAX_SPEAKERS) return [];
+  const longestFirst = t.speakers.map((name, i) => ({ name, token: `speaker_${i + 1}` })).sort((a, b) => b.name.length - a.name.length);
+  return t.sampleLines.map((line) => {
+    const hit = longestFirst.find((s) => line.startsWith(`${s.name}: `));
+    return hit === undefined ? line : `${hit.token}: ${line.slice(hit.name.length + 2)}`;
+  });
+}
+
 export function forPrivacyMode(result: ProfileResult, mode: PrivacyMode): ProfileResult {
   if (mode !== "profile-only") return result;
   const { profile } = result;
@@ -356,7 +366,10 @@ export function forPrivacyMode(result: ProfileResult, mode: PrivacyMode): Profil
       documents: profile.documents.map((d) => ({ ...d, outline: [] })),
       // Every transcript's speakers (VTT, SRT, and transcript-shaped text and DOCX, AGT-1749) are
       // names with no sampleCount bound: always emptied here, and refused by assertProfilePayload.
-      transcripts: profile.transcripts.map((t) => ({ ...t, speakers: [] })),
+      // A sample line starts with its speaker's name, so that label becomes `speaker_N` (N from the
+      // speaker list's first-appearance order). A capped list may not name every speaker, so then
+      // the sample lines are left out instead.
+      transcripts: profile.transcripts.map((t) => ({ ...t, speakers: [], sampleLines: unlabelled(t) })),
     },
     notes,
   };

@@ -106,4 +106,26 @@ describe("synthetic kit v1", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  test("the command line prints usage for --help and for a bad option, never a stack trace", () => {
+    const script = join(import.meta.dir, "../../src/bench/synth.ts");
+    const run = (...args: string[]) => {
+      const r = Bun.spawnSync([process.execPath, script, ...args], { stdout: "pipe", stderr: "pipe" });
+      return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
+    };
+    for (const flag of ["--help", "-h"]) {
+      const r = run(flag);
+      expect(r.code).toBe(0);
+      expect(r.out).toStartWith("Usage: bun src/bench/synth.ts <dir>");
+      expect(r.err).toBe("");
+    }
+    const bad = run("--bogus");
+    expect(bad.code).toBe(2);
+    expect(bad.err).toContain("Unknown option '--bogus'");
+    expect(bad.err).toContain("Usage: bun src/bench/synth.ts <dir>");
+    expect(bad.err).not.toContain("TypeError");
+    const none = run();
+    expect(none.code).toBe(2);
+    expect(none.err).toStartWith("Usage:");
+  });
 });

@@ -153,7 +153,8 @@ plan (exit 2) before anything is profiled or sent.
 changes you decide. `<report.json>` is the output of `blind audit <out> --json`, and `-o` names the
 same blinded output tree. No model is called.
 
-- **Candidates.** The report shows masked values only, so each finding that points at one value
+- **Candidates.** The report masks the values it finds (file and member names are printed as on
+  disk), so each finding that points at one value
   (a byte offset, a decoding, a masked value) is mapped back to its place in `<out>` (the file, the
   zip member, its name or content) and the value is read there. It must mask exactly as the report
   says and must not be a pseudonym in the map (`--map`, default `.blind/map.json`); otherwise the
@@ -184,12 +185,15 @@ same blinded output tree. No model is called.
   entity or a value or canonical form from the map: as vocabulary it would be kept and would shield
   those words. Accept it or leave it undecided.
 - **Then** run `blind apply` and `blind audit` again. `--json` prints
-  `{ "spec", "candidates", "changes", "undecided", "other", "unmapped" }`.
+  `{ "spec", "candidates", "changes", "undecided", "other", "unmapped" }`. The candidates hold the
+  values read back from `<out>` in the clear, as the table does, so you can decide on them: treat
+  that output as you treat the spec, and do not save it where others can read it.
 
 ## How `blind apply` uses the spec
 
 `blind apply <inputs> -o <out>` reads `.blind/spec.json` and `.blind/salt` and refuses (exit 2,
-nothing written) if either is missing or the spec is invalid. Spec `file` values are paths relative
+nothing written) if either is missing or the spec is invalid, or if a file or folder it would write
+inside `<out>` is already a symbolic link (it never writes through one). Spec `file` values are paths relative
 to an input directory, or the file name for a file named directly. This release handles CSV/TSV,
 JSON and JSONL (`.json`, `.jsonl`, `.ndjson`), XLSX workbooks (`.xlsx`), text (`.txt`, `.md`,
 `.log`), DOCX (`.docx`) and WebVTT and SRT transcripts (`.vtt`, `.srt`); any other file is listed
@@ -289,7 +293,8 @@ rewritten at the XML level, so everything not blinded is copied byte for byte:
 - Office's own linking IDs are rewritten wherever they are (see **Office structural IDs** below).
 - Images are copied unchanged and listed as a warning. A package that cannot be read, has a part
   this handler does not know that holds text, or embeds another file (an OLE object, a chart's
-  workbook, macros) is listed and not written (exit 1).
+  workbook, macros) is listed and not written (exit 1). So is one with a saved thumbnail
+  (`docProps/thumbnail.*`), a picture of the original first page.
 
 <a id="transcripts-in-apply"></a>**Transcripts.** A file is a transcript by its content:
 
@@ -374,7 +379,10 @@ is an error). The column table above applies to every cell, with these workbook 
   values; one found there stops the
   workbook (listed and not written, exit 1), naming the part and element but never the value. So
   does a member that cannot be parsed, a cell without a reference, and a zip that is not a workbook.
-  Members that are not XML (images, printer settings) are copied unread and listed in the report.
+  Members that are not XML are copied unread and listed in the report when they are images, fonts
+  or printer settings; any other (an embedded file or workbook, a macro, an ActiveX part) stops the
+  workbook (listed and not written, exit 1), as in a DOCX. So does a saved thumbnail
+  (`docProps/thumbnail.*`), a picture of the original sheet.
 
 **Office structural IDs.** Word and Excel write IDs of their own into a package. They name no
 person, but two kinds are treated differently:

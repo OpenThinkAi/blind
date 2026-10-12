@@ -9,7 +9,7 @@
 // Everything in the report except `timing` depends only on the kit: the order is fixed and no
 // value in it depends on the salt.
 
-import { closeSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { Writable } from "node:stream";
@@ -35,6 +35,7 @@ import {
   scoreHonesty,
   type UnscoredItem,
 } from "./score.ts";
+import { oneLine, terminalStream } from "../terminal.ts";
 
 export const KIT_INPUT = "input";
 export const KIT_ORACLE = "oracle.json";
@@ -136,7 +137,7 @@ const indent = (s: string): string => s.trimEnd().split("\n").map((l) => `  ${l}
 function table(i: { kind: string; where: string; class: string; masked: string; detail: string }[]): string[] {
   if (i.length === 0) return [];
   const head = ["KIND", "WHERE", "CLASS", "VALUE", "DETAIL"];
-  const cells = i.map((x) => [x.kind, x.where, x.class, x.masked === "" ? "-" : x.masked, x.detail]);
+  const cells = i.map((x) => [x.kind, x.where, x.class, x.masked === "" ? "-" : x.masked, x.detail].map(oneLine));
   const width = head.map((h, k) => Math.max(h.length, ...cells.map((c) => (c[k] as string).length)));
   const fmt = (c: string[]) => c.map((x, k) => (k === c.length - 1 ? x : x.padEnd(width[k] as number))).join("  ");
   return [fmt(head), ...cells.map(fmt), ""];
@@ -275,7 +276,11 @@ export async function runBench(argv: string[], io: BenchIO): Promise<number> {
     };
     try {
       mkdirSync(dirname(reportPath), { recursive: true });
-      writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+      // File, folder and member names in the report are as on disk, unmasked: private, like the kit.
+      const tmp = `${reportPath}.tmp`;
+      rmSync(tmp, { force: true });
+      writePrivate(tmp, `${JSON.stringify(report, null, 2)}\n`);
+      renameSync(tmp, reportPath);
     } catch (e) {
       throw new Refusal(`cannot write the report to ${reportPath}: ${(e as NodeJS.ErrnoException).code ?? "error"}`);
     }
@@ -296,5 +301,5 @@ export async function runBench(argv: string[], io: BenchIO): Promise<number> {
 }
 
 export function processBenchIO(): BenchIO {
-  return { out: process.stdout, err: process.stderr, cwd: process.cwd() };
+  return { out: terminalStream(process.stdout), err: terminalStream(process.stderr), cwd: process.cwd() };
 }

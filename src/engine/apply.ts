@@ -54,13 +54,16 @@ import { isJsonNumber, type JsonFormat, JsonError, type JsonToken, quote, scanJs
 import type { BlindMap } from "./map.ts";
 import { type EntityEntry, Pseudonymizer } from "./pseudonym.ts";
 import { type ColumnOutcome, decide, outcomeOf } from "./columns.ts";
-import { DocxError, type DocxPlan, docxParagraphs, planDocx, renderDocx, scanDocx } from "./docx.ts";
+import { DocxError, type DocxPlan, docxParagraphs, FONT, IMAGE, planDocx, THUMBNAIL, thumbnailReason, renderDocx, scanDocx } from "./docx.ts";
 import { OfficeIds } from "./officeid.ts";
 import { NameRewriter, rewriteSpans } from "./names.ts";
 import { keepForms, nameParts, personPartForms, personValues, recurrenceForms, TextScanner, vocabularyForms } from "./recur.ts";
 import { EntityMatcher, type ExtraForm, keepDomains, type Span } from "./text.ts";
 import { entrySpans, keptSpeakers, planTranscript, shapeParagraphs, speakerForms, speakersOf, type TranscriptPlan, transcriptSpans } from "./transcript.ts";
 import { type Env, planXlsx, prepareXlsx, renderXlsx, XlsxError, type XlsxPlan, XlsxSpecError, xlsxValues, ZipError } from "./xlsx.ts";
+
+/** XLSX members that are not XML but are copied unchanged and listed as unread. */
+const XLSX_COPIED = (name: string): boolean => !THUMBNAIL.test(name) && (IMAGE.test(name) || FONT.test(name) || /^xl\/printerSettings\/[^/]+\.bin$/i.test(name));
 
 export type EngineFormat = "csv" | "tsv" | "json" | "jsonl" | "text" | "docx" | "xlsx" | "vtt" | "srt";
 
@@ -781,6 +784,14 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       if (broken?.kind === "error") {
         // The rewriter copies a member it cannot parse unchanged: never write that as blinded.
         skipped.push({ path: p.input.path, reason: `cannot rewrite member ${broken.name} (${broken.error}); not written` });
+        continue;
+      }
+      // As for DOCX: a member blind cannot read (an embedded workbook or OLE object, a macro, ActiveX)
+      // is never copied into blinded output. Images, fonts and printer settings are copied and listed.
+      const embedded = r.members.find((m) => m.kind === "other" && !m.name.endsWith("/") && !XLSX_COPIED(m.name));
+      if (embedded !== undefined) {
+        const why = THUMBNAIL.test(embedded.name) ? thumbnailReason(embedded.name) : `embedded file ${embedded.name} cannot be blinded inside an XLSX`;
+        skipped.push({ path: p.input.path, reason: `${why}; not written` });
         continue;
       }
       const changed = r.members.some((m) => m.kind === "xml" && m.changed);

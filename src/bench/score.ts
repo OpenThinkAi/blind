@@ -16,7 +16,7 @@
 import { maskValue, type AuditReport, type TreeEntry } from "../audit/mechanical.ts";
 import { xmlViews } from "../audit/semantic.ts";
 import { stringView, type View, viewsOf } from "../audit/views.ts";
-import { looksLikeZip, readZip, ZipError } from "../audit/zip.ts";
+import { looksLikeZip, readZip, type ZipBudget, ZipError, zipBudget } from "../audit/zip.ts";
 import type { FileReport } from "../engine/apply.ts";
 import { CsvError, parseCsv } from "../engine/csv.ts";
 import { DocxError, docxParagraphs, planDocx } from "../engine/docx.ts";
@@ -168,7 +168,7 @@ export function scanLeaks(entries: readonly TreeEntry[], matcher: OracleMatcher)
   const push = (file: string, part: string, where: LeakItem["in"], found: OracleEntry[]) => {
     for (const e of found) leaks.push({ file, part, in: where, class: e.class, masked: maskValue(e.value) });
   };
-  const scanBytes = (file: string, part: string, name: string, bytes: Uint8Array, depth: number): void => {
+  const scanBytes = (file: string, part: string, name: string, bytes: Uint8Array, depth: number, budget: ZipBudget): void => {
     const raw = (b: Uint8Array) => push(file, part, "content", matcher.find(contentViews(b, name)));
     if (!looksLikeZip(bytes)) return raw(bytes);
     if (depth >= MAX_DEPTH) {
@@ -177,7 +177,7 @@ export function scanLeaks(entries: readonly TreeEntry[], matcher: OracleMatcher)
     }
     let members;
     try {
-      members = readZip(bytes);
+      members = readZip(bytes, budget);
     } catch (e) {
       if (!(e instanceof ZipError)) throw e;
       unscored.push({ file, part, reason: `looks like a zip archive but cannot be read (${e.message})` });
@@ -195,14 +195,14 @@ export function scanLeaks(entries: readonly TreeEntry[], matcher: OracleMatcher)
       const memberPart = part === "" ? m.name : `${part}!${m.name}`;
       push(file, memberPart, "name", matcher.find(stringView(m.name).map((v) => v.text)));
       if (m.bytes === undefined) unscored.push({ file, part: memberPart, reason: `${m.error ?? "not decoded"}; its content was not read` });
-      else scanBytes(file, memberPart, m.name, m.bytes, depth + 1);
+      else scanBytes(file, memberPart, m.name, m.bytes, depth + 1, budget);
     }
   };
   for (const e of entries) {
     const name = e.path.slice(e.path.lastIndexOf("/") + 1);
     // Each entry's own name; a folder's name is scored once, on the folder.
     push(e.path, "", "name", matcher.find(stringView(name).map((v) => v.text)));
-    if (e.kind === "file") scanBytes(e.path, "", name, e.bytes, 0);
+    if (e.kind === "file") scanBytes(e.path, "", name, e.bytes, 0, zipBudget());
     else if (e.kind !== "dir") unscored.push({ file: e.path, part: "", reason: e.kind === "unreadable" ? `cannot be read (${e.reason})` : `${e.kind === "symlink" ? "a symbolic link" : "not a regular file"}; not read` });
   }
   return { leaks, unscored };

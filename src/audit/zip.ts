@@ -7,6 +7,21 @@ import { inflateRawSync } from "node:zlib";
 
 /** Largest decompressed member the audit inflates; anything bigger is reported, not read. */
 export const MAX_MEMBER_BYTES = 256 * 1024 * 1024;
+/** Most decompressed bytes the audit inflates for one top-level file, nested archives included. */
+export const MAX_INFLATE_BYTES = 1024 * 1024 * 1024;
+
+/**
+ * What is left of one top-level file's decompression allowance. A caller that opens nested
+ * archives passes the same budget to every readZip for that file, so a nested zip bomb is
+ * bounded as a whole, not per level; members past it are reported, not read.
+ */
+export interface ZipBudget {
+  left: number;
+}
+
+export function zipBudget(): ZipBudget {
+  return { left: MAX_INFLATE_BYTES };
+}
 
 export interface ZipMember {
   name: string;
@@ -41,7 +56,7 @@ function findEocd(b: Buffer): number {
 }
 
 /** Reads the archive's directory and every member. Throws ZipError only when there is no readable directory at all. */
-export function readZip(bytes: Uint8Array): ZipMember[] {
+export function readZip(bytes: Uint8Array, budget: ZipBudget = zipBudget()): ZipMember[] {
   const b = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const eocd = b.length >= 22 ? findEocd(b) : -1;
   if (eocd < 0) throw new ZipError("no end-of-central-directory record");
@@ -96,8 +111,14 @@ export function readZip(bytes: Uint8Array): ZipMember[] {
         member.error = `declared size ${size} bytes exceeds the ${MAX_MEMBER_BYTES}-byte limit, not decoded`;
         continue;
       }
+      if (size > budget.left || budget.left <= 0) {
+        member.error = `decompressing it would pass the ${MAX_INFLATE_BYTES}-byte limit for one file, not decoded`;
+        continue;
+      }
       try {
-        member.bytes = inflateRawSync(data, { maxOutputLength: MAX_MEMBER_BYTES });
+        member.bytes = inflateRawSync(data, { maxOutputLength: Math.min(MAX_MEMBER_BYTES, budget.left) });
+        // Charge the larger of the declared and actual sizes: a member may under-declare.
+        budget.left -= Math.max(size, member.bytes.length);
       } catch {
         member.error = "deflate data could not be decoded";
       }

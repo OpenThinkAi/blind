@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -138,6 +138,20 @@ describe("mapping findings back to their values", () => {
     const { candidates, unmapped } = collectCandidates([f], join(dir, "out"), EMPTY_MAP);
     expect(candidates).toEqual([]);
     expect(unmapped[0]?.why).toMatch(/not a path inside the output tree/);
+  });
+
+  test("a folder on the path that is a symbolic link is never followed out of the tree", () => {
+    mkdirSync(join(dir, "out"));
+    mkdirSync(join(dir, "elsewhere"));
+    writeFileSync(join(dir, "elsewhere", "secret.txt"), "Harbour Lane Partners\n");
+    symlinkSync(join(dir, "elsewhere"), join(dir, "out", "link"));
+    const f: ReportFinding = {
+      file: "link/secret.txt", part: "", in: "content", offset: 0, line: 1, class: "semantic:phrase", source: "semantic",
+      severity: "candidate", masked: "Ha***21", reason: "x", encoding: "latin-1",
+    };
+    const { candidates, unmapped } = collectCandidates([f], join(dir, "out"), EMPTY_MAP);
+    expect(candidates).toEqual([]);
+    expect(unmapped[0]?.why).toMatch(/is not a directory \(symbolic links are never followed\)/);
   });
 
   test("a pseudonym at the place means the report is older than the output", () => {

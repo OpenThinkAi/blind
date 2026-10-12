@@ -16,6 +16,7 @@ import { MAP_FILE, runApply, SPEC_FILE } from "./apply.ts";
 import { EXIT_NOT_RUN, runAudit } from "./audit/command.ts";
 import { BLIND_DIR } from "./init.ts";
 import { parseSpec } from "./validate.ts";
+import { terminalStream } from "./terminal.ts";
 
 export interface RunIO {
   out: NodeJS.WritableStream;
@@ -151,5 +152,5 @@ async function chain(argv: string[], io: RunIO): Promise<number> {
 }
 
 export function processRunIO(): RunIO {
-  return { out: process.stdout, err: process.stderr, cwd: process.cwd() };
+  return { out: terminalStream(process.stdout), err: terminalStream(process.stderr), cwd: process.cwd() };
 }

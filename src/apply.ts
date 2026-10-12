@@ -14,6 +14,7 @@ import { BLIND_DIR, SALT_FILE } from "./init.ts";
 import { loadKeepTerms, POLICY_FILE, PolicyError } from "./policy.ts";
 import type { Spec } from "./schema.ts";
 import { parseSpec, SchemaError } from "./validate.ts";
+import { oneLine, terminalStream } from "./terminal.ts";
 
 export const SPEC_FILE = "spec.json";
 export const MAP_FILE = "map.json";
@@ -135,8 +136,8 @@ export function renderReport(result: ApplyResult): string {
     const head: string[] = f.encoding === undefined ? [f.format] : [f.format, f.encoding];
     if (f.delimiter !== undefined) head.push(`${DELIMITER_NAMES[f.delimiter] ?? "other"}-delimited`);
     if (f.headerRow !== undefined) head.push(f.noHeader ? "no header row found, row 1 used" : `header row ${f.headerRow}`);
-    lines.push(`${f.path} (${head.join(", ")})${f.changed ? "" : ": unchanged"}`);
-    if (f.outputPath !== f.path) lines.push(`  written as ${f.outputPath}`);
+    lines.push(`${oneLine(f.path)} (${head.join(", ")})${f.changed ? "" : ": unchanged"}`);
+    if (f.outputPath !== f.path) lines.push(`  written as ${oneLine(f.outputPath)}`);
     let sheet: string | undefined;
     for (const s of f.sheets ?? []) {
       if (s.outputName !== s.name) lines.push(`  sheet ${JSON.stringify(s.name)} renamed ${JSON.stringify(s.outputName)}`);
@@ -259,6 +260,22 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
 
     const result = applySpec(files, spec, { salt, map, keep });
 
+    // Never write through a symbolic link already inside the output tree: it could lead outside it.
+    // (The output directory itself is the user's to name, link or not.) Checked before anything is written.
+    for (const o of result.outputs) {
+      const segs = o.path.split("/");
+      for (let k = 1; k <= segs.length; k++) {
+        let st;
+        try {
+          st = lstatSync(join(outDir, ...segs.slice(0, k)));
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code === "ENOENT") break;
+          throw new Refusal(`${oneLine(segs.slice(0, k).join("/"))} in ${values.out}: cannot check it (${(e as NodeJS.ErrnoException).code ?? "error"})`);
+        }
+        if (st.isSymbolicLink()) throw new Refusal(`${oneLine(segs.slice(0, k).join("/"))} in ${values.out} is a symbolic link; blind never writes through one`);
+      }
+    }
+
     // The map first: if writing the outputs fails part-way, what was written can still be reversed.
     try {
       mkdirSync(dirname(mapPath), { recursive: true, mode: 0o700 });
@@ -278,10 +295,10 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
     }
 
     io.out.write(renderReport(result));
-    for (const i of collected.ignored) io.out.write(`ignored ${i.path}: ${i.reason}\n`);
+    for (const i of collected.ignored) io.out.write(`ignored ${oneLine(i.path)}: ${oneLine(i.reason)}\n`);
     const skipped = [...collected.skipped, ...result.skipped];
     io.onResult?.(result, skipped);
-    for (const s of skipped) io.err.write(`blind apply: ${s.path}: ${s.reason}\n`);
+    for (const s of skipped) io.err.write(`blind apply: ${oneLine(s.path)}: ${oneLine(s.reason)}\n`);
     io.out.write(
       `wrote ${result.outputs.length} file${result.outputs.length === 1 ? "" : "s"} to ${toPosix(relative(io.cwd, outDir)) || "."}; map: ${toPosix(relative(io.cwd, mapPath))} (mode 0600; keep it secret)\n`,
     );
@@ -300,5 +317,5 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
 }
 
 export function processApplyIO(): ApplyIO {
-  return { out: process.stdout, err: process.stderr, cwd: process.cwd() };
+  return { out: terminalStream(process.stdout), err: terminalStream(process.stderr), cwd: process.cwd() };
 }

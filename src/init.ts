@@ -17,6 +17,7 @@ import {
   defaultSamples,
   renderPolicy,
 } from "./policy.ts";
+import { terminalStream } from "./terminal.ts";
 
 export const BLIND_DIR = ".blind";
 export const SALT_FILE = "salt";
@@ -219,5 +220,5 @@ export async function runInit(argv: string[], io: InitIO): Promise<number> {
 
 /** The real process streams. */
 export function processIO(): InitIO {
-  return { input: process.stdin, output: process.stdout, err: process.stderr, isTTY: process.stdin.isTTY === true };
+  return { input: process.stdin, output: terminalStream(process.stdout), err: terminalStream(process.stderr), isTTY: process.stdin.isTTY === true };
 }

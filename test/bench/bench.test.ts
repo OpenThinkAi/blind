@@ -2,7 +2,7 @@
 // Timing is the only thing allowed to differ between runs; it is left out of every comparison.
 
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AuditReport, TreeEntry } from "../../src/audit/mechanical.ts";
@@ -27,6 +27,8 @@ interface Run {
   out: string;
   err: string;
   report: BenchReport | null;
+  /** The report file's permission bits, when it was written. */
+  mode: number | null;
 }
 
 /** Writes a kit (optionally with an edited spec), runs `blind bench` on it, and deletes it. */
@@ -42,7 +44,7 @@ async function bench(opts: { kit?: KitOptions; seed?: number; edit?: (spec: Spec
     const code = await runBench([dir, ...(opts.args ?? [])], { out: out as unknown as NodeJS.WritableStream, err: err as unknown as NodeJS.WritableStream, cwd: dir, tmpRoot: opts.tmpRoot });
     const path = join(dir, REPORT_FILE);
     const report = existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as BenchReport) : null;
-    return { code, out: out.text, err: err.text, report };
+    return { code, out: out.text, err: err.text, report, mode: existsSync(path) ? statSync(path).mode & 0o777 : null };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -56,6 +58,12 @@ const untimed = (r: Run) => {
 };
 
 describe("blind bench on synthetic kit v1", () => {
+  test("the report is written 0600, replacing an earlier one, since names in it are unmasked", async () => {
+    const r = await bench({ prepare: (dir) => writeFileSync(join(dir, REPORT_FILE), "{}\n", { mode: 0o644 }) });
+    expect(r.report?.result).toBe("pass");
+    expect(r.mode).toBe(0o600);
+  });
+
   test("the default kit passes: leaks 0, damage 0, honesty 0, everything scored", async () => {
     const r = await bench();
     expect(r.err).toBe("");

@@ -42,6 +42,9 @@ describe("inDateContext", () => {
     expect(ctx("Jan 9am", "Jan")).toBe(false);
     expect(ctx("Jan 3.5 hours", "Jan")).toBe(false);
   });
+  test("known trade-off: a day number followed by ordinary text still counts as a date (AC 1 checks adjacency only)", () => {
+    expect(ctx("Jan 14 tasks", "Jan")).toBe(true);
+  });
   test("month and weekday words", () => {
     for (const w of ["Jan", "Sept", "June", "August", "Mon", "Sunday"]) expect(isDateWord(w)).toBe(true);
     expect(isDateWord("Avery")).toBe(false);

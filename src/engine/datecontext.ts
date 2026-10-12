@@ -25,6 +25,10 @@ const BEFORE_RE = /(?<![\p{L}\p{N}.,])(?:(?:[12]\d{3})|(?:0?[1-9]|[12]\d|3[01])(
  * Whether the word at text[s, e) sits in a date context: a day number (1-31) or a four-digit year
  * right after it ("Jan. 9", "Jan 2026", "May 3rd", "Jan, 2026") or right before it ("9 Jan.",
  * "2026 Jan"), with one optional dot or comma and spaces between. Anywhere else it is a name.
+ *
+ * Deliberate trade-off (AGT-1813 AC 1): "next to a day number" is all that is checked, so "Jan 14 tasks"
+ * counts as a date although "Jan" could be a name there. A full name ("Jan Vellacourt") is still
+ * blinded by its own multi-word form; only the lone part is exempt.
  */
 export function inDateContext(text: string, s: number, e: number): boolean {
   return AFTER_RE.test(text.slice(e, e + 16)) || BEFORE_RE.test(text.slice(Math.max(0, s - 16), s));

@@ -42,7 +42,8 @@ describe("one entity, one pseudonym (B8)", () => {
     expect(r.skipped).toEqual([]);
     const [avery, robin] = speakers(r);
     expect(avery).toMatch(/^Person_[0-9A-F]{4}$/);
-    expect(cells(r).map((row) => row[0])).toEqual([avery, robin, expect.stringMatching(/^Value_/), expect.stringMatching(/^Value_/)]);
+    // The Client column reads as people's names, so every cell is a Person_ pseudonym (AGT-1830).
+    expect(cells(r).map((row) => row[0])).toEqual([avery, robin, expect.stringMatching(/^Person_/), expect.stringMatching(/^Person_/)]);
   });
 
   test("one phone written two ways gets one pseudonym; another number gets another", () => {
@@ -55,11 +56,11 @@ describe("one entity, one pseudonym (B8)", () => {
   test("the map has one entry per entity and stays valid", () => {
     expect(r.map.entries.map((e) => `${e.kind}:${e.canonical}`)).toEqual([
       "person:avery quill",
+      "person:jo sample",
+      "person:kit example",
       "person:robin example",
       "value:8015550100",
       "value:8015550142",
-      "value:jo sample",
-      "value:kit example",
     ]);
     expect(parseMap(serializeMap(r.map))).toEqual(r.map);
   });

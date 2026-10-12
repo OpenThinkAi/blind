@@ -1,4 +1,5 @@
-// A small built-in English word list for the profile's dictionaryRatio. Built in, not read from
+// A small built-in English word list: the profile's dictionaryRatio and the engine's dictionary-word
+// rules. It lives in the engine, which imports nothing from src/profile; the profiler imports it. Built in, not read from
 // /usr/share/dict, so the ratio is the same on every machine. It only needs to separate prose and
 // vocabulary ("open", "pending", "server") from names and codes; it is not a spell checker.
 // Written for blind: common function words, everyday nouns, verbs and adjectives, business and IT

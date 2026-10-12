@@ -41,6 +41,10 @@
 // with Person_ pseudonyms, the speakers' names, parts and misspellings join the
 // corpus-wide scanner as person forms, and timing lines stay byte-identical.
 //
+// People named only in prose (src/engine/prose.ts, AGT-1830) are found in the free text the scanner
+// reads (never in a cell under `keep`), less anyone a column, speaker or map already names, and join
+// the scanner as person forms (whole names and parts) with span source `prose`.
+//
 // Host matches under a keep-list domain are kept as written. Every output path
 // is blinded through src/engine/names.ts (patterns, entities and the column
 // values replaced above), planned with the cells and rendered after them.
@@ -58,7 +62,9 @@ import { type ColumnOutcome, decide, outcomeOf } from "./columns.ts";
 import { DocxError, type DocxPlan, docxParagraphs, docxWholes, FONT, IMAGE, planDocx, THUMBNAIL, thumbnailReason, refuseDocxUnrewritten, renderDocx, scanDocx } from "./docx.ts";
 import { OfficeIds } from "./officeid.ts";
 import { NameRewriter, rewriteSpans } from "./names.ts";
-import { keepForms, nameParts, personPartForms, personValues, recurrenceForms, TextScanner, vocabularyForms } from "./recur.ts";
+import { canonicalize } from "./canonical.ts";
+import { proseNames } from "./prose.ts";
+import { keepForms, nameParts, personPartForms, personValues, proseForms, recurrenceForms, TextScanner, vocabularyForms } from "./recur.ts";
 import { EntityMatcher, type ExtraForm, keepDomains, type Span } from "./text.ts";
 import { entrySpans, keptSpeakers, planTranscript, shapeParagraphs, speakerForms, speakersOf, type TranscriptPlan, transcriptSpans } from "./transcript.ts";
 import { unrewrittenSpans } from "./unrewritten.ts";
@@ -161,6 +167,8 @@ export interface FileReport {
   transcript?: TranscriptReport;
   /** Any file that is not a transcript (text, table, JSON, XLSX, DOCX): transcript speakers' names (or parts, or misspellings) replaced in it. */
   speakerMentions?: number;
+  /** People named only in prose (no column, speaker, map or spec entity names them), or parts of their names, replaced. Absent when 0. */
+  proseNames?: number;
   changed: boolean;
 }
 
@@ -288,6 +296,27 @@ interface WorkbookPlan {
 type Plan = TablePlan | TextPlan | JsonPlan | DocxFilePlan | WorkbookPlan;
 
 const isFilled = (c: Cell | undefined): c is Cell => c !== undefined && c.value.trim() !== "";
+
+/**
+ * The text read for people named only in prose (AGT-1830): what the scanner reads as free text, and
+ * the values of cells under `keep`, whose names stay as written. Number cells are not read. The
+ * order (plans by path, then each plan's own cell order) does not matter: proseNames sorts.
+ */
+function proseInputs(plans: readonly Plan[]): { free: string[]; kept: string[] } {
+  const free: string[] = [];
+  const kept: string[] = [];
+  for (const p of plans) {
+    if (p.kind === "text") free.push(p.text);
+    else if (p.kind === "docx") free.push(...docxParagraphs(p.docx, "all"));
+    else if (p.kind === "xlsx") {
+      for (const c of p.plan.pending) {
+        if (c.cell.action.kind === "keep") kept.push(c.text);
+        else if (!c.number) free.push(c.text);
+      }
+    } else for (const q of p.pending) (q.keep ? kept : free).push(q.value);
+  }
+  return { free, kept };
+}
 
 /** Scan the pending text of a plan: free text gets every span, a `keep` cell only recurring values. */
 function scanPending<K>(pending: readonly Pending<K>[], edits: Map<K, CellEdit>, scanner: TextScanner): void {
@@ -703,17 +732,26 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   const keepSet = keepForms(opts.keep);
   const people = personValues(mapped, opts.map);
   const voices = speakerForms(voiceNames, spoken, vocabularySet, people, keepSet);
-  const parts = personPartForms(mapped, opts.map, vocabularySet, { keep: opts.keep, speakers: voiceNames });
-  const nameMatcher = new EntityMatcher(spec.entities, [...columnValues, ...voices, ...parts]);
+  // People named only in prose (AGT-1830), in the text the scanner reads, less anyone already known.
+  const read = proseInputs(plans);
+  const known = new Set([...people, ...voiceNames].map((v) => canonicalize("person", v)));
+  const prosePeople = proseNames(read.free, { keep: keepSet, vocabulary: vocabularySet, kept: read.kept }).filter((v) => !known.has(canonicalize("person", v)));
+  // They count as other people for the known people's name parts, so a surname both share is ambiguous.
+  const others = [...voiceNames, ...prosePeople];
+  const parts = personPartForms(mapped, opts.map, vocabularySet, { keep: opts.keep, speakers: others });
+  const forms = recurrenceForms(mapped, spec.entities, opts.map, { keep: opts.keep, speakers: others });
+  // A form already matched for a known value or a speaker keeps that value's pseudonym.
+  const claimed = new Set([...forms, ...voices, ...parts].map((f) => `${f.cls}\0${f.form ?? f.value}`));
+  const prose = proseForms(prosePeople, [...people, ...voiceNames], vocabularySet, keepSet).filter((f) => !claimed.has(`${f.cls}\0${f.form ?? f.value}`));
+  const nameMatcher = new EntityMatcher(spec.entities, [...columnValues, ...voices, ...parts, ...prose]);
   const names = new NameRewriter(nameMatcher, spec.patterns, keep);
   for (const p of plans) names.planPath(p.input.path);
 
   // Every column is decided: scan the rest of the text for patterns, entities and the values the
   // column pass (or an earlier map) pseudonymised.
-  const forms = recurrenceForms(mapped, spec.entities, opts.map, { keep: opts.keep, speakers: voiceNames });
   // A speaker's form replaces a recurring value with the same text: it carries the speaker's pseudonym.
   const voiced = new Set(voices.map((v) => `${v.cls}\0${v.form as string}`));
-  const scanForms = [...forms.filter((f) => !voiced.has(`${f.cls}\0${f.form ?? f.value}`)), ...voices].sort(
+  const scanForms = [...forms.filter((f) => !voiced.has(`${f.cls}\0${f.form ?? f.value}`)), ...voices, ...prose].sort(
     (a, b) => cmp(a.cls, b.cls) || cmp(a.form ?? a.value, b.form ?? b.value) || cmp(a.value, b.value),
   );
   const scanner = new TextScanner(spec.entities, spec.patterns, keep, scanForms);
@@ -871,6 +909,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         mappedReplacements: r.mappedReplacements,
         keptHosts: r.keptHosts,
         ...(r.speakerReplacements > 0 ? { speakerMentions: r.speakerReplacements } : {}),
+        ...(r.proseReplacements > 0 ? { proseNames: r.proseReplacements } : {}),
         ...(r.metadataReplacements > 0 ? { metadataReplacements: r.metadataReplacements } : {}),
         sheets: p.plan.sheets.map((s) => ({ ...s, outputName: r.sheetNames.find((n) => n.from === s.name)?.to ?? s.name })),
         unread: r.members.filter((m) => m.kind === "other" && !m.name.endsWith("/")).map((m) => m.name),
@@ -898,6 +937,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         ...(p.transcript === undefined
           ? r.speakerReplacements > 0 ? { speakerMentions: r.speakerReplacements } : {}
           : { transcript: transcriptReport("docx", p.transcript.speakers, p.transcript.tags, r.speakerReplacements, kept) }),
+        ...(r.proseReplacements > 0 ? { proseNames: r.proseReplacements } : {}),
         changed: r.changed,
       });
       outputs.push({ path: outputPath, bytes: r.changed ? r.bytes : p.input.bytes });
@@ -919,6 +959,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         mappedReplacements: count(p.spans, "map"),
         keptHosts: keptHostCount(p.spans),
         ...textSpeakers(p.spans, t, kept),
+        ...(count(p.spans, "prose") > 0 ? { proseNames: count(p.spans, "prose") } : {}),
         changed: false,
       };
     } else if (p.kind === "json") {
@@ -985,6 +1026,8 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     if (p.kind !== "text") {
       const mentions = [...p.edits.values()].reduce((n, e) => n + (e.kind === "spans" ? count(e.spans, "speaker") : 0), 0);
       if (mentions > 0) report.speakerMentions = mentions;
+      const prose = [...p.edits.values()].reduce((n, e) => n + (e.kind === "spans" ? count(e.spans, "prose") : 0), 0);
+      if (prose > 0) report.proseNames = prose;
     }
     report.changed = text !== p.text;
     report.outputPath = names.renamePath(p.input.path, pz);
@@ -1003,7 +1046,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     byOutput.set(f.outputPath, f.path);
   }
   // Name parts two people share were replaced with a pseudonym of their own: report the ones used.
-  const sharedNameParts = nameParts([...people, ...voiceNames], [], vocabularySet, keepSet)
+  const sharedNameParts = nameParts([...people, ...voiceNames, ...prosePeople], [], vocabularySet, keepSet)
     .filter((p) => p.shared && p.exclusion === null && requests.has(`person\0${p.value}`))
     .map((p) => pz.pseudonym("person", p.value))
     .sort(cmp);

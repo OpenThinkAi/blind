@@ -126,6 +126,7 @@ const OUTCOME_TEXT: Record<FileReport["columns"][number]["outcome"], string> = {
   dropped: "dropped",
   redacted: "redacted",
   "unknown-pseudonymised": "pseudonymised",
+  "unknown-person": "pseudonymised as people (names)",
   "unknown-kept-low-cardinality": "kept (low cardinality)",
   "unknown-kept-not-identifier-like": "kept (not identifier-like: prose, measures or a small repeating set)",
   "unknown-kept-empty": "kept (empty)",
@@ -183,6 +184,9 @@ export function renderReport(result: ApplyResult): string {
     }
     if ((f.speakerMentions ?? 0) > 0) {
       lines.push(`  ${f.speakerMentions} transcript speaker name${f.speakerMentions === 1 ? "" : "s"} replaced`);
+    }
+    if ((f.proseNames ?? 0) > 0) {
+      lines.push(`  ${f.proseNames} name${f.proseNames === 1 ? "" : "s"} of people found only in prose replaced`);
     }
     if (f.transcript !== undefined) {
       const t = f.transcript;

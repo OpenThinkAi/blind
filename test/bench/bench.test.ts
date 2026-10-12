@@ -460,3 +460,40 @@ describe("bench case: measures under the heuristic plan (AGT-1822)", () => {
     }
   }, 30_000);
 });
+
+describe("bench case: people named only in prose (AGT-1830)", () => {
+  // A hand-made synthetic kit under a `none`-mode spec: no entities, the pet and vet columns kept,
+  // the rest unknown/value. Two people are named only in prose (in a free-text column and in a
+  // note); the oracle lists them as person values. The decoys are pet names, kept vet names, places,
+  // breeds and roles that look like names and must survive.
+  test("prose-only people are blinded; pets, kept vets, places, breeds and roles are not damaged", async () => {
+    const visits = [
+      "Pet,Species,Vet,Notes",
+      'Bella,Canine,Dr. Marisol Okonkwo,"Owner Avery Quill called; Bella is eating well."',
+      "Max,Canine,Dr. Marisol Okonkwo,Jack Russell. Recheck with Dr. Okonkwo in two weeks.",
+      "Biscuit,Feline,Dr. Theo Brannagh,Maine Coon. Quill asked about boarding.",
+      "Pepper,Feline,Dr. Theo Brannagh,Seen by Dr. Brannagh at the Front Desk.",
+      "",
+    ].join("\n");
+    const notes = "Spoke with Avery Quill and Grace Nguyen about Bella and Max.\nBiscuit was dropped off near Highland Dr. by the Jordan River.\nNguyen paid; Quill will call back.\n";
+    const dir = mkdtempSync(join(tmpdir(), "blind-bench-prose-"));
+    try {
+      mkdirSync(join(dir, "input", "notes"), { recursive: true });
+      writeFileSync(join(dir, "input", "visits.csv"), visits);
+      writeFileSync(join(dir, "input", "notes", "visit.txt"), notes);
+      const decoys = ["Bella", "Max", "Biscuit", "Pepper", "Okonkwo", "Brannagh", "Jack Russell", "Maine Coon", "Highland Dr.", "Jordan River", "Front Desk"].map((text) => ({ text }));
+      writeFileSync(join(dir, "oracle.json"), JSON.stringify({ values: [{ value: "Avery Quill", class: "person" }, { value: "Grace Nguyen", class: "person" }], decoys }));
+      const r = (header: string, cls: string, treatment: "keep" | "value") => ({ file: "visits.csv", header, class: cls, treatment, confidence: 0, source: "heuristic" });
+      const spec = { version: 1, columns: [r("Pet", "vocabulary", "keep"), r("Species", "unknown", "value"), r("Vet", "person", "keep"), r("Notes", "unknown", "value")], entities: {}, patterns: { ip: true, email: true, host: true, guid: true, mac: true }, questions: [] };
+      writeFileSync(join(dir, "spec.json"), JSON.stringify(spec));
+      const out = new Sink();
+      const err = new Sink();
+      const code = await runBench([dir], { out: out as unknown as NodeJS.WritableStream, err: err as unknown as NodeJS.WritableStream, cwd: dir });
+      const rep = JSON.parse(readFileSync(join(dir, REPORT_FILE), "utf8")) as BenchReport;
+      expect(err.text).toBe("");
+      expect({ code, leaks: rep.leaks.items, damage: rep.damage.items, notWritten: rep.apply.notWritten }).toEqual({ code: 0, leaks: [], damage: [], notWritten: [] });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+});

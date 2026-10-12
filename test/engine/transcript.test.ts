@@ -358,6 +358,8 @@ describe("generated transcript-shaped DOCX", () => {
     const plain = docx([para(run("Avery Quill   0:03")), para(run("Notes from the call.")), para(run("More notes.")), para(run("Even more."))].join(""));
     const p = apply({ "notes.docx": plain });
     expect(p.files[0]?.transcript).toBeUndefined();
-    expect(paragraphs((p.outputs[0] as InputFile).bytes)[0]).toBe("Avery Quill   0:03");
+    // Not a speaker tag: the timing stays, and the name is blinded as a person named in prose (AGT-1830).
+    expect(paragraphs((p.outputs[0] as InputFile).bytes)[0]).toMatch(/^Person_[0-9A-F]{4}   0:03$/);
+    expect(p.files[0]?.proseNames).toBe(1);
   });
 });

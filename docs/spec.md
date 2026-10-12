@@ -235,7 +235,7 @@ and not written (exit 1). Transcripts are found by content, not by name (see
 | `treatment: blind` with `unknown`/`vocabulary`, or `value` with any other class | Every non-empty cell gets a `Value_` pseudonym. |
 | `treatment: drop` (any class) | CSV/TSV: the column is removed from the header row down (rows above the header, such as a title, are left whole). JSON/JSONL: each member with that key path is removed with its key and one separating comma, so the document stays valid with its layout; a path of record-ID keys (`.*~`) or the root (`$`) cannot be dropped (an error). XLSX: see the workbook rules below. Reported as `dropped`. |
 | `treatment: redact` (any class) | Every non-empty value becomes `REDACTED` (a JSON number becomes the string `"REDACTED"`). Reported as `redacted`. |
-| `class: unknown, treatment: value`, or **no rule at all** | Fail closed. If distinct ratio ≥ 0.5 and (digit ratio ≥ 0.3, or dictionary-word ratio ≤ 0.3, or ≥ 80% of values are Title-Case multi-word), every cell gets a `Value_` pseudonym, reported as `unknown → pseudonymised`. Two kinds of column are exempt: **measures**, where ≥ 80% of values are a date, a time, a decimal or grouped number (`38.6`, `1,250`), a currency amount (`$120.50`, `40.00 EUR`) or a quantity with a unit (`38.6 lb`, `12%`, `5 mg`), and plain integers are not measures; and **small categoricals**, at most 10 distinct values over at least 4, ≥ 75% of values repeating, no codes (digit ratio < 0.3, every value has a letter) and not Title-Case names (`Canine`, `Feline`; `M`, `F`). Otherwise the column is kept (`unknown → kept (low cardinality)`, or `kept (not identifier-like)` for prose, measures and categoricals), but spec entities and patterns are still replaced inside its cells. A rule always wins: give a column a class or `blind` to pseudonymise it anyway. |
+| `class: unknown, treatment: value`, or **no rule at all** | Fail closed. If distinct ratio ≥ 0.5 and (digit ratio ≥ 0.3, or dictionary-word ratio ≤ 0.3, or ≥ 80% of values are Title-Case multi-word), every cell gets a `Value_` pseudonym, reported as `unknown → pseudonymised`; a column whose values are mostly people's names (at least half are two to four Title-Case words, or `Surname, Given`, with a common given name first or a common surname last, and no place, organisation, breed or role word) gets `Person_` pseudonyms instead, reported as `unknown → pseudonymised as people`, so their name parts recur (below). Two kinds of column are exempt: **measures**, where ≥ 80% of values are a date, a time, a decimal or grouped number (`38.6`, `1,250`), a currency amount (`$120.50`, `40.00 EUR`) or a quantity with a unit (`38.6 lb`, `12%`, `5 mg`), and plain integers are not measures; and **small categoricals**, at most 10 distinct values over at least 4, ≥ 75% of values repeating, no codes (digit ratio < 0.3, every value has a letter) and not Title-Case names (`Canine`, `Feline`; `M`, `F`). Otherwise the column is kept (`unknown → kept (low cardinality)`, or `kept (not identifier-like)` for prose, measures and categoricals), but spec entities and patterns are still replaced inside its cells. A rule always wins: give a column a class or `blind` to pseudonymise it anyway. |
 
 A rule that names a column the file does not have is an error, so a stale spec never quietly stops
 blinding a column. Rows above the header and the header row itself are treated as free text.
@@ -275,6 +275,31 @@ letters, dictionary words (`Will`, `Price`), honorific and role words (`Dr`, `Mr
 different people share (`Quill` for `Avery Quill` and `Bea Quill`, or a column person and a
 transcript speaker) gets its own pseudonym, never either person's, and the apply report lists those
 pseudonyms. Spec entities are not split this way: their parts are the ones the spec lists.
+
+**People named only in prose.** A person no column, transcript speaker, earlier map or spec entity
+names is found in the free text itself (text files, DOCX paragraphs, and the cells, headers and JSON
+strings scanned as free text; never a cell under `keep`), with no model, and blinded like a column
+person: the whole name everywhere, and its parts on their own under the name-part rules above. A
+Title-Case run counts as a person only with positive evidence, because a wrong guess rewrites
+ordinary prose:
+
+- an honorific before it: `Dr. Okonkwo`, `Mrs Lindqvist`, `Mr. Theo Brannagh` (the one to three
+  name words after the title are the name; `Dr.` itself stays), or
+- a common given name from a built-in list followed by one or two more name words: `Avery Quill`,
+  `Marisol J. Okonkwo`. The last word must be a common surname or a word of 3+ letters that is not a
+  dictionary word. A given name that is also a dictionary word (`Will`) needs a listed surname after
+  it, and is not taken at the start of a sentence (`Will Brown be there?`).
+
+A lone given name is never enough (`Bella` or `Max` alone is as likely a pet). A name word is not an
+honorific or role word, a function word, a month or weekday, a drug name ending (`Rimadyl`,
+`Carprofen`), or a place, street, organisation, species, breed, record-heading or US state word; a
+run that carries on into one of those (`Jordan River`, `Logan Animal Clinic`, `Jack Russell
+Terrier`) is not a person, nor is `Jack Russell`. Left as written too: keep-list terms and
+vocabulary forms (whole or any word of them), and a name wholly inside a value of a `keep` column
+(`Dr. Okonkwo` when a kept Vet column says `Dr. Marisol Okonkwo`), so keeping a column keeps its
+names in prose. The apply report counts these replacements per file (`names of people found only in
+prose replaced`; `proseNames` in the JSON report). To keep a name it finds, add it to `[keep]
+terms` or as a `vocabulary` entity.
 
 **JSON and JSONL.** Rules name a key path with `jsonPath` (see [key paths](#key-paths)); a `header`
 or `sheet` rule on a JSON file is an error, as is a rule for a key path the file does not have. The

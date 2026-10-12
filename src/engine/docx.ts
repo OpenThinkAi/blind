@@ -89,6 +89,8 @@ export interface DocxRender {
   mappedReplacements: number;
   /** Transcript speaker tags and spoken speaker names (see transcript.ts). */
   speakerReplacements: number;
+  /** People named only in prose, or parts of their names (see prose.ts). */
+  proseReplacements: number;
   keptHosts: number;
   /** Identity metadata values replaced as a whole. */
   metadataReplacements: number;
@@ -613,6 +615,7 @@ export function renderDocx(plan: DocxPlan, pz: Pseudonymizer, ids: HexNamer): Do
     patternReplacements: plan.edits.filter((e) => e.source === "pattern").length,
     mappedReplacements: plan.edits.filter((e) => e.source === "map").length,
     speakerReplacements: plan.edits.filter((e) => e.source === "speaker").length,
+    proseReplacements: plan.edits.filter((e) => e.source === "prose").length,
     keptHosts: plan.keptHosts,
     metadataReplacements,
   };

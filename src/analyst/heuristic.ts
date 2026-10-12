@@ -6,7 +6,7 @@
 
 import type { Policy, SensitiveClass } from "../policy.ts";
 import { isHonorificOrRole, isOnlyHonorificsOrRoles } from "../engine/honorifics.ts";
-import { DICTIONARY } from "../profile/words.ts";
+import { DICTIONARY } from "../engine/words.ts";
 import type { ColumnRule, DetectorName, Entity, Location, PatternName, Profile, Spec, ValueStats } from "../schema.ts";
 
 export const HEURISTIC_RATE = 0.8;

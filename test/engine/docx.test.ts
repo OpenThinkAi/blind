@@ -282,7 +282,8 @@ describe("DOCX: round trip (AC3)", () => {
   test("a document with nothing to blind is written byte for byte", () => {
     const plain = docx(entries({ body: p(r("Nothing to see here.")) }).filter((e) => !e.name.startsWith("docProps/") && e.name !== "word/people.xml" && e.name !== "word/comments.xml" && e.name !== "word/_rels/document.xml.rels"));
     const empty: Spec = { ...SPEC, entities: {} };
-    const rr = applySpec([plain], empty, { salt: SALT });
+    // The footer names a person in prose (AGT-1830); the keep list keeps her, so nothing changes.
+    const rr = applySpec([plain], empty, { salt: SALT, keep: ["Dana Pell"] });
     const doc = shape(readZip(rr.outputs[0]!.bytes).find((e) => e.name === "word/footer1.xml")!.text);
     expect(doc.text).toBe("Dana Pell, confidential");
     expect(rr.files[0]!.changed).toBe(false);

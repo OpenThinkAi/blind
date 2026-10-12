@@ -15,7 +15,7 @@
 //   case rule the engine gives a single-word form (a capitalised word only where
 //   the text is capitalised too, a short acronym only exactly); a survivor in
 //   that case is a `leak`, in another case a `candidate`. A part that is also an
-//   ordinary word (src/profile/words.ts) or a keep term is never a leak: in its
+//   ordinary word (src/engine/words.ts) or a keep term is never a leak: in its
 //   rule's case it is a candidate, otherwise not reported;
 // - every match of an enabled spec pattern that is not a pseudonym;
 // - in an OOXML package, an account name in a path (`C:\Users\avery\`, `/Users/avery/`:
@@ -47,7 +47,7 @@ import type { BlindMap } from "../engine/map.ts";
 import { isPseudonym } from "../engine/pseudonym.ts";
 import { findPatternSpans, keepDomains, type Span } from "../engine/text.ts";
 import { detectHeaderRow } from "../profile/table.ts";
-import { DICTIONARY } from "../profile/words.ts";
+import { DICTIONARY } from "../engine/words.ts";
 import { fold, foldWithMap, stringView, type View, viewsOf, xmlBaseView } from "./views.ts";
 import { accountSegments } from "../formats/paths.ts";
 import { CONTENT_TYPES_PART, localName, looksLikeXml, officeIdAttribute, ooxmlUriAttribute, walkXml } from "./xml.ts";

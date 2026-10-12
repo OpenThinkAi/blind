@@ -5,8 +5,8 @@
 // with a unit) and a small repeating categorical (species, sex, status) (AGT-1822): those are
 // the data a reader needs, and pseudonymising them corrupts it without protecting anyone.
 
-// The profiler's word list, so the engine and the profile agree on what a dictionary word is.
-import { DICTIONARY } from "../profile/words.ts";
+// The shared word list (also the profiler's), so the engine and the profile agree on what a dictionary word is.
+import { DICTIONARY } from "./words.ts";
 import { isDateWord } from "./datecontext.ts";
 
 export interface ColumnStats {

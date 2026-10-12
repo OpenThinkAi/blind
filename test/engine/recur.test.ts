@@ -170,7 +170,8 @@ describe("applySpec: values blinded in a column are replaced where they recur", 
     const s = spec({ columns: [rule("staff.csv", "Owner", "unknown", "value")] });
     const res = applySpec([file("staff.csv", staff), file("notes.txt", notes)], s, { salt: SALT });
     const cols = res.files.find((f) => f.path === "staff.csv")?.columns.map((c) => c.outcome);
-    expect(cols).toEqual(["unknown-pseudonymised", "unknown-pseudonymised"]);
+    // Owner holds people's names, so it is pseudonymised as person (AGT-1830); Badge as values.
+    expect(cols).toEqual(["unknown-person", "unknown-pseudonymised"]);
     expect(out(res, "notes.txt")).toBe(
       `${pseudonymOf(res, "Avery Quill")} met ${pseudonymOf(res, "Robin Example")} about ${pseudonymOf(res, "BX-1003")}.\n`,
     );

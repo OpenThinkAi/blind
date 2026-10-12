@@ -15,7 +15,7 @@
 // - not a value with fewer than MIN_RECUR_LENGTH letters and digits: the audit
 //   only ever calls a survivor that short a candidate, and "42" or "N/A"
 //   would otherwise be rewritten in every sentence;
-// - not a value whose every word is in the built-in dictionary (src/profile/words.ts),
+// - not a value whose every word is in the built-in dictionary (src/engine/words.ts),
 //   such as "open" or "Main Office": ordinary words are left to the spec, which
 //   can still list them as entities. The audit still reports them;
 // - not a spec vocabulary form, and (the caller's part) not a value from a
@@ -33,7 +33,7 @@
 // and a mapped value ranks after the spec entities when lengths tie.
 
 import type { Entities, PatternName, Patterns } from "../schema.ts";
-import { DICTIONARY } from "../profile/words.ts";
+import { DICTIONARY } from "./words.ts";
 import { canonicalize, PSEUDO_CLASSES, type PseudoClass } from "./canonical.ts";
 import { isHonorificOrRole } from "./honorifics.ts";
 import { isDateWord } from "./datecontext.ts";
@@ -223,6 +223,21 @@ export function personPartForms(values: Iterable<ExtraForm>, map: BlindMap | und
   return nameParts(personValues(values, map), opts.speakers ?? [], vocabulary, keepForms(opts.keep))
     .filter((p) => p.exclusion === null)
     .map((p) => ({ cls: "person", value: p.value, form: p.form, ...(isDateWord(p.form) ? { datePart: true } : {}) }));
+}
+
+/**
+ * Person forms for people found only in prose (prose.ts, AGT-1830): each name whole, unless
+ * recurrenceExclusion leaves it out, and its parts as nameParts gives them (a part shared with one of
+ * `others`, the people known from columns, speakers or the map, gets a pseudonym of its own). Every
+ * form has source `prose`, so a cell under `keep` is never changed for one.
+ */
+export function proseForms(names: readonly string[], others: Iterable<string>, vocabulary: ReadonlySet<string>, keep: ReadonlySet<string>): ExtraForm[] {
+  const out: ExtraForm[] = [];
+  for (const v of names) if (recurrenceExclusion(v, vocabulary) === null) out.push({ cls: "person", value: v, form: v, source: "prose" });
+  for (const p of nameParts(names, others, vocabulary, keep)) {
+    if (p.exclusion === null) out.push({ cls: "person", value: p.value, form: p.form, source: "prose", ...(isDateWord(p.form) ? { datePart: true } : {}) });
+  }
+  return out;
 }
 
 /** One scanner for the corpus: the spec's patterns and entities plus the recurring values. */

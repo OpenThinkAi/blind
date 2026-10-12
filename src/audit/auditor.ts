@@ -29,6 +29,7 @@ import { ask, MAX_DATA_STRING, ModelError, ModelRefusal, policyView, profilePayl
 import type { Policy } from "../policy.ts";
 import { buildProfile, forPrivacyMode } from "../profile/profile.ts";
 import { tokeniseProfile } from "../profile/tokens.ts";
+import type { Spec } from "../schema.ts";
 import type { Schema } from "../validate.ts";
 import {
   addLayer,
@@ -39,8 +40,8 @@ import {
   type ModelLayerSummary,
   type TreeEntry,
 } from "./mechanical.ts";
-import { xmlViews } from "./semantic.ts";
-import { type View, viewsOf, xmlBaseView } from "./views.ts";
+import { globalTerms, xmlViews } from "./semantic.ts";
+import { fold, type View, viewsOf, xmlBaseView } from "./views.ts";
 import { looksLikeXml } from "./xml.ts";
 import { looksLikeZip, readZip, ZipError } from "./zip.ts";
 
@@ -337,8 +338,23 @@ export interface ModelLayerOptions {
   /** The output tree's root, as `blind audit` was given it, and the directory it resolves against. */
   root: string;
   cwd: string;
+  /** The spec the output was made with: its vocabulary forms are explained, so a model candidate equal to one is dropped. */
+  spec: Spec;
+  /** The policy keep list (`[keep] terms`): kept on purpose, so a model candidate equal to one is dropped. */
+  keep: readonly string[];
   /** Test seams and the announce sink, passed through to ask(). */
   ask: Omit<AskOptions, "policy">;
+}
+
+/**
+ * The candidates left after dropping those whose quote equals (case-folded, whole value) a spec
+ * vocabulary form or a keep term: the owner already ruled on those (`blind plan --from-audit
+ * --reject` records a rejected value as vocabulary), so the model must not raise them again.
+ */
+function withoutExplained<W>(cands: readonly (W & { quote: string })[], opts: ModelLayerOptions): (W & { quote: string })[] {
+  const explained = new Set(globalTerms(opts.spec, opts.keep).map(fold));
+  explained.delete("");
+  return cands.filter((c) => !explained.has(fold(c.quote)));
 }
 
 type Outcome = { perFile: Map<string, Finding[]>; general: Finding[]; summary: ModelLayerSummary };
@@ -370,13 +386,14 @@ async function auditText(entries: readonly TreeEntry[], policy: Policy, opts: Mo
       general.push(failure(`model auditor failed at ${at}: ${firstLine(e)}; ${at} and every later chunk were not checked by a model`));
       return { perFile: group(found), general };
     }
+    // Validate the whole reply (a bad line index rejects it) before dropping explained candidates.
     const bad = reply.candidates.find((c) => c.line >= chunk.length);
     if (bad !== undefined) {
       general.push(failure(`model auditor reply for ${at} rejected: it names line ${bad.line}, but ${chunk.length} lines were sent; ${at} was not checked by a model`));
       continue;
     }
     summary.answered++;
-    for (const c of reply.candidates) found.push(finding(chunk[c.line] as Line, c.quote, c.reason));
+    for (const c of withoutExplained(reply.candidates, opts)) found.push(finding(chunk[c.line] as Line, c.quote, c.reason));
   }
   return { perFile: group(found), general };
 }
@@ -412,7 +429,7 @@ async function auditProfile(entries: readonly TreeEntry[], policy: Policy, opts:
   const byFile = new Map<string, TreeEntry[]>();
   for (const e of entries) byFile.set(e.path, [e]);
   const found: Finding[] = [];
-  for (const c of reply.candidates) {
+  for (const c of withoutExplained(reply.candidates, opts)) {
     const path = real.get(c.file) as string;
     const line = extractLines(byFile.get(path) ?? []).lines.find((l) => l.text.includes(c.quote));
     if (line !== undefined) found.push(finding(line, c.quote, c.reason));

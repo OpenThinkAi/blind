@@ -201,3 +201,35 @@ export function officeIdAttribute(member: string, element: string, attr: string)
   if (at === "val" && LINKING_VAL_ELEMENTS.has(el)) return "linking";
   return LINKING_ID_ATTRIBUTES.get(el)?.has(at) ? "linking" : null;
 }
+
+/** A styles part, in any package (`word/styles.xml`, `xl/styles.xml`). */
+const STYLES_PART = /(^|\/)styles\.xml$/i;
+/** Theme elements whose `name` is the scheme's display name (local names). */
+const THEME_NAME_ELEMENTS = new Set(["theme", "clrScheme", "fontScheme", "fmtScheme", "themeFamily", "extraClrScheme"]);
+/** Style elements whose `val` is a style's display name or a reference to one (local names, in a styles part). */
+const STYLE_NAME_VAL_ELEMENTS = new Set(["name", "aliases", "basedOn", "next", "link"]);
+/** Style elements whose `name` attribute is a style's display name (local names, in a styles part). */
+const STYLE_NAME_ATTR_ELEMENTS = new Set(["lsdException", "cellStyle", "tableStyle"]);
+
+/**
+ * True when `attr` on `element`, in the package member `member`, holds the display name of an
+ * Office theme, font scheme, colour scheme or style ("Office Theme", "Heading 1", "Normal"): names
+ * the application writes into every file, not document text. Matched by position (member, element
+ * and attribute), never by value:
+ * - `name` on `a:theme`, `a:clrScheme`, `a:fontScheme`, `a:fmtScheme` and `thm15:themeFamily` in a theme part;
+ * - `w:val` on `w:name`, `w:aliases`, `w:basedOn`, `w:next` and `w:link` in a styles part (a style's names);
+ * - `w:name` on `w:lsdException` (latent styles), `name` on `cellStyle` and `tableStyle`, and
+ *   `defaultTableStyle` / `defaultPivotStyle` on `tableStyles`, in a styles part.
+ *
+ * The same words in body text, a cell, a document property or any other member are read as usual.
+ * The semantic layer skips these positions; the mechanical layer, which has no name rule, is unchanged.
+ */
+export function officeDisplayName(member: string, element: string, attr: string): boolean {
+  const el = localName(element);
+  const at = localName(attr);
+  if (THEME_PART.test(member)) return at === "name" && THEME_NAME_ELEMENTS.has(el);
+  if (!STYLES_PART.test(member)) return false;
+  if (at === "val") return STYLE_NAME_VAL_ELEMENTS.has(el);
+  if (at === "name") return STYLE_NAME_ATTR_ELEMENTS.has(el);
+  return el === "tableStyles" && (attr === "defaultTableStyle" || attr === "defaultPivotStyle");
+}

@@ -43,7 +43,7 @@ import {
   type TreeEntry,
 } from "./mechanical.ts";
 import { fold, stringView, unescapeView, type View, viewsOf, xmlBaseView } from "./views.ts";
-import { localName, looksLikeXml, officeIdAttribute, ooxmlUriAttribute, walkXml } from "./xml.ts";
+import { localName, looksLikeXml, officeDisplayName, officeIdAttribute, ooxmlUriAttribute, walkXml } from "./xml.ts";
 import { looksLikeZip, readZip, ZipError } from "./zip.ts";
 
 /** Distinct candidates listed per file; the rest are counted in one extra finding. */
@@ -116,10 +116,12 @@ const STRUCTURAL_ELEMENTS = new Set(["color", "srgbClr", "sysClr", "fgColor", "b
  * Every position the mechanical layer skips (ooxmlUriAttribute: namespace, content-type and
  * relationship-type URIs; officeIdAttribute "template": fixed template IDs), and more: this layer
  * also skips Office's linking IDs (officeIdAttribute "linking", which the engine replaces), ids,
- * fonts and colours, which are identifier-shaped but never identifying.
+ * fonts and colours, which are identifier-shaped but never identifying, and the display names of
+ * Office themes, schemes and styles (officeDisplayName).
  */
 function structuralAttribute(member: string, element: string, attr: string): boolean {
   if (ooxmlUriAttribute(member, element, attr) || officeIdAttribute(member, element, attr) !== null) return true;
+  if (officeDisplayName(member, element, attr)) return true;
   const el = localName(element);
   const at = localName(attr);
   if (at.startsWith("rsid") || el.startsWith("rsid")) return true;
@@ -509,7 +511,7 @@ function fileTerms(path: string, bytes: Uint8Array, spec: Spec): string[] {
 }
 
 /** Spec vocabulary entity forms plus the policy keep list: explained everywhere. */
-function globalTerms(spec: Spec, keep: readonly string[]): string[] {
+export function globalTerms(spec: Spec, keep: readonly string[]): string[] {
   const out = [...keep];
   for (const e of spec.entities.vocabulary ?? []) out.push(e.canonical, ...e.aliases, ...e.parts);
   return out;

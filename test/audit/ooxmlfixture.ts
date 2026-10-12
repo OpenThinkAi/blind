@@ -163,7 +163,7 @@ export function docxMembers(o: DocxOptions): FixtureMember[] {
     },
     {
       name: "word/styles.xml",
-      data: `${DECL}<w:styles ${W_NS}><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style></w:styles>`,
+      data: `${DECL}<w:styles ${W_NS}><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>${ids ? '<w:style w:type="character" w:default="1" w:styleId="DefaultParagraphFont"><w:name w:val="Default Paragraph Font"/><w:uiPriority w:val="1"/></w:style><w:latentStyles w:defLockedState="0"><w:lsdException w:name="Table Grid" w:uiPriority="39"/></w:latentStyles>' : ""}</w:styles>`,
     },
     {
       name: "word/settings.xml",

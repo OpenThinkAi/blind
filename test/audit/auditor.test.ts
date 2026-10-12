@@ -187,6 +187,22 @@ describe("model candidates only add", () => {
     expect(r.out).not.toContain("lighthouse keeper");
   });
 
+  test("a candidate equal to a spec vocabulary form or a keep term is dropped; others stay", async () => {
+    const spec = { ...SPEC, entities: { ...SPEC.entities, vocabulary: [{ canonical: "Night Shift", aliases: ["night-shift lighthouse"], parts: [] }] } };
+    writeFileSync(join(dir, ".blind", "spec.json"), JSON.stringify(spec));
+    writePolicy((p) => (p.keep.terms = ["Northern Pier"]));
+    // The model raises the rejected value again (in another case), the keep term, and one real candidate.
+    const quotes = ["NIGHT SHIFT", "night-shift lighthouse", "northern pier", "lighthouse keeper"];
+    const m = fakeModel((c) =>
+      JSON.stringify({ candidates: quotes.flatMap((q) => (c.data.lines ?? []).flatMap((l, line) => (l.toLowerCase().includes(q.toLowerCase()) ? [{ line, quote: q, reason: "context" }] : []))) }),
+    );
+    writeFileSync(join(dir, "out", "notes.txt"), "Night Shift at the Northern Pier: the lighthouse keeper signed off.\n");
+    const r = await audit(m, "out", "--json");
+    expect(m.calls.length).toBeGreaterThan(0);
+    const found = r.report?.files.flatMap((f) => f.findings).filter((f) => f.source === "model");
+    expect(found?.map((f) => f.masked)).toEqual(["li***17"]);
+  });
+
   test("a reply claiming all clear changes nothing: the leak stays a leak", async () => {
     writeFileSync(join(dir, "out", "planted.txt"), "copied to Avery Quill\n");
     const off = await audit(fakeModel(() => "{}"), "out", "--json", "--no-model");

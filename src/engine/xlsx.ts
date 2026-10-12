@@ -318,6 +318,8 @@ export function settleXlsx(p: XlsxPlan, held: ReadonlySet<string>): void {
   for (const f of p.fallback) {
     if (!held.has(f.text.trim())) continue;
     f.plan.action = { kind: "free" };
+    // planXlsx counted the cell as changed (a workbook counts at plan time, unlike CSV/JSON, which
+    // count at render); prepareXlsx counts it again if the scanner changes it.
     f.column.changed--;
     f.column.heldWhole = (f.column.heldWhole ?? 0) + 1;
     p.pending.push({ cell: f.plan, text: f.text, number: false, column: f.column });

@@ -115,7 +115,9 @@ nickname as last editor in `docProps/core.xml`.
 both ways. The Word copy has a speaker-and-time paragraph per turn (`Marisol Penhallow   0:17`,
 every other one split across two runs, as Word does after an edit) followed by the turn's text; the
 WebVTT copy has a GUID cue identifier and a voice tag per turn. The turns mention people in all
-their forms and organisations by name, short name and acronym.
+their forms and organisations by name, short name and acronym. The Word copy also carries the
+bibliography `customXml` part Word saves into every document (no text; its `schemaRef` `uri` holds the
+OOXML host), which blind writes through rather than refuses.
 
 **`exports/scopes.json`**: a scope list with snake_case keys, `scope_id` hex IDs (8 characters),
 `account_no` 4-digit IDs written as strings, organisation names, emails, tenant hosts, an access

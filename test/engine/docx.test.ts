@@ -350,15 +350,22 @@ describe("DOCX: fail closed", () => {
   });
 
   test("a host, email or address in a part nothing rewrites stops the document, naming the part and not the value (AGT-1810)", () => {
-    const itemProps = (uri: string) =>
-      `${DECL}<ds:datastoreItem xmlns:ds="http://schemas.openxmlformats.org/officeDocument/2006/customXml" ds:itemID="{3F2504E0-4F89-11D3-9A0C-0305E82C3301}"><ds:schemaRefs><ds:schemaRef ds:uri="${uri}"/></ds:schemaRefs></ds:datastoreItem>`;
+    const itemProps = (uri: string, attr = "ds:ref") =>
+      `${DECL}<ds:datastoreItem xmlns:ds="http://schemas.openxmlformats.org/officeDocument/2006/customXml" ds:itemID="{3F2504E0-4F89-11D3-9A0C-0305E82C3301}"><ds:schemaRefs><ds:schemaRef ${attr}="${uri}"/></ds:schemaRefs></ds:datastoreItem>`;
     for (const value of ["Server=db01.example.com;Uid=pat.doe@example.com", "192.0.2.55"]) {
       const reason = skippedReason(run(docx(entries({ extra: [{ name: "customXml/itemProps1.xml", data: itemProps(value) }] }))));
-      expect(reason).toMatch(/customXml\/itemProps1\.xml <ds:schemaRef> attribute ds:uri/);
+      expect(reason).toMatch(/customXml\/itemProps1\.xml <ds:schemaRef> attribute ds:ref/);
       expect(reason).not.toMatch(/db01|pat\.doe|192\.0/);
     }
     // The format's own ids and URIs are structure, not hits.
     expect(run(docx(entries({ extra: [{ name: "customXml/itemProps2.xml", data: itemProps("urn:example:schema") }] }))).skipped).toEqual([]);
+  });
+
+  test("a Word bibliography part (schemaRef uri with the OOXML host) is blinded, not refused (AGT-1819)", () => {
+    const item = { name: "customXml/itemProps3.xml", data: `${DECL}<ds:datastoreItem xmlns:ds="http://schemas.openxmlformats.org/officeDocument/2006/customXml" ds:itemID="{3F2504E0-4F89-11D3-9A0C-0305E82C3301}"><ds:schemaRefs><ds:schemaRef ds:uri="http://schemas.openxmlformats.org/officeDocument/2006/bibliography"/></ds:schemaRefs></ds:datastoreItem>` };
+    const res = run(docx(entries({ extra: [item] })));
+    expect(res.skipped).toEqual([]);
+    expect(parts(res).get("customXml/itemProps3.xml")).toContain("officeDocument/2006/bibliography");
   });
 
   test("a column rule naming a DOCX file is refused", () => {

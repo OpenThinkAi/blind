@@ -525,7 +525,7 @@ up to three layers, mechanical, semantic, then model; the report lists the layer
   values in these attribute positions are format structure and are not read: namespace
   declarations (`xmlns`, `xmlns:*`), `ContentType` on `Default`/`Override` in `[Content_Types].xml`,
   `Type` on `Relationship` in a `.rels` member, `mc:Ignorable` prefix lists, and `uri` on `ext`,
-  `compatSetting` and `graphicData`, `fmtid` on `property` in `docProps/custom.xml`, and the
+  `compatSetting`, `graphicData` and `schemaRef`, `fmtid` on `property` in `docProps/custom.xml`, and the
   template IDs listed under **Office structural IDs** above (`id` and `vid` on `thm15:themeFamily`
   in a theme part, `val` on `w:tmpl`). The exemption is by position in the parsed XML, never by
   value: `schemas.openxmlformats.org`, or a theme's GUID, in document text or any other attribute

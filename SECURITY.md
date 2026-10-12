@@ -47,6 +47,14 @@ these with hostile document content and a fake model that obeys any instruction 
 - **Announced.** Every call prints `role · backend · model · mode · [samples k ·] N bytes sent`
   to stderr before it is sent; under `profile-only` it is printed even with `--quiet`.
 
+## What leaves the machine under profile-only
+
+The policy is sent as written. Under `profile-only` the remote model gets the `[sensitive]` class
+names, description and examples, and the `[keep]` terms, verbatim (`policyView` in
+`src/model.ts`). Keep terms are often client or vendor names, so write them generically when the
+name itself is sensitive (`vendor terms`, not the vendor). The same applies to examples and the
+description: use invented examples.
+
 ## Quoted as data
 
 The instructions are written by blind: the system prompt and a fixed task sentence. No profile or
@@ -128,14 +136,26 @@ nothing identifying remains.
 
 ## Secrets on disk
 
-The salt (`.blind/salt`), the map (`.blind/map.json`), the profile and the spec
-(`.blind/profile.json`, `.blind/spec.json`) and the files `blind reveal` writes
-(`.blind/revealed/`, folders 0700) are created with mode 0600 at the moment they are opened, never
-changed afterwards. The salt and the map unlock the real values; the profile and the spec hold
-names and sample values in the clear; revealed files are the originals. Keep `.blind/` out of
-version control and out of anything you share. `blind reveal` refuses to write beside blinded
-output. The map may not sit inside the output or an input. `blind.toml` is not a secret, but its
-description and examples are sent to your analyst model: use invented examples.
+## What stays on disk
+
+Everything blind keeps is under `.blind/` in the corpus directory. The files are created with mode
+0600 and the folders with 0700. None of them is copied into the output.
+
+| File | Holds | Sensitivity | Delete with |
+|---|---|---|---|
+| `.blind/map.json` | Every pseudonym and its original value (`blind apply`). | Originals. Enough on its own for `blind reveal`. | `rm .blind/map.json` |
+| `.blind/revealed/` | Originals of the files `blind reveal` wrote, under their real names. | Originals in full. | `rm -r .blind/revealed` |
+| `.blind/profile.json` | File, folder, sheet and column names, statistics, and sample values (none under `profile-only`). | Real names and, outside `profile-only`, sample values. | `rm .blind/profile.json` (the next `blind profile` or `blind plan` rewrites it) |
+| `.blind/spec.json` | The reviewed spec: entity names and aliases, column rules, patterns. | Names of people, organisations and hosts. | `rm .blind/spec.json` (the next `blind plan` proposes it again) |
+| `.blind/run.json` | Each input's real path and where it was written (`blind run`). | Real paths, which can carry names. | `rm .blind/run.json` |
+| `.blind/salt` | 32 random bytes. Pseudonyms are HMACs of the value under it. | Holds no value, but with a guessed value it confirms a match. Needed by `blind apply`. | `rm .blind/salt`, then `blind init` for a new one (breaks the link, see below) |
+
+`blind reveal` needs only the map. An interrupted run can leave `*.tmp` copies of these files;
+delete those too. `rm` removes the name, not the data blocks, so on a shared or unencrypted disk
+use full-disk encryption.
+
+Keep `.blind/` out of version control and out of anything you share. `blind reveal` refuses to
+write beside blinded output. The map may not sit inside the output or an input.
 
 Machines that share a salt produce the same pseudonym for the same value, so a pseudonym
 is linkable across everything blinded with that salt. A new salt (`blind init --force`) breaks

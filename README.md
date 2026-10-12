@@ -135,7 +135,8 @@ for. With it, `blind reveal ./out` restores the originals into `.blind/revealed/
 names, and the content of CSV, JSON, text, transcript, XLSX and DOCX files. The map, the salt (`.blind/salt`) and the revealed files all
 contain or unlock the real values: keep them secret and never commit `.blind/`. Applying again
 reuses the map, so earlier pseudonyms do not change. Machines that share a salt produce the same
-pseudonyms for the same values.
+pseudonyms for the same values. Every file under `.blind/` that holds values, and how to delete it,
+is listed in [SECURITY.md](SECURITY.md#what-stays-on-disk).
 
 ## Documentation
 

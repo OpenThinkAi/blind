@@ -579,7 +579,7 @@ up to three layers, mechanical, semantic, then model; the report lists the layer
 
 Status is `leak` if any leak, else `candidates` if any candidate, else `clean`. Exit status: 0
 clean, 1 candidates, 2 leak, 3 the audit could not run (a usage error, a missing or invalid spec or
-map or `blind.toml`, or a model call the privacy mode, endpoint or key setting refuses; nothing
+map, an invalid `blind.toml` (a missing one is not an error), or a model call the privacy mode, endpoint or key setting refuses; nothing
 audited). The report (a table, or `--json`) gives file, zip member, byte offset and
 line, class and a masked value: the first two characters (never more than half), `***`, and the
 length. `clean` needs zero leaks, zero candidates of either layer and zero declared unknowns. It

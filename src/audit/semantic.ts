@@ -10,7 +10,13 @@
 // - Title-Case phrases of two or more words, after the policy keep list, the
 //   spec's vocabulary (entity forms and the values of vocabulary columns) and
 //   the spec's own column headers for that file are taken out;
-// - email and host shapes.
+// - email and host shapes;
+// - lone capitalised words (a given name or nickname the spec missed, AGT-1801): a
+//   Title-Case word of 3 or more letters standing alone (not part of a longer
+//   Title-Case run), not in the built-in dictionary (src/profile/words.ts), not
+//   a keep or vocabulary term, and either not sentence-initial or repeated in a
+//   non-initial position elsewhere in the same file. A month or weekday
+//   abbreviation written with its dot ("9 Feb.") is not a name.
 //
 // Anything `isPseudonym` recognises is excluded, and so is any value equal to a
 // keep or vocabulary term. XML members (xlsx, docx) are read as their text
@@ -32,6 +38,7 @@ import { JsonError, scanJson, scanJsonl } from "../engine/json.ts";
 import type { BlindMap } from "../engine/map.ts";
 import { isPseudonym } from "../engine/pseudonym.ts";
 import { keepDomains, underKeptDomain } from "../engine/text.ts";
+import { DICTIONARY } from "../profile/words.ts";
 import type { Spec } from "../schema.ts";
 import {
   addLayer,
@@ -49,7 +56,7 @@ import { looksLikeZip, readZip, ZipError } from "./zip.ts";
 /** Distinct candidates listed per file; the rest are counted in one extra finding. */
 export const MAX_PER_FILE = 200;
 
-export type SemanticKind = "hex" | "alnum-id" | "digits" | "phrase" | "email" | "host";
+export type SemanticKind = "hex" | "alnum-id" | "digits" | "phrase" | "email" | "host" | "name";
 
 export interface SemanticOptions {
   /** The policy keep list (`[keep] terms` in blind.toml). */
@@ -63,6 +70,7 @@ const KIND_REASON: Record<SemanticKind, string> = {
   phrase: "Title-Case phrase not in the keep list or the spec's vocabulary",
   email: "email-shaped text that is not a pseudonym",
   host: "host-shaped text that is not a pseudonym",
+  name: "lone capitalised word (a possible given name or nickname) not in the dictionary, the keep list or the spec's vocabulary",
 };
 
 /** Code-unit order, never locale order. */
@@ -172,6 +180,66 @@ interface Candidate {
   start: number;
   end: number;
   kind: SemanticKind;
+  /** For `name`: the word starts a sentence, line or text node, where any word is capitalised. */
+  initial?: boolean;
+}
+
+// --- Lone capitalised words (AGT-1801) -------------------------------------
+
+/** A lone name needs at least this many letters. */
+export const MIN_NAME_LETTERS = 3;
+
+/** Abbreviations that are not names when written with their dot ("9 Feb.", "Tues."). */
+const DOTTED_ABBREVIATIONS = new Set(
+  "jan feb mar apr jun jul aug sep sept oct nov dec mon tue tues wed thu thur thurs fri sat sun".split(" "),
+);
+/** Abbreviations whose dot does not end a sentence ("Dr. Marisol" is mid-sentence). */
+const TITLE_ABBREVIATIONS = new Set("mr mrs ms mx dr prof st sr jr rev hon".split(" "));
+/** Characters that may sit between a sentence boundary and its first word: bullets, headings, quotes, brackets. */
+const OPENERS = new Set([..."-*\u2022#>\"'\u201c\u2018([{|_~`"]);
+const QUOTES = new Set([..."\"'\u201c\u2018"]);
+
+/**
+ * True when the word at `s` starts a sentence, a line or the text: walking back over spaces and
+ * openers reaches the start, a line break, or a sentence end (. ! ? or a colon). A colon followed
+ * by a quote is a key-value separator (`"owner": "Name"`), not a sentence end; a dot after a title
+ * abbreviation ("Dr.") is not one either.
+ */
+function sentenceInitial(text: string, s: number): boolean {
+  let j = s - 1;
+  let quoted = false;
+  for (;;) {
+    while (j >= 0 && (text[j] === " " || text[j] === "\t" || text[j] === "\u00a0")) j--;
+    if (j < 0) return true;
+    const ch = text[j] as string;
+    if (ch === "\n" || ch === "\r") return true;
+    if (OPENERS.has(ch)) {
+      if (QUOTES.has(ch)) quoted = true;
+      j--;
+      continue;
+    }
+    if (ch === ":") return !quoted;
+    if (ch === "!" || ch === "?" || ch === "\u2026") return true;
+    if (ch === ".") {
+      const before = /[\p{L}]+$/u.exec(text.slice(Math.max(0, j - 8), j))?.[0] ?? "";
+      return !TITLE_ABBREVIATIONS.has(before.toLowerCase());
+    }
+    return false;
+  }
+}
+
+/** Whether a lone Title-Case word at [s, e) is a name candidate, ignoring where it stands. */
+function loneName(text: string, s: number, e: number, folded: string, terms: Terms, map: BlindMap): boolean {
+  const word = text.slice(s, e);
+  if ((word.match(/\p{L}/gu) ?? []).length < MIN_NAME_LETTERS) return false;
+  const lower = word.toLowerCase();
+  if (DICTIONARY.has(lower) || terms.whole.has(folded) || isPseudonym(word, map)) return false;
+  if (text[e] === ".") {
+    if (DOTTED_ABBREVIATIONS.has(lower)) return false;
+    // A vocabulary or keep form written with its dot ("Jan.") explains the word before the dot.
+    if (terms.whole.has(fold(`${word}.`))) return false;
+  }
+  return true;
 }
 
 const ISO_DATETIME_RE = /\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:[.,]\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?/g;
@@ -201,7 +269,7 @@ class Covered {
 /** Pseudonym shapes, also right after an underscore: a blinded name joins pieces with "_" ("Person_1E95_user_559f@host-f3ce.com.md"). */
 const PSEUDONYM_SHAPE_RE = new RegExp(SHAPED_RE.source.replace("(?<![A-Za-z0-9_.-])", "(?<![A-Za-z0-9.-])"), "g");
 
-function findCandidates(original: string, map: BlindMap, terms: Terms, kept: readonly string[]): Candidate[] {
+function findCandidates(original: string, map: BlindMap, terms: Terms, kept: readonly string[], names = true): Candidate[] {
   const out: Candidate[] = [];
   const masks = new Covered(original.length);
   const ascii = /[0-9A-Za-z]/.test(original);
@@ -287,6 +355,15 @@ function findCandidates(original: string, map: BlindMap, terms: Terms, kept: rea
     const folded = run.map((w) => w.f);
     let segStart = k;
     const flush = (end: number) => {
+      if (names && end - segStart === 1) {
+        const w = run[segStart] as { s: number; e: number; f: string };
+        // A term that starts at a leading function word ("Not Started") explains the word too.
+        let explained = false;
+        for (let q = 0; q < segStart && !explained; q++) explained = q + terms.matchAt(folded, q) >= end;
+        if (!explained && !masks.any(w.s, w.e) && loneName(text, w.s, w.e, w.f, terms, map)) {
+          out.push({ start: w.s, end: w.e, kind: "name", initial: sentenceInitial(text, w.s) });
+        }
+      }
       if (end - segStart >= 2) {
         const s = (run[segStart] as { s: number }).s;
         const e = (run[end - 1] as { e: number }).e;
@@ -390,6 +467,8 @@ interface Located {
   offset: number;
   line: number | null;
   encoding: string | null;
+  /** For `name` candidates: see Candidate.initial. */
+  initial?: boolean;
 }
 
 /** 1-based line of index `i`, given the sorted offsets of every newline in the text. */
@@ -412,9 +491,14 @@ interface Walk {
   found: Located[];
 }
 
-function scanViewsInto(w: Walk, part: string, where: Finding["in"], views: readonly View[], baseOffset = 0) {
+/**
+ * `names`: which views are read for lone capitalised words. Only a text's own decoding is: in a
+ * binary part, an archive's headers or a text read in a decoding it was not written in, stray
+ * letters form Title-Case words by chance.
+ */
+function scanViewsInto(w: Walk, part: string, where: Finding["in"], views: readonly View[], baseOffset = 0, names: (v: View) => boolean = () => true) {
   for (const v of views) {
-    const cands = findCandidates(v.text, w.map, w.terms, w.kept);
+    const cands = findCandidates(v.text, w.map, w.terms, w.kept, names(v));
     if (cands.length === 0) continue;
     const newlines = where === "content" ? [...v.text.matchAll(/\n/g)].map((m) => m.index) : [];
     for (const c of cands) {
@@ -426,6 +510,7 @@ function scanViewsInto(w: Walk, part: string, where: Finding["in"], views: reado
         offset: baseOffset + v.byteAt(c.start),
         line: where === "content" ? lineOf(newlines, c.start) : null,
         encoding: where === "content" ? v.encoding : null,
+        ...(c.initial !== undefined ? { initial: c.initial } : {}),
       });
     }
   }
@@ -439,7 +524,7 @@ function scanContent(w: Walk, name: string, part: string, bytes: Uint8Array, dep
     } catch (e) {
       if (!(e instanceof ZipError)) throw e;
       // The mechanical layer reports the archive as unreadable; read its raw bytes here too.
-      scanViewsInto(w, part, "content", viewsOf(bytes));
+      scanViewsInto(w, part, "content", viewsOf(bytes), 0, NO_NAMES);
       return;
     }
     const residual = Uint8Array.from(bytes);
@@ -447,7 +532,7 @@ function scanContent(w: Walk, name: string, part: string, bytes: Uint8Array, dep
       for (const [a, b] of m.nameRanges) residual.fill(0, a, b);
       if (m.bytes !== undefined) residual.fill(0, m.dataRange[0], m.dataRange[1]);
     }
-    scanViewsInto(w, part, "content", viewsOf(residual));
+    scanViewsInto(w, part, "content", viewsOf(residual), 0, NO_NAMES);
     for (const m of [...members].sort((a, b) => cmp(a.name, b.name))) {
       const memberPart = part === "" ? m.name : `${part}!${m.name}`;
       scanViewsInto(w, memberPart, "name", stringView(m.name));
@@ -458,7 +543,22 @@ function scanContent(w: Walk, name: string, part: string, bytes: Uint8Array, dep
   }
   const base = bytes.length > 0 ? xmlBaseView(bytes) : null;
   if (base !== null && looksLikeXml(name, base.text)) scanViewsInto(w, part, "content", xmlViews(base, name));
-  else scanViewsInto(w, part, "content", viewsOf(bytes));
+  else scanViewsInto(w, part, "content", viewsOf(bytes), 0, ownDecoding(bytes));
+}
+
+const NO_NAMES = (): boolean => false;
+
+/**
+ * The decoding a text part was written in (as xmlBaseView picks it: UTF-16 by its byte-order
+ * mark, else UTF-8 when any byte is non-ASCII, else Latin-1), and its unescaped form; none for
+ * binary content (control bytes other than tab, line breaks and form feed).
+ */
+function ownDecoding(bytes: Uint8Array): (v: View) => boolean {
+  const le = bytes[0] === 0xff && bytes[1] === 0xfe;
+  const be = bytes[0] === 0xfe && bytes[1] === 0xff;
+  if (!le && !be && bytes.some((x) => x === 0 || (x < 0x20 && x !== 0x09 && x !== 0x0a && x !== 0x0c && x !== 0x0d))) return NO_NAMES;
+  const want = le ? "utf-16le" : be ? "utf-16be" : bytes.some((x) => x >= 0x80) ? "utf-8" : "latin-1";
+  return (v) => v.encoding === want || v.encoding.startsWith(`${want}+`);
 }
 
 const TABLE_EXTENSIONS: Record<string, "csv" | "tsv"> = { ".csv": "csv", ".tsv": "tsv", ".tab": "tsv" };
@@ -565,6 +665,16 @@ function toFindings(file: string, found: readonly Located[]): Finding[] {
   return findings;
 }
 
+/**
+ * A lone capitalised word seen only where any word is capitalised (a sentence start, a line start,
+ * a heading) is ordinary prose; it stays a candidate only when the same word also stands
+ * mid-sentence somewhere in the file.
+ */
+function withoutInitialOnlyNames(found: readonly Located[]): Located[] {
+  const midSentence = new Set(found.filter((l) => l.kind === "name" && l.initial === false).map((l) => l.value));
+  return found.filter((l) => l.kind !== "name" || midSentence.has(l.value));
+}
+
 /** Semantic candidates per output path (only paths with any), each list deduplicated and capped. */
 export function semanticFindings(entries: readonly TreeEntry[], spec: Spec, map: BlindMap, opts: SemanticOptions): Map<string, Finding[]> {
   const global = new Terms(globalTerms(spec, opts.keep));
@@ -577,7 +687,8 @@ export function semanticFindings(entries: readonly TreeEntry[], spec: Spec, map:
     scanViewsInto(w, "", "name", stringView(entry.path.slice(nameAt)), nameAt);
     if (entry.kind === "file") scanContent(w, entry.path, "", entry.bytes, 0);
     else if (entry.kind === "symlink") scanViewsInto(w, "", "link", stringView(entry.target));
-    if (w.found.length > 0) out.set(entry.path, toFindings(entry.path, w.found));
+    const found = withoutInitialOnlyNames(w.found);
+    if (found.length > 0) out.set(entry.path, toFindings(entry.path, found));
   }
   return out;
 }

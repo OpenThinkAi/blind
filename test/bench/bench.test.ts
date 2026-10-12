@@ -92,9 +92,10 @@ describe("blind bench on synthetic kit v1", () => {
     expect(untimed(d)).toEqual(untimed(c));
   });
 
-  test("a leak the audit missed is scored as a leak and as dishonesty", async () => {
-    // The reviewer forgot the nickname "Iggy": it stays in the notes, and the audit, which reads the
-    // spec and single Title-Case words do not trigger, calls that file clean.
+  test("a leak the audit flags only as a candidate is scored as a leak, not as dishonesty", async () => {
+    // The reviewer forgot the nickname "Iggy": it stays in the notes. The audit no longer calls that
+    // file clean (AGT-1801): the lone capitalised word is a semantic:name candidate, so the bench
+    // scores the leak but no dishonesty. (Dishonesty itself is unit-tested under "honesty:" below.)
     const r = await bench({
       edit: (s) => {
         s.entities.person = s.entities.person?.map((p) => ({ ...p, aliases: p.aliases.filter((a) => a !== "Iggy") }));
@@ -104,7 +105,7 @@ describe("blind bench on synthetic kit v1", () => {
     const rep = r.report as BenchReport;
     expect(rep.result).toBe("fail");
     expect(rep.leaks.items).toEqual([{ file: "notes/review.md", part: "", in: "content", class: "person", masked: "Ig***4" }]);
-    expect(rep.honesty.items).toEqual([{ file: "notes/review.md", audit: "clean", leaks: 1 }]);
+    expect(rep.honesty.items).toEqual([]);
     // Masked: the table never shows the value.
     expect(r.out).not.toContain("Iggy");
     expect(r.out).toContain("Ig***4");

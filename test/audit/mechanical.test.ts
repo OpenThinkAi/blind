@@ -217,7 +217,8 @@ describe("auditTree", () => {
 
   test("an accent or width variant is a candidate", () => {
     const { entries, map } = kit();
-    const r = auditTree([...entries, file("w.txt", "Avéry Quill and Ａｖｅｒｙ")], SPEC, map);
+    // Both words varied: "Quill" written as it is would be a surviving word of a blinded name (AGT-1801).
+    const r = auditTree([...entries, file("w.txt", "Avéry Qüill and Ａｖｅｒｙ")], SPEC, map);
     expect(findings(r).map((f) => f.severity)).toEqual(["candidate", "candidate"]);
   });
 

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -62,6 +62,22 @@ describe("blind apply", () => {
     expect(r.out).toContain('"Ref Code": unknown → pseudonymised');
     expect(r.out).toContain('"Owner": person/blind → blinded');
     expect(r.out).toContain("sub/notes.md (text, utf8)");
+  });
+
+  test("a symbolic link already inside the output tree is never written through; nothing is written", async () => {
+    mkdirSync(join(dir, "elsewhere"));
+    mkdirSync(join(dir, "out"));
+    symlinkSync(join(dir, "elsewhere"), join(dir, "out", "sub"));
+    const r = await apply("in", "-o", "out");
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("sub in out is a symbolic link; blind never writes through one");
+    expect(readdirSync(join(dir, "elsewhere"))).toEqual([]);
+    expect(existsSync(join(dir, ".blind", "map.json"))).toBe(false);
+    rmSync(join(dir, "out", "sub"));
+    writeFileSync(join(dir, "elsewhere", "target.csv"), "untouched\n");
+    symlinkSync(join(dir, "elsewhere", "target.csv"), join(dir, "out", "staff.csv"));
+    expect((await apply("in", "-o", "out")).code).toBe(2);
+    expect(read("elsewhere", "target.csv")).toBe("untouched\n");
   });
 
   test("--map-out writes the map there, mode 0600", async () => {

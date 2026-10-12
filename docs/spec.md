@@ -192,7 +192,8 @@ same blinded output tree. No model is called.
 ## How `blind apply` uses the spec
 
 `blind apply <inputs> -o <out>` reads `.blind/spec.json` and `.blind/salt` and refuses (exit 2,
-nothing written) if either is missing or the spec is invalid. Spec `file` values are paths relative
+nothing written) if either is missing or the spec is invalid, or if a file or folder it would write
+inside `<out>` is already a symbolic link (it never writes through one). Spec `file` values are paths relative
 to an input directory, or the file name for a file named directly. This release handles CSV/TSV,
 JSON and JSONL (`.json`, `.jsonl`, `.ndjson`), XLSX workbooks (`.xlsx`), text (`.txt`, `.md`,
 `.log`), DOCX (`.docx`) and WebVTT and SRT transcripts (`.vtt`, `.srt`); any other file is listed

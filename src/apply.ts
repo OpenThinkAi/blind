@@ -260,6 +260,22 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
 
     const result = applySpec(files, spec, { salt, map, keep });
 
+    // Never write through a symbolic link already inside the output tree: it could lead outside it.
+    // (The output directory itself is the user's to name, link or not.) Checked before anything is written.
+    for (const o of result.outputs) {
+      const segs = o.path.split("/");
+      for (let k = 1; k <= segs.length; k++) {
+        let st;
+        try {
+          st = lstatSync(join(outDir, ...segs.slice(0, k)));
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code === "ENOENT") break;
+          throw new Refusal(`${oneLine(segs.slice(0, k).join("/"))} in ${values.out}: cannot check it (${(e as NodeJS.ErrnoException).code ?? "error"})`);
+        }
+        if (st.isSymbolicLink()) throw new Refusal(`${oneLine(segs.slice(0, k).join("/"))} in ${values.out} is a symbolic link; blind never writes through one`);
+      }
+    }
+
     // The map first: if writing the outputs fails part-way, what was written can still be reversed.
     try {
       mkdirSync(dirname(mapPath), { recursive: true, mode: 0o700 });

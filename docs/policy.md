@@ -82,6 +82,11 @@ What a keep term does:
   kept by a term: an address under a kept domain is still blinded.
 - **Names.** A part of a person's name that equals a keep term is not replaced on its own
   wherever it recurs, and a transcript speaker tag equal to a keep term is kept and counted.
+- **IP addresses.** A term may be an exact IP address or a CIDR range (`198.51.100.7`,
+  `10.2.0.0/16`). The audit does not report an address equal to or inside one. Every other IP
+  address in the output is a candidate unless the map says the engine issued it as a pseudonym,
+  whatever the spec's `patterns` say. Only the audit reads these terms; the engine matches IPs by
+  the spec's `ip` pattern.
 - **Audit.** The audit does not report a keep term, a Title-Case phrase made of keep terms, or a
   host under a kept domain, and the model auditor is told to leave them.
 - **Models.** The analyst and auditor are sent the list so they do not propose or report them.

@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PolicyError, defaultPolicy, loadPolicy, parsePolicy, renderPolicy } from "../src/policy.ts";
+import { PolicyError, defaultPolicy, loadPolicy, parsePolicy, renderPolicy, withPolicyPatterns } from "../src/policy.ts";
+import type { Spec } from "../src/schema.ts";
 
 const valid = () => renderPolicy(defaultPolicy());
 /** The default policy with `[profile] samples = 5` written out rather than left to the mode. */
@@ -106,5 +107,52 @@ describe("loadPolicy", () => {
   test("loads a valid file", () => {
     writeFileSync(join(dir, "blind.toml"), valid());
     expect(loadPolicy(dir)).toEqual(defaultPolicy());
+  });
+});
+
+describe("[patterns]", () => {
+  // Synthetic: the spec's own switches, all off, so every blind.toml switch shows.
+  const spec = (): Spec => ({ version: 1, columns: [], entities: {}, patterns: { ip: false, email: false, host: false, guid: false, mac: false }, questions: [] });
+
+  test("the init template turns ip and host on and leaves the rest to the spec", () => {
+    expect(defaultPolicy().patterns).toEqual({ ip: true, host: true });
+    const text = valid();
+    expect(text).toMatch(/^\[patterns\]$/m);
+    expect(text).toMatch(/^ip = true /m);
+    expect(text).toMatch(/^host = true /m);
+    for (const name of ["email", "guid", "mac"]) expect(text).toMatch(new RegExp(`^# ${name} = true `, "m"));
+  });
+
+  test("each pattern can be set on or off; an unset one is left out", () => {
+    const text = valid().replace(/^# email = true .*$/m, "email = false").replace(/^ip = true .*$/m, "ip = false").replace(/^# mac = true .*$/m, "mac = true");
+    expect(parsePolicy(text).patterns).toEqual({ ip: false, host: true, email: false, mac: true });
+  });
+
+  test("the table is optional: a blind.toml without it leaves every pattern to the spec", () => {
+    const text = valid().replace(/\[patterns\][\s\S]*$/, "");
+    expect(text).not.toContain("[patterns]");
+    expect(parsePolicy(text).patterns).toEqual({});
+  });
+
+  test("a non-boolean or unknown key is rejected, naming it", () => {
+    expect(errorOf(valid().replace(/^ip = true .*$/m, 'ip = "yes"'))).toBe("blind.toml: patterns.ip must be true or false (got string)");
+    expect(errorOf(valid().replace(/^ip = true .*$/m, "ipv4 = true"))).toBe(
+      "blind.toml: unknown key patterns.ipv4 (expected one of: ip, email, host, guid, mac)",
+    );
+    expect(errorOf(`patterns = 1\n${valid().replace(/\[patterns\][\s\S]*$/, "")}`)).toBe("blind.toml: patterns must be a table (got 1)");
+  });
+
+  test("render round-trips every combination it writes", () => {
+    const p = defaultPolicy();
+    p.patterns = { ip: false, email: true, mac: false };
+    expect(parsePolicy(renderPolicy(p))).toEqual(p);
+  });
+
+  test("withPolicyPatterns lays blind.toml over the spec, both ways, and leaves unset ones alone", () => {
+    const s = { ...spec(), patterns: { ...spec().patterns, email: true } };
+    expect(withPolicyPatterns(s, { ip: true, host: true, email: false }).patterns).toEqual({ ip: true, email: false, host: true, guid: false, mac: false });
+    expect(withPolicyPatterns(s, {})).toBe(s);
+    expect(withPolicyPatterns(s, { email: true })).toBe(s);
+    expect(s.patterns.ip).toBe(false);
   });
 });

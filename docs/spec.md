@@ -85,7 +85,9 @@ optional and `{}` is valid. Each value is an array of entities:
 ### `patterns`
 
 Shape detectors for free text. All five keys are required, so turning a detector off is always an
-explicit, visible choice. `true` means values of that shape are found and replaced.
+explicit, visible choice. `true` means values of that shape are found and replaced. A key set in
+the `[patterns]` table of `blind.toml` wins over the spec's value at apply and audit time (see
+[policy.md](policy.md#patterns)); the spec file is not changed.
 
 | Field | Type | Meaning |
 |---|---|---|

@@ -75,6 +75,32 @@ describe("blind apply", () => {
     expect(out).toMatch(/^Call Person_[0-9A-F]{4} back\.\n$/);
   });
 
+  test("blind.toml [patterns] switches a pattern on or off with no spec edit", async () => {
+    const off = { ...SPEC, patterns: { ip: false, email: true, host: false, guid: true, mac: false } };
+    writeFileSync(join(dir, ".blind", "spec.json"), JSON.stringify(off));
+    writeFileSync(join(dir, "in", "sub", "notes.md"), "Reach 192.0.2.10 or db01.corp.example via ops@corp.example.\n");
+    const base = renderPolicy(defaultPolicy());
+
+    // No [patterns] table: the spec decides (ip and host off, email on).
+    writeFileSync(join(dir, "blind.toml"), base.replace(/\[patterns\][\s\S]*$/, ""));
+    expect((await apply("in", "-o", "out1")).code).toBe(0);
+    const before = read("out1", "sub", "notes.md");
+    expect(before).toContain("192.0.2.10");
+    expect(before).toContain("db01.corp.example");
+    expect(before).not.toContain("ops@");
+
+    // The init template (ip and host on) plus email off: blind.toml wins in both directions.
+    writeFileSync(join(dir, "blind.toml"), base.replace(/^# email = true .*$/m, "email = false"));
+    expect((await apply("in", "-o", "out2")).code).toBe(0);
+    const after = read("out2", "sub", "notes.md");
+    expect(after).not.toContain("192.0.2.10");
+    expect(after).not.toContain("db01.corp.example");
+    // The email pattern is off, so the address is not replaced whole; the host pattern still finds its domain.
+    expect(after).toMatch(/ via ops@\S+\.example\.\n$/);
+    expect(after).not.toContain("corp.example");
+    expect(JSON.parse(read(".blind", "spec.json"))).toEqual(off);
+  });
+
   test("a symbolic link already inside the output tree is never written through; nothing is written", async () => {
     mkdirSync(join(dir, "elsewhere"));
     mkdirSync(join(dir, "out"));

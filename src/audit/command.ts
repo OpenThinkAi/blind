@@ -12,7 +12,7 @@ import { MAP_FILE, SPEC_FILE } from "../apply.ts";
 import { type BlindMap, MapError, readMap } from "../engine/map.ts";
 import { BLIND_DIR } from "../init.ts";
 import { type AskOptions, ModelRefusal, modelsEnabled } from "../model.ts";
-import { loadPolicy, type Policy, POLICY_FILE, PolicyError } from "../policy.ts";
+import { loadPolicy, type Policy, POLICY_FILE, PolicyError, withPolicyPatterns } from "../policy.ts";
 import type { Spec } from "../schema.ts";
 import { parseSpec, SchemaError } from "../validate.ts";
 import { addModelLayer } from "./auditor.ts";
@@ -243,11 +243,13 @@ export async function runAudit(argv: string[], io: AuditIO): Promise<number> {
     return EXIT_NOT_RUN;
   }
   try {
-    const spec = loadSpec(io.cwd);
+    const saved = loadSpec(io.cwd);
     const map = loadMap(resolve(io.cwd, values.map ?? join(BLIND_DIR, MAP_FILE)));
     const entries = collectTree(resolve(io.cwd, positionals[0] as string));
     // Without a blind.toml nothing is kept (the more private reading) and no model is configured.
     const policy = existsSync(join(io.cwd, POLICY_FILE)) ? loadPolicy(io.cwd) : null;
+    // The patterns apply used: blind.toml's [patterns] switches over the spec's.
+    const spec = withPolicyPatterns(saved, policy?.patterns ?? {});
     // Hosts the engine kept under a keep-list domain are policy, not leaks.
     const keep = policy?.keep.terms ?? [];
     let report = addSemanticLayer(auditTree(entries, spec, map, keep), entries, spec, map, { keep });

@@ -291,6 +291,9 @@ rewritten at the XML level, so everything not blinded is copied byte for byte:
   properties (core, app, custom), drawing names and alt text, form-field and content-control text,
   document variables, mail-merge strings and external hyperlink targets are free text.
 - Office's own linking IDs are rewritten wherever they are (see **Office structural IDs** below).
+- A spec value or pattern match (any shape, as for a workbook) in a part or attribute nothing here
+  rewrites, such as custom XML, stops the document (listed and not written, exit 1), naming the part
+  and element but never the value.
 - Images are copied unchanged and listed as a warning. A package that cannot be read, has a part
   this handler does not know that holds text, or embeds another file (an OLE object, a chart's
   workbook, macros) is listed and not written (exit 1). So is one with a saved thumbnail
@@ -375,8 +378,11 @@ is an error). The column table above applies to every cell, with these workbook 
   values), and cells under `keep` get only recurring values replaced, as in a CSV file. Table column
   names and pivot field names are rewritten like the header cells they repeat.
 - Office's own linking IDs are rewritten wherever they are (see **Office structural IDs** below).
-- **Fail closed.** Every other text run and attribute is scanned for spec entities and recurring
-  values; one found there stops the
+- **Fail closed.** Every other text run and attribute (connection strings, external link caches,
+  query tables, custom XML) is scanned for spec entities, recurring values and every pattern shape
+  (email, host, IP, GUID, MAC), including a pattern switched off in the spec; blind does not rewrite
+  these parts, so it refuses rather than rewrites. Namespace, content-type and relationship-type
+  URIs and Office's template IDs are format structure and are not scanned. One found there stops the
   workbook (listed and not written, exit 1), naming the part and element but never the value. So
   does a member that cannot be parsed, a cell without a reference, and a zip that is not a workbook.
   Members that are not XML are copied unread and listed in the report when they are images, fonts

@@ -45,6 +45,7 @@ import type { NameSlot } from "./names.ts";
 import { type HexNamer, rewriteOfficeId } from "./officeid.ts";
 import type { TextScanner } from "./recur.ts";
 import type { ExtraForm, Span } from "./text.ts";
+import { refuseUnrewritten } from "./unrewritten.ts";
 
 /** The spec does not fit the workbook; the caller turns this into its ApplyError (exit 2). */
 export class XlsxSpecError extends Error {
@@ -282,26 +283,9 @@ export function prepareXlsx(path: string, bytes: Uint8Array, p: XlsxPlan, env: E
     env.names.plan("definedName", t.displayName);
   }
 
-  // Text that no slot rewrites must not hold a spec value.
-  const hits: string[] = [];
-  rewriteOoxml(
-    bytes,
-    (value, ctx) => {
-      if (hits.length < 5 && scan(value).some((s) => s.cls !== null && (s.source === "entity" || s.source === "map" || s.source === "speaker"))) {
-        const where = `${ctx.member} <${ctx.element.name}>${ctx.attribute === undefined ? " text" : ` attribute ${ctx.attribute}`}`;
-        if (!hits.includes(where)) hits.push(where);
-      }
-      return value;
-    },
-    (member) => ({
-      text: () => false,
-      attribute: (el, a, parents) => classify(member, el, parents, a) === null,
-      runs: (el, parents) => classify(member, el, parents) === null,
-    }),
-  );
-  if (hits.length > 0) {
-    return `a spec value appears where blind does not rewrite it (${hits.join("; ")}); not written`;
-  }
+  // Text that no slot rewrites must not hold a spec value or a pattern match.
+  const refused = refuseUnrewritten(bytes, (member) => slotRules(member), scan);
+  if (refused !== null) return refused;
 
   const requests: { cls: PseudoClass; value: string }[] = [];
   const recorder: Namer = {

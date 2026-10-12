@@ -44,6 +44,7 @@ import type { PseudoClass } from "./canonical.ts";
 import { type HexNamer, rewriteOfficeId } from "./officeid.ts";
 import type { Pseudonymizer } from "./pseudonym.ts";
 import type { Span } from "./text.ts";
+import { refuseUnrewritten } from "./unrewritten.ts";
 
 export interface DocxRequest {
   cls: PseudoClass;
@@ -453,6 +454,15 @@ export function docxParagraphs(plan: DocxPlan, which: "main" | "all"): string[] 
  */
 export function scanDocx(plan: DocxPlan, spanner: (s: string) => Span[]): void {
   for (const unit of plan.units) planUnit(unit, spanner, plan);
+}
+
+/**
+ * A reason the package must not be written, or null: a spec value or a pattern match in a part or
+ * attribute nothing here rewrites (custom XML, an unlisted attribute, a content-types entry).
+ * `scan` finds them (see unrewrittenSpans).
+ */
+export function refuseDocxUnrewritten(plan: DocxPlan, scan: (s: string) => Span[]): string | null {
+  return refuseUnrewritten(plan.bytes, (member) => rulesFor(plan.kinds.get(member) ?? "inert"), scan);
 }
 
 /** Match one unit (a paragraph's text, its instructions, or a single value) and record the edits on its nodes. */

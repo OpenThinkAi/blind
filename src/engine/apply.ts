@@ -54,12 +54,13 @@ import { isJsonNumber, type JsonFormat, JsonError, type JsonToken, quote, scanJs
 import type { BlindMap } from "./map.ts";
 import { type EntityEntry, Pseudonymizer } from "./pseudonym.ts";
 import { type ColumnOutcome, decide, outcomeOf } from "./columns.ts";
-import { DocxError, type DocxPlan, docxParagraphs, FONT, IMAGE, planDocx, THUMBNAIL, thumbnailReason, renderDocx, scanDocx } from "./docx.ts";
+import { DocxError, type DocxPlan, docxParagraphs, FONT, IMAGE, planDocx, THUMBNAIL, thumbnailReason, refuseDocxUnrewritten, renderDocx, scanDocx } from "./docx.ts";
 import { OfficeIds } from "./officeid.ts";
 import { NameRewriter, rewriteSpans } from "./names.ts";
 import { keepForms, nameParts, personPartForms, personValues, recurrenceForms, TextScanner, vocabularyForms } from "./recur.ts";
 import { EntityMatcher, type ExtraForm, keepDomains, type Span } from "./text.ts";
 import { entrySpans, keptSpeakers, planTranscript, shapeParagraphs, speakerForms, speakersOf, type TranscriptPlan, transcriptSpans } from "./transcript.ts";
+import { unrewrittenSpans } from "./unrewritten.ts";
 import { type Env, planXlsx, prepareXlsx, renderXlsx, XlsxError, type XlsxPlan, XlsxSpecError, xlsxValues, ZipError } from "./xlsx.ts";
 
 /** XLSX members that are not XML but are copied unchanged and listed as unread. */
@@ -674,10 +675,21 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   // does not rewrite, and record the pseudonyms the render will need.
   const xlsxEnv: Env = { scanner, names };
   const unhandled = new EntityMatcher(spec.entities, forms);
+  // Spec values and every pattern shape, for the parts nothing rewrites.
+  const unrewritten = unrewrittenSpans((s) => unhandled.find(s, []), keep);
+  for (let i = plans.length - 1; i >= 0; i--) {
+    const p = plans[i] as Plan;
+    if (p.kind !== "docx") continue;
+    const refused = refuseDocxUnrewritten(p.docx, unrewritten);
+    if (refused !== null) {
+      skipped.push({ path: p.input.path, reason: refused });
+      plans.splice(i, 1);
+    }
+  }
   for (let i = plans.length - 1; i >= 0; i--) {
     const p = plans[i] as Plan;
     if (p.kind !== "xlsx") continue;
-    const refused = prepareXlsx(p.input.path, p.input.bytes, p.plan, xlsxEnv, (s) => unhandled.find(s, []));
+    const refused = prepareXlsx(p.input.path, p.input.bytes, p.plan, xlsxEnv, unrewritten);
     if (refused !== null) {
       skipped.push({ path: p.input.path, reason: refused });
       plans.splice(i, 1);

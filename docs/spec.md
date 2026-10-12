@@ -228,6 +228,15 @@ and not written (exit 1). Transcripts are found by content, not by name (see
 A rule that names a column the file does not have is an error, so a stale spec never quietly stops
 blinding a column. Rows above the header and the header row itself are treated as free text.
 
+**One entity, one pseudonym.** A value gets one pseudonym across classes: a name blinded as a
+transcript speaker (`person`) and pseudonymised again in a `value` column keeps the speaker's
+`Person_` pseudonym rather than getting a `Value_` one too. A value is matched under the other
+class's canonical form (`Quill, Avery` finds the person `Avery Quill`), and an earlier map counts.
+The specific classes are issued before `value`, so their shape is the one kept. Phone-shaped values
+canonicalise to their digits in every class, so `(801) 555-0100`, `801-555-0100` and
+`+1 801 555 0100` share one pseudonym (`blind reveal` restores each as the form the map records). A
+value of bare digits is never read as a phone, so numeric IDs keep their length.
+
 **Recurring values.** Once every column is decided, each value a column rule pseudonymised, each XLSX
 or DOCX identity metadata value replaced whole (creator, last modified by, comment and revision
 authors, Manager, Company, user IDs and account names in paths, with their class), and each

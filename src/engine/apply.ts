@@ -62,7 +62,7 @@ import { detectHeaderRow } from "../profile/table.ts";
 import { assertRowWidths, type Cell, CsvError, parseCsv, renderCell, type Row, serializeCsv, sniffDelimiter } from "./csv.ts";
 import { decode, type Encoding, EncodingError, encode } from "./encoding.ts";
 import { isJsonNumber, type JsonFormat, JsonError, type JsonToken, jsonCuts, quote, scanJson, scanJsonl, stringOffsets } from "./json.ts";
-import { type BlindMap, withoutValues } from "./map.ts";
+import { type BlindMap, foldText, withoutValues } from "./map.ts";
 import { type EntityEntry, Pseudonymizer } from "./pseudonym.ts";
 import { type ColumnDefault, type ColumnOutcome, decide, holdsWhole, isFallback, removedForms } from "./columns.ts";
 import { type ContextOptions, type ContextTriggerSpec, pairCells } from "./context.ts";
@@ -739,16 +739,15 @@ function heldValues(plans: readonly Plan[]): Set<string> {
 function hidesRemoved(plans: readonly Plan[]): (text: string) => boolean {
   const removed = plans.flatMap((p) => (p.kind === "text" || p.kind === "docx" ? [] : p.kind === "xlsx" ? p.plan.removed : p.removed));
   const needles = new Set<string>();
-  for (const f of removed) if (recurrenceExclusion(f.value.trim(), new Set()) === null) needles.add(foldNeedle(f.value));
+  for (const f of removed) if (recurrenceExclusion(f.value.trim(), new Set()) === null) needles.add(foldText(f.value));
   const names = [...new Set(removed.filter((f) => f.named === true).map((f) => f.value))];
-  for (const part of nameParts(names, [], new Set(), new Set())) if (part.exclusion === null) needles.add(foldNeedle(part.form));
+  for (const part of nameParts(names, [], new Set(), new Set())) if (part.exclusion === null) needles.add(foldText(part.form));
   const list = [...needles];
   return (text) => {
-    const t = foldNeedle(text);
-    return list.some((n) => t !== n && t.includes(n));
+    const t = foldText(text);
+    return list.some((n) => t.includes(n));
   };
 }
-const foldNeedle = (s: string): string => s.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
 
 /**
  * Settle every cell the fail-closed fallback pseudonymised whole: one whose value is held whole in a

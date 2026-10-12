@@ -130,7 +130,7 @@ export function readMap(path: string): BlindMap {
   return parseMap(readFileSync(path, "utf8"), path);
 }
 
-const foldText = (s: string): string => s.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+export const foldText = (s: string): string => s.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
 
 /**
  * `map` without the entries that record any of `values` (a value of a `drop`, `redact` or credential

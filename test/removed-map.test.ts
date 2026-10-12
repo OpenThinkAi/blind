@@ -106,6 +106,20 @@ describe("values of redact/drop/secret columns stay out of map.json (AGT-1847)",
     expect(r.out).toContain("redaction placeholder");
   });
 
+  test("an unruled cell that is exactly a removed value is redacted, not pseudonymised or mapped", async () => {
+    writeFileSync(join(dir, "in", "loose.json"), JSON.stringify({ misc: TOKEN }));
+    writeFileSync(join(dir, "in", "loose.csv"), `misc\n${TOKEN}\n`);
+    const r = await run();
+    expect(r.code).toBe(0);
+    for (const f of ["loose.json", "loose.csv"]) {
+      const o = read("out", f).toString("utf8");
+      expect(o).toContain("REDACTED");
+      expect(o).not.toContain(TOKEN);
+      expect(o).not.toMatch(/(Id|Value|Person)_[0-9A-F]{4}/);
+    }
+    expect(read(".blind", "map.json").toString("utf8").toLowerCase()).not.toContain(TOKEN.toLowerCase());
+  });
+
   test("reveal leaves the placeholder in place", async () => {
     await run();
     const [out] = sink();

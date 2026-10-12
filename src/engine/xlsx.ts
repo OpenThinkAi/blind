@@ -410,6 +410,7 @@ export interface Rendered {
   speakerReplacements: number;
   /** People named only in prose, or parts of their names, replaced. */
   proseReplacements: number;
+  joinedReplacements: number;
   keptHosts: number;
   /** Identity metadata values and account names in paths replaced as a whole. */
   metadataReplacements: number;
@@ -481,6 +482,7 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
   let removedReplacements = 0;
   let speakerReplacements = 0;
   let proseReplacements = 0;
+  let joinedReplacements = 0;
   let keptHosts = 0;
   let metadataReplacements = 0;
   // Replaced whole: an author, creator, company or user ID, or an account name in a path.
@@ -499,6 +501,7 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
     for (const s of spans) {
       out += text.slice(at, s.start) + (s.cls === null ? text.slice(s.start, s.end) : pz.pseudonym(s.cls, s.value));
       at = s.end;
+      if (s.cls !== null && s.joined === true) joinedReplacements++;
       if (s.cls !== null && s.source === "entity") entityReplacements++;
       else if (s.cls !== null && s.source === "map") mappedReplacements++;
       else if (s.cls !== null && s.source === "removed") removedReplacements++;
@@ -739,6 +742,7 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
     removedReplacements,
     speakerReplacements,
     proseReplacements,
+    joinedReplacements,
     keptHosts,
     metadataReplacements,
   };

@@ -42,3 +42,33 @@ describe("decode / encode", () => {
     expect(() => encode("Ω", "latin1")).toThrow(EncodingError);
   });
 });
+
+describe("windows-1252 view of 8-bit text (AGT-1854)", () => {
+  test("0x80-0x9F decode to their cp1252 characters and encode back", () => {
+    const bytes = Uint8Array.from([0x80, 0x85, 0x91, 0x92, 0x93, 0x94, 0x96, 0x97, 0x99, 0x9f, 0xe9]);
+    const d = decode(bytes);
+    expect(d.encoding).toBe("latin1");
+    expect(d.text).toBe("€…‘’“”–—™Ÿé");
+    expect(Buffer.from(encode(d.text, "latin1")).equals(Buffer.from(bytes))).toBe(true);
+  });
+
+  test("the five bytes cp1252 leaves undefined keep their Latin-1 code units", () => {
+    const bytes = Uint8Array.from([0x81, 0x8d, 0x8f, 0x90, 0x9d, 0xe9]);
+    const d = decode(bytes);
+    expect(d.text).toBe("\u0081\u008d\u008f\u0090\u009dé");
+    expect(Buffer.from(encode(d.text, "latin1")).equals(Buffer.from(bytes))).toBe(true);
+  });
+
+  test("every byte round-trips", () => {
+    const bytes = Uint8Array.from({ length: 256 }, (_, i) => i);
+    bytes[0] = 0xe9; // not valid UTF-8 as a whole, so it is read as 8-bit
+    const d = decode(bytes);
+    expect(d.encoding).toBe("latin1");
+    expect(d.text.length).toBe(256);
+    expect(Buffer.from(encode(d.text, "latin1")).equals(Buffer.from(bytes))).toBe(true);
+  });
+
+  test("a character outside the file's 8-bit encoding is refused", () => {
+    expect(() => encode("a中", "latin1")).toThrow(EncodingError);
+  });
+});

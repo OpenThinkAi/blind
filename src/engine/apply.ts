@@ -188,6 +188,8 @@ export interface FileReport {
   speakerMentions?: number;
   /** People named only in prose (no column, speaker, map or spec entity names them), or parts of their names, replaced. Absent when 0. */
   proseNames?: number;
+  /** Names replaced as a new person because a given name stood right before a known person's surname (AGT-1854). Absent when 0. */
+  joinedNames?: number;
   changed: boolean;
 }
 
@@ -667,6 +669,8 @@ function count(spans: readonly Span[], source: Span["source"]): number {
   return spans.filter((s) => s.cls !== null && s.source === source).length;
 }
 
+const countJoined = (spans: readonly Span[]): number => spans.filter((s) => s.cls !== null && s.joined === true).length;
+
 function transcriptReport(
   kind: TranscriptReport["kind"],
   speakers: readonly string[],
@@ -940,7 +944,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   const scanForms = [...forms.filter((f) => !voiced.has(`${f.cls}\0${f.form ?? f.value}`)), ...voices, ...prose].sort(
     (a, b) => cmp(a.cls, b.cls) || cmp(a.form ?? a.value, b.form ?? b.value) || cmp(a.value, b.value),
   );
-  const scanner = new TextScanner(spec.entities, spec.patterns, keep, scanForms, contextOf(opts));
+  const scanner = new TextScanner(spec.entities, spec.patterns, keep, scanForms, contextOf(opts), { keep: keepSet, vocabulary: vocabularySet });
   for (const p of plans) {
     // One secret-boost carry per document: its turns and paragraphs are scanned in order (secret.ts).
     const carry = newSecretCarry();
@@ -1098,6 +1102,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         keptHosts: r.keptHosts,
         ...(r.speakerReplacements > 0 ? { speakerMentions: r.speakerReplacements } : {}),
         ...(r.proseReplacements > 0 ? { proseNames: r.proseReplacements } : {}),
+        ...(r.joinedReplacements > 0 ? { joinedNames: r.joinedReplacements } : {}),
         ...(r.removedReplacements > 0 ? { removedReplacements: r.removedReplacements } : {}),
         ...(r.metadataReplacements > 0 ? { metadataReplacements: r.metadataReplacements } : {}),
         sheets: p.plan.sheets.map((s) => ({ ...s, outputName: r.sheetNames.find((n) => n.from === s.name)?.to ?? s.name })),
@@ -1127,6 +1132,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
           ? r.speakerReplacements > 0 ? { speakerMentions: r.speakerReplacements } : {}
           : { transcript: transcriptReport("docx", p.transcript.speakers, p.transcript.tags, r.speakerReplacements, kept) }),
         ...(r.proseReplacements > 0 ? { proseNames: r.proseReplacements } : {}),
+        ...(r.joinedReplacements > 0 ? { joinedNames: r.joinedReplacements } : {}),
         ...(r.removedReplacements > 0 ? { removedReplacements: r.removedReplacements } : {}),
         changed: r.changed,
       });
@@ -1150,6 +1156,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         keptHosts: keptHostCount(p.spans),
         ...textSpeakers(p.spans, t, kept),
         ...(count(p.spans, "prose") > 0 ? { proseNames: count(p.spans, "prose") } : {}),
+        ...(countJoined(p.spans) > 0 ? { joinedNames: countJoined(p.spans) } : {}),
         ...(count(p.spans, "removed") > 0 ? { removedReplacements: count(p.spans, "removed") } : {}),
         changed: false,
       };
@@ -1220,6 +1227,8 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       if (mentions > 0) report.speakerMentions = mentions;
       const prose = [...p.edits.values()].reduce((n, e) => n + (e.kind === "spans" ? count(e.spans, "prose") : 0), 0);
       if (prose > 0) report.proseNames = prose;
+      const joined = [...p.edits.values()].reduce((n, e) => n + (e.kind === "spans" ? countJoined(e.spans) : 0), 0);
+      if (joined > 0) report.joinedNames = joined;
       const removedHere = [...p.edits.values()].reduce((n, e) => n + (e.kind === "spans" ? count(e.spans, "removed") : 0), 0);
       if (removedHere > 0) report.removedReplacements = removedHere;
     }

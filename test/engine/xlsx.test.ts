@@ -184,6 +184,25 @@ describe("XLSX apply: names, formulas, metadata, comments and pivot caches", () 
     expect(m["xl/comments1.xml"]).toContain(`<t>Ask ${pseudo(r, "Sam Placeholder")}</t>`);
   });
 
+  test("a comment's legacy VML drawing is parsed, left inert and scrubbed in <x:ClientData> (AGT-1821)", () => {
+    const vml =
+      '<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">' +
+      '<v:shapetype id="_x0000_t202" coordsize="21600,21600" o:spt="202" path="m,l,21600r21600,l21600,xe"><v:stroke joinstyle="miter"/></v:shapetype>' +
+      '<v:shape id="_x0000_s1025" type="#_x0000_t202" style="position:absolute;margin-left:59.25pt;width:108pt" fillcolor="#ffffe1" o:insetmode="auto">' +
+      '<v:textbox style="mso-direction-alt:auto"><div style="text-align:left"></div></v:textbox>' +
+      '<x:ClientData ObjectType="Note"><x:MoveWithCells/><x:Anchor>1, 15, 1, 10, 3, 15, 5, 4</x:Anchor><x:Row>1</x:Row><x:Column>0</x:Column>' +
+      '<x:Note>Ask Sam Placeholder</x:Note></x:ClientData></v:shape></xml>';
+    const entries = workbookEntries({ extra: [{ name: "xl/drawings/commentsDrawing1.vml", data: vml }] });
+    const out = run(buildZip(entries));
+    expect(out.skipped).toEqual([]);
+    const m2 = members(out);
+    const v = m2["xl/drawings/commentsDrawing1.vml"]!;
+    expect(v).toContain(`<x:Note>Ask ${pseudo(out, "Sam Placeholder")}</x:Note>`);
+    expect(v).not.toContain("Sam Placeholder");
+    // Everything outside <x:ClientData> is byte-identical.
+    expect(v.replace(/<x:Note>.*?<\/x:Note>/, "")).toBe(vml.replace(/<x:Note>.*?<\/x:Note>/, ""));
+  });
+
   test("pivot cache records and definitions repeat the cells' pseudonyms and renumbered IDs", () => {
     const rec = m["xl/pivotCache/pivotCacheRecords1.xml"]!;
     expect(rec).toContain(`<r><x v="0"/><n v="${pseudo(r, "4417")}"/></r><r><s v="${pseudo(r, "Sam Placeholder")}"/><n v="${pseudo(r, "4418")}"/></r>`);

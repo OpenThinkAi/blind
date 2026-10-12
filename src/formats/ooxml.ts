@@ -573,7 +573,7 @@ export interface OoxmlResult {
 export type OoxmlRewrite = (value: string, ctx: NodeContext & { member: string }) => string;
 
 export function isXmlMember(name: string): boolean {
-  return /\.(xml|rels)$/i.test(name);
+  return /\.(xml|rels|vml)$/i.test(name);
 }
 
 const strictUtf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });

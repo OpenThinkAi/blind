@@ -182,6 +182,9 @@ function classifyPart(member: string, el: Frame, parents: readonly Frame[], attr
     case "wsDr":
       if (attr === undefined) return name === "t" ? "text" : null;
       return name === "cNvPr" && (attr === "name" || attr === "descr" || attr === "title") ? "text" : null;
+    case "xml":
+      // Legacy VML drawing (comment shapes): inert except the text inside <x:ClientData>.
+      return attr === undefined && within(parents, "ClientData") ? "text" : null;
     case "Relationships":
       return name === "Relationship" && attr === "Target" && el.attrs.get("TargetMode") === "External" ? "path" : null;
     default:

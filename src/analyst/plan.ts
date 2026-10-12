@@ -393,6 +393,7 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
     const modelOpts = { ...io.model, quiet: values.quiet, stderr: (line: string) => io.err.write(`blind plan: ${line}\n`) };
     let filled: Location[] = [];
     let ruledOut: DroppedRule[] = [];
+    let patternsRestored: PatternName[] = [];
     let vocabDropped: Dropped[] = [];
     if (saved === undefined) {
       if (useModel) {
@@ -402,6 +403,7 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
         spec = seen.length > 0 ? { ...guarded.spec, seen } : guarded.spec;
         filled = result.filled;
         ruledOut = result.dropped;
+        patternsRestored = result.patternsRestored;
         vocabDropped = guarded.dropped;
       } else spec = heuristicSpec(profile, policy);
       diff = freshDiff(spec, vocabDropped);
@@ -421,9 +423,12 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
     }
     ruledOut.forEach((d, i) => {
       remarks.push(
-        `analyst rule ${i + 1} of ${ruledOut.length} dropped: ${d.treatment} for ${where(d.at)}; only ${POLICY_FILE} or a human may drop, redact or scan a column, so it is ruled as if the analyst had left it out`,
+        d.why === "identifying"
+          ? `analyst rule ${i + 1} of ${ruledOut.length} dropped: ${d.treatment} for ${where(d.at)}, an identifying column; only ${POLICY_FILE} or a human may keep one, so it is ruled as if the analyst had left it out`
+          : `analyst rule ${i + 1} of ${ruledOut.length} dropped: ${d.treatment} for ${where(d.at)}; only ${POLICY_FILE} or a human may drop, redact or scan a column, so it is ruled as if the analyst had left it out`,
       );
     });
+    for (const name of patternsRestored) remarks.push(`analyst turned pattern ${name} off; it is on, because only ${POLICY_FILE} or a human may switch a pattern off`);
     for (const l of filled) remarks.push(`the analyst left out ${where(l)}; the heuristic rule was used`);
     // blind.toml's column rules ([[columns]], and headers that are [keep] terms) decide ahead of everything else.
     const overlay = applyColumnPolicy(spec, profile, policy);

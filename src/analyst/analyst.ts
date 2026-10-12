@@ -2,16 +2,18 @@
 // passed schema/spec.schema.json inside ask(); here it must also be a spec that only talks
 // about the profile's own columns, written by the analyst, with every question unanswered.
 // Anything else is rejected whole, never repaired, except a column rule with a treatment only
-// blind.toml or a human may set (drop, redact, scan): that one rule is dropped and reported. Columns the analyst left out get the
+// blind.toml or a human may set (drop, redact, scan), or that keeps an identifying column in clear
+// (keep/vocabulary), is dropped and reported; so is a pattern it turns off (restored). Columns the analyst left out get the
 // heuristic rule, and a column with an open question stays `unknown` until it is answered.
 
+import { isPersonColumn } from "../engine/prose.ts";
 import { type AskOptions, ask } from "../model.ts";
 import type { Policy } from "../policy.ts";
 import { restoreSpec, tokeniseProfile } from "../profile/tokens.ts";
-import type { ColumnRule, EntityClassName, Location, Profile, Question, Spec } from "../schema.ts";
+import { type ColumnRule, type EntityClassName, type Location, type PatternName, patternOn, type Profile, type Question, type Spec, type ValueStats } from "../schema.ts";
 import { type SchemaIssue, validateSpec } from "../validate.ts";
 import specSchema from "../../schema/spec.schema.json" with { type: "json" };
-import { heuristicRule, profileLocations } from "./heuristic.ts";
+import { heuristicPatterns, heuristicRule, profileLocations } from "./heuristic.ts";
 import { analystPrompt, systemPrompt } from "./prompt.ts";
 
 export class AnalystError extends Error {
@@ -46,6 +48,8 @@ export const FORBIDDEN_TREATMENTS: readonly string[] = ["drop", "redact", "scan"
 export interface DroppedRule {
   at: Location;
   treatment: string;
+  /** `forbidden`: a treatment only blind.toml or a human may set. `identifying`: keep/vocabulary on a column the profile shows to be identifying. */
+  why: "forbidden" | "identifying";
 }
 
 const locationOf = (c: Location): Location => {
@@ -63,10 +67,55 @@ export function dropForbidden(spec: Spec): { spec: Spec; dropped: DroppedRule[] 
   const dropped: DroppedRule[] = [];
   const columns = spec.columns.filter((c) => {
     if (!FORBIDDEN_TREATMENTS.includes(c.treatment)) return true;
-    dropped.push({ at: locationOf(c), treatment: c.treatment });
+    dropped.push({ at: locationOf(c), treatment: c.treatment, why: "forbidden" });
     return false;
   });
   return { spec: dropped.length === 0 ? spec : { ...spec, columns }, dropped };
+}
+
+/**
+ * Whether the profile shows a column to hold identifying values: a shape the heuristic analyst
+ * classifies (email, host, id, address, phone, ...), a column of people's names (read from the
+ * samples), or, with no samples to read (profile-only), words that are not dictionary words and
+ * mostly distinct. A measure or a small category is not identifying.
+ */
+export function isIdentifying(loc: Location, stats: ValueStats): boolean {
+  if (heuristicRule(loc, stats, { sensitive: { classes: [], description: "", examples: [] } }).class !== "unknown") return true;
+  if (stats.count === 0) return false;
+  if (stats.samples.length > 0) return isPersonColumn(stats.samples);
+  return stats.distinctRatio >= 0.5 && stats.dictionaryRatio <= 0.3 && stats.digitRatio < 0.3;
+}
+
+/**
+ * Removes the analyst's keep (or vocabulary) rules for columns that `sent` shows to be identifying,
+ * so they fall back as if it had not ruled them (heuristic, then the blind.toml `[[columns]]` overlay;
+ * a human can still keep them in blind.toml or by editing the spec). A model reading a document
+ * that says "this column is harmless" must not be able to publish it in clear. Rules for locations
+ * `sent` does not describe are left alone.
+ */
+export function dropRelaxed(spec: Spec, sent: Profile): { spec: Spec; dropped: DroppedRule[] } {
+  const stats = new Map(profileLocations(sent).map(({ loc, stats: s }) => [locationKey(loc), { loc, s }]));
+  const dropped: DroppedRule[] = [];
+  const columns = spec.columns.filter((c) => {
+    if (c.treatment !== "keep" && c.class !== "vocabulary") return true;
+    const at = stats.get(locationKey(c));
+    if (at === undefined || !isIdentifying(at.loc, at.s)) return true;
+    dropped.push({ at: locationOf(c), treatment: c.treatment === "keep" ? "keep" : c.class, why: "identifying" });
+    return false;
+  });
+  return { spec: dropped.length === 0 ? spec : { ...spec, columns }, dropped };
+}
+
+/**
+ * Turns back on every pattern the analyst set to false or left out where absent means off although the policy would have it on (the
+ * pattern's class is sensitive), unless blind.toml `[patterns]` pins it: only blind.toml or a
+ * human may switch a pattern off. Returns the names restored (an optional pattern the analyst omitted counts as off).
+ */
+export function keepPatterns(spec: Spec, policy: Pick<Policy, "sensitive"> & Partial<Pick<Policy, "patterns">>): { spec: Spec; restored: PatternName[] } {
+  const baseline = heuristicPatterns(policy);
+  const restored = (Object.keys(baseline) as PatternName[]).filter((name) => policy.patterns?.[name] === undefined && baseline[name] === true && !patternOn(spec.patterns, name));
+  if (restored.length === 0) return { spec, restored };
+  return { spec: { ...spec, patterns: { ...spec.patterns, ...Object.fromEntries(restored.map((n) => [n, true])) } }, restored };
 }
 
 /** The rules a model reply must meet beyond the schema. Returns every problem found. */
@@ -146,7 +195,10 @@ export async function proposeSpec(
   const reply = await ask<Spec>("analyst", systemPrompt(policy), analystPrompt(tokens?.profile ?? sent, policy), proposalSchema, { ...opts, policy });
   // Forbidden treatments are dropped before the locations are restored, so a note names the
   // header as the analyst saw it (a token under profile-only), never a value.
-  const { spec: trimmed, dropped } = dropForbidden(reply);
+  const forbidden = dropForbidden(reply);
+  const relaxed = dropRelaxed(forbidden.spec, tokens?.profile ?? sent);
+  const dropped = [...forbidden.dropped, ...relaxed.dropped];
+  const trimmed = relaxed.spec;
   let proposal = trimmed;
   if (tokens !== undefined) {
     const restored = restoreSpec(trimmed, tokens);
@@ -167,9 +219,12 @@ export async function runAnalyst(
   profile: Profile,
   policy: Policy,
   opts: Omit<AskOptions, "policy">,
-): Promise<{ spec: Spec; filled: Location[]; dropped: DroppedRule[] }> {
-  const { spec, dropped } = await proposeSpec(profile, profile, policy, opts);
-  return { ...completeProposal(spec, profile, policy), dropped };
+): Promise<{ spec: Spec; filled: Location[]; dropped: DroppedRule[]; patternsRestored: PatternName[] }> {
+  const proposed = await proposeSpec(profile, profile, policy, opts);
+  // A fresh plan takes the analyst's patterns whole, so it may not have switched one off. (A re-plan
+  // keeps the saved spec's patterns, mergeProposal.)
+  const kept = keepPatterns(proposed.spec, policy);
+  return { ...completeProposal(kept.spec, profile, policy), dropped: proposed.dropped, patternsRestored: kept.restored };
 }
 
 /**

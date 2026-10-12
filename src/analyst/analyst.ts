@@ -1,7 +1,8 @@
 // The model analyst: profile and policy in, a spec proposal out. The reply has already
 // passed schema/spec.schema.json inside ask(); here it must also be a spec that only talks
 // about the profile's own columns, written by the analyst, with every question unanswered.
-// Anything else is rejected whole, never repaired. Columns the analyst left out get the
+// Anything else is rejected whole, never repaired, except a column rule with a treatment only
+// blind.toml or a human may set (drop, redact, scan): that one rule is dropped and reported. Columns the analyst left out get the
 // heuristic rule, and a column with an open question stays `unknown` until it is answered.
 
 import { type AskOptions, ask } from "../model.ts";
@@ -37,6 +38,36 @@ export const proposalSchema = {
 export const locationKey = (l: Location): string => JSON.stringify([l.file, l.sheet ?? null, l.header ?? null, l.jsonPath ?? null]);
 
 const where = (l: Location): string => `${l.file} ${JSON.stringify(l.header ?? l.jsonPath ?? "")}`;
+
+/** Treatments the analyst may not set. A rule with one is dropped from its reply (dropForbidden). */
+export const FORBIDDEN_TREATMENTS: readonly string[] = ["drop", "redact", "scan"];
+
+/** A column rule dropped from the analyst's reply, with the treatment it asked for. */
+export interface DroppedRule {
+  at: Location;
+  treatment: string;
+}
+
+const locationOf = (c: Location): Location => {
+  const at = { file: c.file, sheet: c.sheet, header: c.header, jsonPath: c.jsonPath };
+  return Object.fromEntries(Object.entries(at).filter(([, v]) => v !== undefined)) as unknown as Location;
+};
+
+/**
+ * Removes the column rules whose treatment the analyst may not set, so those columns fall back as
+ * if it had not ruled them (heuristic, then the blind.toml `[[columns]]` overlay, which may set them).
+ * The model is shown the policy and tends to echo its drop/redact/scan rules; that is not a reason
+ * to throw out the rest of its spec. Every other problem still rejects the whole reply.
+ */
+export function dropForbidden(spec: Spec): { spec: Spec; dropped: DroppedRule[] } {
+  const dropped: DroppedRule[] = [];
+  const columns = spec.columns.filter((c) => {
+    if (!FORBIDDEN_TREATMENTS.includes(c.treatment)) return true;
+    dropped.push({ at: locationOf(c), treatment: c.treatment });
+    return false;
+  });
+  return { spec: dropped.length === 0 ? spec : { ...spec, columns }, dropped };
+}
 
 /** The rules a model reply must meet beyond the schema. Returns every problem found. */
 export function checkProposal(spec: Spec, profile: Profile): SchemaIssue[] {
@@ -103,14 +134,22 @@ export function completeProposal(spec: Spec, profile: Profile, policy: Pick<Poli
  * so a reply about a saved column reaches the merge and is reported there, not lost.
  * Throws ModelError (transport, privacy) or AnalystError (bad proposal).
  */
-export async function proposeSpec(sent: Profile, known: Profile, policy: Policy, opts: Omit<AskOptions, "policy">): Promise<Spec> {
+export async function proposeSpec(
+  sent: Profile,
+  known: Profile,
+  policy: Policy,
+  opts: Omit<AskOptions, "policy">,
+): Promise<{ spec: Spec; dropped: DroppedRule[] }> {
   // Under profile-only the analyst sees every path, sheet name, header and key as a token and no
   // values; its column rules are mapped back to the real locations here, before any check.
   const tokens = policy.privacy.mode === "profile-only" ? tokeniseProfile(sent) : undefined;
   const reply = await ask<Spec>("analyst", systemPrompt(policy), analystPrompt(tokens?.profile ?? sent, policy), proposalSchema, { ...opts, policy });
-  let proposal = reply;
+  // Forbidden treatments are dropped before the locations are restored, so a note names the
+  // header as the analyst saw it (a token under profile-only), never a value.
+  const { spec: trimmed, dropped } = dropForbidden(reply);
+  let proposal = trimmed;
   if (tokens !== undefined) {
-    const restored = restoreSpec(reply, tokens);
+    const restored = restoreSpec(trimmed, tokens);
     if (restored.issues.length > 0) {
       throw new AnalystError(`the analyst's spec was rejected:\n${restored.issues.map((i) => `  ${i.path}: ${i.message}`).join("\n")}`);
     }
@@ -120,7 +159,7 @@ export async function proposeSpec(sent: Profile, known: Profile, policy: Policy,
   if (issues.length > 0) {
     throw new AnalystError(`the analyst's spec was rejected:\n${issues.map((i) => `  ${i.path}: ${i.message}`).join("\n")}`);
   }
-  return proposal;
+  return { spec: proposal, dropped };
 }
 
 /** Asks the configured analyst for a spec of the whole profile, completed with heuristic rules. */
@@ -128,8 +167,9 @@ export async function runAnalyst(
   profile: Profile,
   policy: Policy,
   opts: Omit<AskOptions, "policy">,
-): Promise<{ spec: Spec; filled: Location[] }> {
-  return completeProposal(await proposeSpec(profile, profile, policy, opts), profile, policy);
+): Promise<{ spec: Spec; filled: Location[]; dropped: DroppedRule[] }> {
+  const { spec, dropped } = await proposeSpec(profile, profile, policy, opts);
+  return { ...completeProposal(spec, profile, policy), dropped };
 }
 
 /**

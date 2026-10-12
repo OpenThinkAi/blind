@@ -78,6 +78,8 @@ interface CellPlan {
   renumber: boolean;
   /** A number cell whose number format is a date or time: a serial that only a rule may change. */
   date?: boolean;
+  /** A number or date cell of an unruled birth-date column (AGT-1858): it cannot hold the placeholder in place, so it is written as serial 0, no date. */
+  zero?: boolean;
 }
 
 interface Pending {
@@ -197,7 +199,7 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
       const rule = sheetRules.find((r) => (r.header as string).trim() === header.trim());
       const data = byCol.get(col) ?? [];
       const texts = data.map((c) => cellText(c, wb.sharedStrings));
-      const { action, stats, outcome } = decide(rule, texts, { dates: data.map((c) => isDateCell(wb, c)) }, unruled);
+      const { action, stats, outcome } = decide(rule, texts, { dates: data.map((c) => isDateCell(wb, c)), name: header }, unruled);
       const column: ColumnReport = {
         index: col,
         header,
@@ -225,6 +227,11 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
       }
       data.forEach((c, i) => {
         const text = texts[i] as string;
+        if (outcome === "unknown-redacted" && isFilled(text) && (c.type === "n" || c.type === "d")) {
+          plans.set(c.ref, { action, renumber: false, date: isDateCell(wb, c), zero: true });
+          column.changed++;
+          return;
+        }
         if (removes && isFilled(text) && c.type !== "s" && c.type !== "str" && c.type !== "inlineStr") {
           // Only text can be emptied or overwritten in place; a number, date or boolean would need its cell retyped.
           refusal ??= `worksheet ${JSON.stringify(sheet.name)} cell ${c.ref} is not text, so its ${action.kind === "drop" ? "dropped" : "redacted"} column cannot be cleared in place; blind it (treatment "blind") instead`;
@@ -300,7 +307,7 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
     if (refusal !== undefined) break;
     if (m.kind === "xml" && customDataPart(m.name)) refusal = customPartRefusal(m.name, m.text) ?? undefined;
   }
-  const removing = columns.some((c) => c.outcome === "dropped" || c.outcome === "redacted");
+  const removing = columns.some((c) => c.outcome === "dropped" || c.outcome === "redacted" || c.outcome === "unknown-redacted");
   const cache = removing ? wb.members.find((m) => /^xl\/(?:pivotCache|charts)\//i.test(m.name)) : undefined;
   // Pivot and chart caches repeat cell values that are not in the map, so nothing would clear them there.
   if (refusal === undefined && cache !== undefined) refusal = `the workbook drops or redacts a column, but member ${cache.name} caches cell values blind cannot clear`;
@@ -665,6 +672,7 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
           const plan = p.cells.get(ctx.member)?.get(ref);
           const type = c?.attrs.get("t") ?? "n";
           if (plan === undefined) return value;
+          if (plan.zero === true) return type === "d" ? "1900-01-01" : "0";
           if (type === "n") return plan.renumber ? (numbers.get(value) ?? renumber(value, pz)) : value;
           if (type !== "str") return value;
           const eq = sheetEq(value);

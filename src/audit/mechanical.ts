@@ -42,6 +42,7 @@
 // did not read.
 
 import { type ColumnRule, type PatternName, type Patterns, patternOn, REDACTED_VALUE, type Spec } from "../schema.ts";
+import { isBirthDateName } from "../engine/birthdate.ts";
 import { customDataPart, customPartRefusal } from "../engine/customxml.ts";
 import { CsvError, parseCsv, sniffDelimiter } from "../engine/csv.ts";
 import { inDateContext, isDateWord } from "../engine/datecontext.ts";
@@ -904,6 +905,7 @@ function columnFindings(sink: PartSink, bytes: Uint8Array, rules: readonly Colum
     if (left > 0) breach(r, `the spec redacts ${columnLabel(r)}, but ${left} cell(s) in it are not ${REDACTED_VALUE}`);
   }
   shapedColumns(sink, rows, headerRow, headers, rules);
+  birthDateColumns(sink, rows, headerRow, headers, rules);
   for (let col = 0; col < width; col++) {
     const h = headers[col] ?? "";
     if (named.has(h.trim())) continue;
@@ -911,6 +913,31 @@ function columnFindings(sink: PartSink, bytes: Uint8Array, rules: readonly Colum
       `column ${col + 1} (${h.trim() === "" ? "blank header" : `header ${maskValue(h)}`}) has no spec rule; the engine decided it at apply time`,
       h.trim() === "" ? "" : maskValue(h),
     );
+  }
+}
+
+/**
+ * A CSV/TSV column named for a birth date that no rule decides (no rule, or `unknown`/`value`) is
+ * redacted by the engine (AGT-1858); a cell in it that is anything but the placeholder is a leak. A
+ * column the spec keeps, drops, redacts, scans or blinds is decided, and not checked here.
+ */
+function birthDateColumns(sink: PartSink, rows: readonly { cells: { value: string }[] }[], headerRow: number, headers: readonly string[], rules: readonly ColumnRule[]) {
+  const width = headers.length;
+  for (let col = 0; col < width; col++) {
+    const h = headers[col] ?? "";
+    if (!isBirthDateName(h)) continue;
+    const rule = rules.find((r) => r.header !== undefined && r.header.trim() === h.trim());
+    if (rule !== undefined && !(rule.class === "unknown" && rule.treatment === "value")) continue;
+    const left = rows
+      .slice(headerRow + 1)
+      .flatMap((row) => (col === width - 1 ? row.cells.slice(col) : row.cells.slice(col, col + 1)))
+      .filter((c) => c.value.trim() !== "" && c.value !== REDACTED_VALUE);
+    if (left.length === 0) continue;
+    sink.findings.push({
+      file: sink.file, part: "", in: "content", offset: null, line: null, class: "id", source: "spec", severity: "leak", masked: maskValue((left[0] as { value: string }).value),
+      reason: `column ${col + 1} (header ${maskValue(h)}) is a birth-date column with no rule, but ${left.length} cell(s) in it are not ${REDACTED_VALUE}`,
+      encoding: null,
+    });
   }
 }
 

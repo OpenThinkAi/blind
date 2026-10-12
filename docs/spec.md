@@ -480,8 +480,12 @@ up to three layers, mechanical, semantic, then model; the report lists the layer
   anything starting `PK`) are opened recursively, up to 8 levels deep. File, directory and member
   names are read too. Symbolic links are not followed.
 - **What it looks for.** Every spec entity form (canonical, aliases, parts; `vocabulary` excepted),
-  every original value in the map (surface and canonical form), and every match of an enabled
-  pattern that is not a pseudonym. Text that is a pseudonym or a `vocabulary` form is never a finding,
+  every original value in the map (surface and canonical form), every word of a multi-word person
+  value in the map found alone (a given name or surname the spec did not list, 3 letters or more,
+  whole words only), and every match of an enabled pattern that is not a pseudonym. A lone word of a
+  blinded person's name in the engine's case for a single-word form (capitalised, or an exact short
+  acronym) is a `leak`; in another case, a `candidate`; one that is also a dictionary word or a keep
+  term is a `candidate` in that case and is not reported otherwise. Text that is a pseudonym or a `vocabulary` form is never a finding,
   and neither is a pattern match made only of pseudonyms and punctuation (a blinded file name such
   as `Person_1E95_user_559f@host-f3ce.com.md`). File and directory names are also read piece by
   piece between underscores, as `blind apply` reads them, and a file's or zip member's extension is read on its own
@@ -515,7 +519,14 @@ up to three layers, mechanical, semantic, then model; the report lists the layer
   name split across runs is one phrase, and its attribute values) and reports as a `candidate`:
   identifier-shaped tokens (a hex run of 6 or more with a digit and a letter; 4 or more digits mixed
   with letters, such as `PRJ-48213`; a run of 10 or more digits, not the fraction of a decimal
-  number), Title-Case phrases of two or more words, and email and host shapes. Left out: anything
+  number), Title-Case phrases of two or more words, email and host shapes, and lone capitalised
+  words (`semantic:name`: a given name or nickname the spec missed). A lone word is a Title-Case
+  word of 3 or more letters that is not part of a longer Title-Case run, not in the built-in
+  dictionary, not a keep or vocabulary term, and not sentence-initial (after a line start, a
+  heading or bullet marker, `.`, `!`, `?` or a colon), unless the same word also stands
+  mid-sentence elsewhere in that file. A month or weekday abbreviation written with its dot (`9
+  Feb.`) is not one. Lone words are looked for only in a part's own decoding, never in binary
+  content or an archive's own bytes. Left out: anything
   that is a pseudonym; values equal to a `blind.toml` keep term, a `vocabulary` entity form or a
   value of a column the spec classifies as `vocabulary` (CSV/TSV and JSON); the spec's own headers
   for that file; hosts under a keep-list domain; ISO 8601 timestamps; file extensions (`notes.md`

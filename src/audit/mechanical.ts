@@ -9,6 +9,14 @@
 // - every entity form in the spec (canonical, aliases, parts; vocabulary
 //   excepted), with the engine's case rule for that form;
 // - every original value recorded in the map (surface form and canonical);
+// - every word of a multi-word person value in the map (a given name or a
+//   surname, AGT-1801), found alone: the engine replaces only the forms the spec
+//   lists, so a part the spec missed survives. Matched whole-word only, under the
+//   case rule the engine gives a single-word form (a capitalised word only where
+//   the text is capitalised too, a short acronym only exactly); a survivor in
+//   that case is a `leak`, in another case a `candidate`. A part that is also an
+//   ordinary word (src/profile/words.ts) or a keep term is never a leak: in its
+//   rule's case it is a candidate, otherwise not reported;
 // - every match of an enabled spec pattern that is not a pseudonym.
 //
 // In an OOXML package, namespace, content-type and relationship-type URIs and
@@ -35,6 +43,7 @@ import type { BlindMap } from "../engine/map.ts";
 import { isPseudonym } from "../engine/pseudonym.ts";
 import { findPatternSpans, keepDomains, type Span } from "../engine/text.ts";
 import { detectHeaderRow } from "../profile/table.ts";
+import { DICTIONARY } from "../profile/words.ts";
 import { fold, foldWithMap, stringView, type View, viewsOf, xmlBaseView } from "./views.ts";
 import { CONTENT_TYPES_PART, looksLikeXml, officeIdAttribute, ooxmlUriAttribute, walkXml } from "./xml.ts";
 import { looksLikeZip, readZip, ZipError } from "./zip.ts";
@@ -160,14 +169,20 @@ interface Needle {
   source: "entity" | "map";
   /** Host labels and email local parts are pieces of a blinded value: candidates, not leaks. */
   component: boolean;
+  /**
+   * A word of a multi-word person value in the map, looked for alone: `name` when it may be a leak,
+   * `word` when it is also an ordinary word or a keep term (a candidate at most). Whole words only.
+   */
+  part?: "name" | "word";
   wordStart: boolean;
   wordEnd: boolean;
 }
 
-function needle(value: string, rule: CaseRule, cls: string, role: Needle["role"], source: Needle["source"], component = false): Needle | null {
+function needle(value: string, rule: CaseRule, cls: string, role: Needle["role"], source: Needle["source"], component = false, part?: Needle["part"]): Needle | null {
   const folded = fold(value);
   if (folded === "") return null;
   return {
+    ...(part !== undefined ? { part } : {}),
     folded,
     original: collapse(value),
     rule,
@@ -182,14 +197,40 @@ function needle(value: string, rule: CaseRule, cls: string, role: Needle["role"]
 
 const ENTITY_KEYS = ["person", "org", "host", "email", "id", "location", "vocabulary"] as const;
 
-/** Everything to look for, and every pseudonym and vocabulary form whose text is not a finding. */
-export function buildNeedles(spec: Spec, map: BlindMap): Needle[] {
+const NAME_WORD_RE = /[\p{L}\p{M}]+(?:['\u2019-][\p{L}\p{M}]+)*/gu;
+
+/**
+ * The words of a multi-word person value, each cased as the value writes it (a word only in the
+ * lowercase canonical form is capitalised, as a name part is written), with the engine's case rule
+ * for a single-word form. Words under MIN_LEAK_LENGTH letters are left out.
+ */
+function personWords(value: string, canonical: string): [string, CaseRule][] {
+  const written = value.match(NAME_WORD_RE) ?? [];
+  const canon = canonical.match(NAME_WORD_RE) ?? [];
+  if (written.length < 2 && canon.length < 2) return [];
+  const byFold = new Map<string, string>();
+  for (const w of written) if (!byFold.has(fold(w))) byFold.set(fold(w), w);
+  for (const w of canon) if (!byFold.has(fold(w))) byFold.set(fold(w), w.charAt(0).toUpperCase() + w.slice(1));
+  const out: [string, CaseRule][] = [];
+  for (const w of byFold.values()) {
+    if ((w.match(/\p{L}/gu) ?? []).length < MIN_LEAK_LENGTH) continue;
+    out.push([w, caseRule(/^\p{Lu}/u.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1))]);
+  }
+  return out;
+}
+
+/**
+ * Everything to look for, and every pseudonym and vocabulary form whose text is not a finding.
+ * `keep` (the policy keep list) only lowers person-name words that are keep terms to candidates.
+ */
+export function buildNeedles(spec: Spec, map: BlindMap, keep: readonly string[] = []): Needle[] {
   const out = new Map<string, Needle>();
   const add = (n: Needle | null) => {
     if (n === null) return;
-    const key = `${n.role}\0${n.folded}\0${n.rule}\0${n.class}\0${n.source}\0${n.component}`;
+    const key = `${n.role}\0${n.folded}\0${n.rule}\0${n.class}\0${n.source}\0${n.component}\0${n.part ?? ""}`;
     if (!out.has(key)) out.set(key, n);
   };
+  const keepFolds = new Set(keep.map(fold));
   for (const key of ENTITY_KEYS) {
     for (const e of spec.entities[key] ?? []) {
       for (const form of [e.canonical, ...e.aliases, ...e.parts]) {
@@ -203,6 +244,12 @@ export function buildNeedles(spec: Spec, map: BlindMap): Needle[] {
     add(needle(e.value, "fold", e.kind, "find", "map", component));
     add(needle(e.canonical, "fold", e.kind, "find", "map", component));
     add(needle(e.pseudonym, "fold", e.kind, "mask", "map"));
+    if (e.kind === "person") {
+      for (const [w, rule] of personWords(e.value, e.canonical)) {
+        const ordinary = DICTIONARY.has(w.toLowerCase()) || keepFolds.has(fold(w));
+        add(needle(w, rule, "person", "find", "map", false, ordinary ? "word" : "name"));
+      }
+    }
   }
   return [...out.values()].sort((a, b) => cmp(a.folded, b.folded) || cmp(a.class, b.class) || cmp(a.role, b.role));
 }
@@ -358,6 +405,16 @@ function scanView(view: View, ctx: Context, isName: boolean): Hit[] {
     const len = cps(n.folded).length;
     const what = n.source === "entity" ? `spec ${n.class} entity` : `${n.class} value from the map`;
     const base = { class: n.class, source: n.source };
+    if (n.part !== undefined) {
+      // A word of a blinded person's name, alone: whole words only, never an embedded one.
+      if (!whole) continue;
+      const got = text.slice(start, end);
+      const ruleCase = n.rule === "exact" ? got === n.original : /^\p{Lu}/u.test(got) && got.toLowerCase() === n.original.toLowerCase();
+      if (ruleCase && n.part === "name") push(start, end, { ...base, severity: "leak", reason: "a word of a blinded person's name (from the map) survives on its own" });
+      else if (ruleCase) push(start, end, { ...base, severity: "candidate", reason: "a word of a blinded person's name (from the map), also an ordinary word or a keep term" });
+      else if (n.part === "name") push(start, end, { ...base, severity: "candidate", reason: "a word of a blinded person's name (from the map), in another case, accent or width" });
+      continue;
+    }
     if (!whole) {
       if (len >= MIN_EMBEDDED_LENGTH) push(start, end, { ...base, severity: "candidate", reason: `${what}, inside a longer word` });
       continue;
@@ -681,7 +738,7 @@ export function addLayer(
 
 /** Audit an output tree (every entry under it, paths relative to its root) against the spec and map. */
 export function auditTree(entries: readonly TreeEntry[], spec: Spec, map: BlindMap, keep: readonly string[] = []): AuditReport {
-  const ctx: Context = { spec, map, index: new NeedleIndex(buildNeedles(spec, map)), keep: keepDomains(keep) };
+  const ctx: Context = { spec, map, index: new NeedleIndex(buildNeedles(spec, map, keep)), keep: keepDomains(keep) };
   const rulesByFile = new Map<string, ColumnRule[]>();
   for (const r of spec.columns) rulesByFile.set(r.file, [...(rulesByFile.get(r.file) ?? []), r]);
 

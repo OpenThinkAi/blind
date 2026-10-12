@@ -17,6 +17,7 @@
 
 import { canonicalize } from "./canonical.ts";
 import { isHonorificOrRole } from "./honorifics.ts";
+import { splitPeople } from "./people.ts";
 
 /** Code-unit order, never locale order. */
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -64,7 +65,8 @@ function shape(key: string): Shape | undefined {
  */
 export function personAliases(values: Iterable<string>, titled: ReadonlySet<string> = new Set()): Map<string, PersonAlias> {
   const display = new Map<string, string>();
-  for (const v of values) {
+  // A cell of several people ("Dana & Lee Quillfeather") is those people, not one (AGT-1859).
+  for (const v of [...values].flatMap((x) => splitPeople(x) ?? [x])) {
     const k = canonicalize("person", v);
     const prior = display.get(k);
     if (prior === undefined || v < prior) display.set(k, v);

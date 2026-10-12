@@ -45,6 +45,7 @@ import type { SecretCarry } from "./secret.ts";
 import { isDateWord } from "./datecontext.ts";
 import { identityOf, type PersonAliases } from "./identity.ts";
 import { looksLikePersonName } from "./prose.ts";
+import { NAME_TOKEN_RE, ORG_WORDS, splitPeople } from "./people.ts";
 import type { BlindMap } from "./map.ts";
 import type { ContextOptions } from "./context.ts";
 import type { Shield } from "./shield.ts";
@@ -107,19 +108,6 @@ function personWords(value: string, canonical: string): string[] {
   return [...out.values()];
 }
 
-/** Words that make a value an organisation, not a person: "Hill Valley Rescue", "Example Pet Clinic LLC". */
-const ORG_WORDS: ReadonlySet<string> = new Set(
-  (
-    "inc incorporated llc llp lp ltd plc gmbh corp corporation company co group holdings partners associates " +
-    "clinic clinics hospital hospitals veterinary services supplies foods labs laboratory laboratories insurance " +
-    "university college school academy foundation society shelter rescue kennels pharmacy solutions technologies " +
-    "consulting enterprises industries international trust bank agency"
-  ).split(" "),
-);
-
-/** A word of a name as a value writes it: letters and marks, joined by an apostrophe, a hyphen or a dot ("O'Neil", "J.", "St.-Pierre"). */
-const NAME_TOKEN_RE = /^[\p{L}\p{M}]+(?:['\u2019.-][\p{L}\p{M}]*)*$/u;
-
 /** A name (one segment of a value) has at most this many words. */
 export const MAX_NAME_WORDS = 4;
 
@@ -181,6 +169,10 @@ export function nameParts(
   const visit = (value: string, isOwn: boolean) => {
     // A date, a number, an email or an organisation in a person column recurs whole, never as parts.
     if (!nameShaped(value)) return;
+    // A cell of several people ("Dana & Lee Quillfeather") has each person's parts, the shared surname included (AGT-1859).
+    for (const one of splitPeople(value) ?? [value]) visitOne(one, isOwn);
+  };
+  const visitOne = (value: string, isOwn: boolean) => {
     const written = canonicalize("person", value);
     const c = identityOf(aliases, written);
     canonicals.set(written, c);
@@ -335,12 +327,21 @@ export function personValues(values: Iterable<ExtraForm>, map?: BlindMap): strin
 export function personPartForms(values: Iterable<ExtraForm>, map: BlindMap | undefined, vocabulary: ReadonlySet<string>, opts: RecurrenceOptions = {}): ExtraForm[] {
   const list = [...values];
   const persons = new Set<string>();
-  for (const v of list) if (v.cls === "person") persons.add(identityOf(opts.aliases, canonicalize("person", v.value)));
-  for (const e of map?.entries ?? []) if (e.kind === "person") persons.add(identityOf(opts.aliases, canonicalize("person", e.value)));
+  const addPerson = (value: string): void => {
+    for (const one of [value, ...(splitPeople(value) ?? [])]) persons.add(identityOf(opts.aliases, canonicalize("person", one)));
+  };
+  for (const v of list) if (v.cls === "person") addPerson(v.value);
+  for (const e of map?.entries ?? []) if (e.kind === "person") addPerson(e.value);
   const clsOf = (value: string): PseudoClass => (persons.has(identityOf(opts.aliases, canonicalize("person", value))) ? "person" : "value");
   const people = personValues(list, map);
   const surnames = surnameSet(people);
-  return nameParts(people, opts.speakers ?? [], vocabulary, partKeep(opts), opts.aliases)
+  // Each person of a cell of several ("Dana & Lee Quillfeather") recurs as a full name too (AGT-1859),
+  // given the pseudonym that name has wherever else it is written.
+  const individuals: ExtraForm[] = [];
+  for (const v of people) {
+    if (nameShaped(v)) for (const one of splitPeople(v) ?? []) if (recurrenceExclusion(one, vocabulary) === null) individuals.push({ cls: clsOf(one), value: one, form: one });
+  }
+  const parts: ExtraForm[] = nameParts(people, opts.speakers ?? [], vocabulary, partKeep(opts), opts.aliases)
     .filter((p) => p.exclusion === null)
     .map((p) => ({
       cls: p.shared ? "person" : clsOf(p.value),
@@ -349,6 +350,7 @@ export function personPartForms(values: Iterable<ExtraForm>, map: BlindMap | und
       ...(isDateWord(p.form) ? { datePart: true } : {}),
       ...(surnames.has(fold(p.form)) ? { surname: true } : {}),
     }));
+  return [...individuals, ...parts];
 }
 
 /**
@@ -359,7 +361,7 @@ export function personPartForms(values: Iterable<ExtraForm>, map: BlindMap | und
  */
 function surnameSet(people: readonly string[]): Set<string> {
   const out = new Set<string>();
-  for (const v of people) {
+  for (const v of people.flatMap((p) => splitPeople(p) ?? [p])) {
     const w = canonicalize("person", v).match(NAME_WORD_RE) ?? [];
     if (w.length < 2) continue;
     const last = w[w.length - 1] as string;

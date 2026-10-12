@@ -35,6 +35,7 @@
 // a mechanical finding. No model, no clock, no randomness.
 
 import { CsvError, parseCsv, sniffDelimiter } from "../engine/csv.ts";
+import { inDateContext, isDateWord } from "../engine/datecontext.ts";
 import { decode, EncodingError } from "../engine/encoding.ts";
 import { JsonError, scanJson, scanJsonl } from "../engine/json.ts";
 import type { BlindMap } from "../engine/map.ts";
@@ -284,6 +285,7 @@ function loneName(text: string, s: number, e: number, folded: string, terms: Ter
   const word = text.slice(s, e);
   if ((word.match(/\p{L}/gu) ?? []).length < MIN_NAME_LETTERS) return false;
   const lower = word.toLowerCase();
+  if (isDateWord(lower) && inDateContext(text, s, e)) return false;
   if (DICTIONARY.has(lower) || terms.whole.has(folded) || isPseudonym(word, map)) return false;
   if (text[e] === ".") {
     if (DOTTED_ABBREVIATIONS.has(lower)) return false;

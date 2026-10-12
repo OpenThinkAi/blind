@@ -41,6 +41,7 @@
 
 import type { ColumnRule, PatternName, Spec } from "../schema.ts";
 import { CsvError, parseCsv, sniffDelimiter } from "../engine/csv.ts";
+import { inDateContext, isDateWord } from "../engine/datecontext.ts";
 import { decode, EncodingError } from "../engine/encoding.ts";
 import type { BlindMap } from "../engine/map.ts";
 import { isPseudonym } from "../engine/pseudonym.ts";
@@ -433,6 +434,8 @@ function scanView(view: View, ctx: Context, isName: boolean): Hit[] {
       // A word of a blinded person's name, alone: whole words only, never an embedded one.
       if (!whole) continue;
       const got = text.slice(start, end);
+      // A month or weekday word in a date ("9 Jan.") is a date, as the engine reads it (AGT-1813).
+      if (isDateWord(got) && inDateContext(text, start, end)) continue;
       const ruleCase = n.rule === "exact" ? got === n.original : /^\p{Lu}/u.test(got) && got.toLowerCase() === n.original.toLowerCase();
       if (ruleCase && n.part === "name") push(start, end, { ...base, severity: "leak", reason: "a word of a blinded person's name (from the map) survives on its own" });
       else if (ruleCase) push(start, end, { ...base, severity: "candidate", reason: "a word of a blinded person's name (from the map), also an ordinary word or a keep term" });

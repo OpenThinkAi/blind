@@ -35,6 +35,7 @@
 import type { Entities, PatternName } from "../schema.ts";
 import { DICTIONARY } from "../profile/words.ts";
 import { canonicalize, PSEUDO_CLASSES, type PseudoClass } from "./canonical.ts";
+import { isDateWord } from "./datecontext.ts";
 import type { BlindMap } from "./map.ts";
 import { EntityMatcher, type ExtraForm, findPatternSpans, findSpans, type Span } from "./text.ts";
 
@@ -219,7 +220,7 @@ export function personValues(values: Iterable<ExtraForm>, map?: BlindMap): strin
 export function personPartForms(values: Iterable<ExtraForm>, map: BlindMap | undefined, vocabulary: ReadonlySet<string>, opts: RecurrenceOptions = {}): ExtraForm[] {
   return nameParts(personValues(values, map), opts.speakers ?? [], vocabulary, keepForms(opts.keep))
     .filter((p) => p.exclusion === null)
-    .map((p) => ({ cls: "person", value: p.value, form: p.form }));
+    .map((p) => ({ cls: "person", value: p.value, form: p.form, ...(isDateWord(p.form) ? { datePart: true } : {}) }));
 }
 
 /** One scanner for the corpus: the spec's patterns and entities plus the recurring values. */

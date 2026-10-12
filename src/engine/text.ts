@@ -22,6 +22,7 @@
 
 import { PSEUDO_CLASSES, type PseudoClass } from "./canonical.ts";
 import type { Entities, PatternName } from "../schema.ts";
+import { inDateContext, isDateWord } from "./datecontext.ts";
 
 export interface Span {
   start: number;
@@ -157,6 +158,8 @@ interface Form {
   /** A vocabulary form: wins every length tie, so it shields its span from other forms. */
   shield: boolean;
   source: "entity" | "map" | "speaker";
+  /** A name part that is also a month or weekday word: not matched in a date context (datecontext.ts). */
+  datePart: boolean;
 }
 
 const WORDCHAR_RE = /[\p{L}\p{N}]/u;
@@ -181,6 +184,8 @@ export interface ExtraForm {
   form?: string;
   /** The span source for matches; `map` when omitted. */
   source?: "map" | "speaker";
+  /** A name part (recur.ts nameParts): a month or weekday word among them is left alone in a date context (AGT-1813). */
+  datePart?: boolean;
 }
 
 /** An index of every entity form in the spec, ready to scan text with. */
@@ -195,7 +200,7 @@ export class EntityMatcher {
    */
   constructor(entities: Entities, extra: readonly ExtraForm[] = []) {
     const seen = new Set<string>();
-    const add = (key: string, cls: PseudoClass | null, raw: string, value: string, rank: number, source: Form["source"]): void => {
+    const add = (key: string, cls: PseudoClass | null, raw: string, value: string, rank: number, source: Form["source"], datePart = false): void => {
       const words = raw.trim().split(/\s+/).filter((w) => w !== "");
       if (words.length === 0) return;
       const dedupe = `${key}\0${words.join(" ")}`;
@@ -211,6 +216,7 @@ export class EntityMatcher {
         rank,
         shield: key === "vocabulary",
         source,
+        datePart: datePart && words.length === 1 && isDateWord(raw.trim()),
       };
       const first = (words[0] as string)[0]?.toLowerCase() as string;
       const list = this.byFirst.get(first) ?? [];
@@ -223,7 +229,7 @@ export class EntityMatcher {
         for (const raw of [e.canonical, ...e.aliases, ...e.parts]) add(key, cls, raw, raw, rank, "entity");
       }
     }
-    for (const x of extra) add(`extra:${x.cls}`, x.cls, x.form ?? x.value, x.value, ENTITY_CLASSES.length + PSEUDO_CLASSES.indexOf(x.cls), x.source ?? "map");
+    for (const x of extra) add(`extra:${x.cls}`, x.cls, x.form ?? x.value, x.value, ENTITY_CLASSES.length + PSEUDO_CLASSES.indexOf(x.cls), x.source ?? "map", x.datePart === true);
     // Longest first; at equal length a vocabulary form wins (so "SAM" listed as vocabulary is not
     // taken for the person part "Sam"); then class order, then text, so the scan is order-independent.
     for (const list of this.byFirst.values()) {
@@ -276,6 +282,7 @@ export class EntityMatcher {
       for (const form of candidates ?? []) {
         const end = this.matchAt(text, pos, form);
         if (end < 0 || (block !== undefined && end > block.start)) continue;
+        if (form.datePart && inDateContext(text, pos, end)) continue;
         out.push({ start: pos, end, cls: form.cls, value: form.value, source: form.source });
         pos = end;
         matched = true;

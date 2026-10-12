@@ -11,10 +11,10 @@ import { MAP_FILE, SPEC_FILE } from "../apply.ts";
 import { MapError, readMap } from "../engine/map.ts";
 import { BLIND_DIR } from "../init.ts";
 import { type AskOptions, ModelError, modelsEnabled } from "../model.ts";
-import { loadKeepTerms, loadPolicy, POLICY_FILE, PolicyError, type PolicyPatterns } from "../policy.ts";
+import { loadKeepTerms, loadPolicy, POLICY_FILE, PolicyError, type PolicyPatterns, withPolicyPatterns } from "../policy.ts";
 import { writeProfile } from "../profile/command.ts";
 import { buildProfile, forPrivacyMode, InputError } from "../profile/profile.ts";
-import { type ColumnRule, type EntityClassName, type Location, patternOn, REDACTED_VALUE, type Spec } from "../schema.ts";
+import { type ColumnRule, type DetectorRates, type EntityClassName, type HitPattern, type Location, type PatternName, patternOn, type Profile, REDACTED_VALUE, type Spec, type Treatment } from "../schema.ts";
 import { parseSpec, SchemaError, validateProfile, validateSpec } from "../validate.ts";
 import { AnalystError, answerQuestion, locationKey, proposeSpec, runAnalyst } from "./analyst.ts";
 import { isBirthDateName, lastKey } from "../engine/birthdate.ts";
@@ -117,6 +117,44 @@ const q = (s: string): string => JSON.stringify(s);
 const where = (l: Location): string => `${q(l.file)}${l.sheet === undefined ? "" : ` [${q(l.sheet)}]`} ${q(l.header ?? l.jsonPath ?? "")}`;
 
 const CLASS_ORDER: EntityClassName[] = ["unknown", "person", "org", "host", "email", "id", "location", "secret", "vocabulary"];
+
+/** Patterns the profile counts hits for (AGT-1856): columns by detector rate, free text by patternHits. */
+const COUNTED_PATTERNS: HitPattern[] = ["ip", "email", "host", "guid", "mac", "address", "phone"];
+/** Treatments that decide a column's values by rule, so a pattern switched off does not let them through. */
+const RULED: Treatment[] = ["keep", "drop", "redact", "blind"];
+
+/**
+ * One warning per pattern that is off in the effective spec (blind.toml's [patterns] laid over the spec's own) while
+ * the profile finds its shape: in a table or JSON column no rule decides, or in free text (documents and transcripts,
+ * by their patternHits; a file that is both counts once, at its larger count). Counts and file counts only: never a
+ * value or a file name.
+ */
+export function patternWarnings(profile: Profile, spec: Spec, policy: { patterns: PolicyPatterns }): string[] {
+  const patterns = withPolicyPatterns(spec, policy.patterns).patterns;
+  const treatments = new Map(spec.columns.map((c) => [locationKey(c), c.treatment]));
+  const warnings: string[] = [];
+  for (const name of COUNTED_PATTERNS) {
+    if (patternOn(patterns, name)) continue;
+    const perFile = new Map<string, number>();
+    const add = (file: string, n: number) => {
+      if (n > 0) perFile.set(file, n + (perFile.get(file) ?? 0));
+    };
+    for (const { loc, stats } of profileLocations(profile)) {
+      const treatment = treatments.get(locationKey(loc));
+      if (treatment !== undefined && RULED.includes(treatment)) continue;
+      add(loc.file, Math.round((stats.detectorRates[name] ?? 0) * stats.count));
+    }
+    const freeText = new Map<string, number>();
+    for (const d of [...profile.documents, ...profile.transcripts]) {
+      const n = d.patternHits?.[name] ?? 0;
+      freeText.set(d.file, Math.max(n, freeText.get(d.file) ?? 0));
+    }
+    for (const [file, n] of freeText) add(file, n);
+    const hits = [...perFile.values()].reduce((a, b) => a + b, 0);
+    if (hits > 0) warnings.push(`warning: [patterns] ${name} is off, but ${hits} ${name}-shaped value(s) were found in ${perFile.size} file(s); they will be written as is`);
+  }
+  return warnings;
+}
 
 /** The spec as a review table: questions first, then columns grouped by class, entities, patterns. */
 export function renderSpec(spec: Spec, policyPatterns: PolicyPatterns = {}): string {
@@ -415,12 +453,14 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
       }
     }
 
+    const warnings = patternWarnings(profile, spec, policy);
     const written = writeSpec(io.cwd, checked(spec));
     if (values.json) {
-      io.out.write(`${JSON.stringify({ spec: written, ...diff, notes: [...notes, ...remarks] }, null, 2)}\n`);
+      io.out.write(`${JSON.stringify({ spec: written, ...diff, notes: [...notes, ...remarks], warnings }, null, 2)}\n`);
     } else {
       io.out.write(renderSpec(spec, policy.patterns));
       if (diff.reused || diff.dropped.length > 0) io.out.write(`\n${renderDiff(diff)}`);
+      for (const w of warnings) io.out.write(`${w}\n`);
       for (const n of [...notes, ...remarks]) io.out.write(n.startsWith("warning: ") ? `${n}\n` : `note: ${n}\n`);
       io.out.write(`\nwrote ${written} (mode 0600). Nothing is changed until you run \`blind apply\`.\n`);
     }

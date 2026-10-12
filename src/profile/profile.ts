@@ -11,7 +11,7 @@ import { type Cooccurrence, type Location, MAX_EXCERPT, type Profile, type Profi
 import { profileJson, scanJsonFile } from "./json.ts";
 import { distinct, excerpt, pick } from "./stats.ts";
 import { ParseError, parseTable, profileTable } from "./table.ts";
-import { profileText } from "./text.ts";
+import { patternHits, profileText } from "./text.ts";
 import { tokeniseProfile } from "./tokens.ts";
 import { ZipError } from "../formats/ooxml.ts";
 import { isDateCell, readWorkbook, sheetRows, XlsxError } from "../formats/xlsx.ts";
@@ -42,8 +42,14 @@ export const MAX_SPEAKERS = 100;
 export function profileTranscript(file: string, entries: readonly Entry[], k: number): { transcript: ProfileTranscript; capped: boolean } {
   const speakers = distinct(speakersOf(entries).map(excerpt));
   const lines = distinct(entries.map((e) => (e.speaker === null ? e.text : `${e.speaker}: ${e.text}`)).filter((l) => l.trim() !== ""));
+  const hits = patternHits(entries.map((e) => e.text).join("\n"));
   return {
-    transcript: { file, speakers: speakers.slice(0, MAX_SPEAKERS), sampleLines: pick(lines, k).map(excerpt) },
+    transcript: {
+      file,
+      speakers: speakers.slice(0, MAX_SPEAKERS),
+      sampleLines: pick(lines, k).map(excerpt),
+      ...(Object.keys(hits).length > 0 ? { patternHits: hits } : {}),
+    },
     capped: speakers.length > MAX_SPEAKERS,
   };
 }

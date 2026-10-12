@@ -1,6 +1,7 @@
 // Plain text, Markdown and logs: an outline and sample sentences.
 
-import type { ProfileDocument } from "../schema.ts";
+import { findPatternSpans } from "../engine/text.ts";
+import type { HitPattern, Patterns, PatternHits, ProfileDocument } from "../schema.ts";
 import { distinct, excerpt, pick } from "./stats.ts";
 
 /** The most outline entries one document carries. */
@@ -57,6 +58,21 @@ function parse(text: string, format: TextFormat): Parsed {
   return { headings, units };
 }
 
+/** The free-text patterns counted for the profile: the same finder the engine uses, with card and secret left out. */
+const HIT_PATTERNS: Patterns = { ip: true, email: true, host: true, guid: true, mac: true, phone: true, address: true, card: false, secret: false };
+const HIT_NAMES = new Set<string>(["ip", "email", "host", "guid", "mac", "phone", "address"]);
+
+/** Values in `text` per pattern (AGT-1856). Counts only: nothing here is kept but the number. */
+export function patternHits(text: string): PatternHits {
+  const hits: PatternHits = {};
+  for (const s of findPatternSpans(text, HIT_PATTERNS)) {
+    if (s.pattern === undefined || !HIT_NAMES.has(s.pattern)) continue;
+    const name = s.pattern as HitPattern;
+    hits[name] = (hits[name] ?? 0) + 1;
+  }
+  return hits;
+}
+
 /** Splits a prose unit after `.`, `!` or `?` followed by whitespace. */
 function sentences(unit: string): string[] {
   return unit.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter((s) => s !== "");
@@ -82,9 +98,11 @@ export function profileText(file: string, text: string, format: TextFormat, k: n
     outline.push(e);
   }
   const all = distinct(units.flatMap((u) => (format === "log" ? [u.trim()] : sentences(u))));
+  const hits = patternHits(text);
   return {
     file,
     outline: outline.filter((o) => o !== "").slice(0, MAX_OUTLINE),
     sampleSentences: pick(all, k).map(excerpt),
+    ...(Object.keys(hits).length > 0 ? { patternHits: hits } : {}),
   };
 }

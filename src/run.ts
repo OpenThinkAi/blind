@@ -139,9 +139,10 @@ async function chain(argv: string[], io: RunIO): Promise<number> {
     io.err.write("blind run: plan refused; nothing was applied or audited\n");
     return EXIT_NOT_RUN;
   }
-  const report = JSON.parse(planOut.text()) as PlanDiff & { notes: string[] };
+  const report = JSON.parse(planOut.text()) as PlanDiff & { notes: string[]; warnings: string[] };
   const specPath = join(io.cwd, BLIND_DIR, SPEC_FILE);
   const spec = parseSpec(readFileSync(specPath, "utf8"), specPath);
+  for (const w of report.warnings) io.out.write(`${w}\n`);
   for (const n of report.notes) io.out.write(`note: ${n}\n`);
 
   if (needsReview(report)) {

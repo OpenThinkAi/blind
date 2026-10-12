@@ -17,9 +17,16 @@ export interface SpelledSpan {
 /** A run needs at least this many digits to count: "two dogs, one cat" is prose, "four zero one two" is a value. */
 export const MIN_SPELLED_DIGITS = 4;
 
+// Number-word tables, shared with the date finder in context.ts (spoken days and years).
+export const SPOKEN_UNITS: readonly string[] = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
+export const SPOKEN_TEENS: readonly string[] = ["ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"];
+export const SPOKEN_TENS: readonly string[] = ["twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
+export const SPOKEN_ORDINAL_UNITS: readonly string[] = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth"];
+export const SPOKEN_ORDINAL_TEENS: readonly string[] = ["tenth", "eleventh", "twelfth", "thirteenth", "fourteenth", "fifteenth", "sixteenth", "seventeenth", "eighteenth", "nineteenth"];
+export const SPOKEN_ORDINAL_TENS: readonly string[] = ["twentieth", "thirtieth"];
+
 const DIGIT_WORDS: ReadonlyMap<string, string> = new Map([
-  ["zero", "0"], ["oh", "0"], ["one", "1"], ["two", "2"], ["three", "3"], ["four", "4"],
-  ["five", "5"], ["six", "6"], ["seven", "7"], ["eight", "8"], ["nine", "9"],
+  ["zero", "0"], ["oh", "0"], ...SPOKEN_UNITS.map((w, i): [string, string] => [w, String(i + 1)]),
 ]);
 /** "double five" is "55", "triple oh" is "000". */
 const REPEATS: ReadonlyMap<string, number> = new Map([["double", 2], ["triple", 3]]);

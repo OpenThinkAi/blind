@@ -10,7 +10,14 @@
 //   straight after the trigger with no separator or filler ("its password rotated yet");
 // - `number` triggers (account, plate, card, license): the next token only when it holds a digit
 //   and is at least three characters, so "account manager" and "plate 2" stay;
-// - `date` (DOB): a date written numerically, "April 12, 1980" or "12 April 1980".
+// - `date` (DOB): a date written numerically, "April 12, 1980", "12 April 1980" or spoken ("June third
+//   forty-two", "the third of June nineteen forty-two", "June 3rd '42");
+// - plates (`shape: plate`): up to three tokens, an optional uppercase two-letter region and one or two
+//   groups of 2-4 characters that together hold a digit ("ST 7AB C12", "ST 12-3456");
+// - handles (`shape: handle`: username, login): one token of 3+ characters, letters and digits or
+//   dotted/underscored ("dana42", "d.quill");
+// - hiding spots (`shape: hiding`: "spare key under the green mat"): from the preposition to the end of
+//   the clause, at most eight words.
 // A run of digit groups after a card, account, routing or combination number is one value
 // ("4111 1111 1111 1111", "12 34 56").
 // Extra triggers from blind.toml are `secret` triggers unless they name a kind:
@@ -25,6 +32,10 @@
 // finds a cell that ends in a trigger phrase (alone, with an optional ":" or "number") and names the
 // cell that holds its value: the one to its right, or, for a label in the header row whose right
 // neighbour is no value, the cells below it.
+
+import {
+  SPOKEN_ORDINAL_TEENS, SPOKEN_ORDINAL_TENS, SPOKEN_ORDINAL_UNITS, SPOKEN_TEENS, SPOKEN_TENS, SPOKEN_UNITS,
+} from "./spelled.ts";
 
 export type ContextKind = "secret" | "number" | "date";
 export const CONTEXT_KINDS: readonly ContextKind[] = ["secret", "number", "date"];
@@ -42,12 +53,24 @@ interface Trigger {
   groups?: "long" | "short";
   /** The value must follow a number marker (`#`, `number`, `no.`, `:`, `=`): "policy 2024 update" is prose. */
   marker?: boolean;
+  /** A value shape of its own: a plate, a handle (username, login), or a hiding spot for a key. */
+  shape?: "plate" | "handle" | "hiding";
+  /** Regex source of a table label for the trigger, when the trigger phrase alone is too broad a label. */
+  label?: string;
 }
 
 const DEFAULTS: readonly Trigger[] = [
-  { kind: "date", source: "dob|d\\.o\\.b\\.?|date of birth|birth ?date" },
+  { kind: "date", source: "dob|d\\.o\\.b\\.?|date of birth|birth(?: )?date|birthday" },
   { kind: "number", source: "dl|d\\/l|driver['’]?s? licen[sc]e|driving licen[sc]e" },
-  { kind: "number", source: "(?:licen[sc]e )?plate" },
+  { kind: "number", source: "(?:licen[sc]e )?plate", shape: "plate" },
+  { kind: "number", source: "user(?: )?name|login|handle|screen name", shape: "handle" },
+  { kind: "number", source: "badge|employee id|member id|staff id" },
+  {
+    kind: "secret",
+    source: "(?:(?:spare|house|door) )?keys?(?: (?:is|are))?(?: (?:kept|left|hidden))?",
+    shape: "hiding",
+    label: "(?:spare|house|door) keys?(?: (?:location|spot|hidden|hiding (?:spot|place)))?|keys? (?:location|hiding (?:spot|place))",
+  },
   { kind: "secret", source: "(?:gate|door|garage|alarm|entry|access|lockbox|keypad) (?:code|pin)" },
   { kind: "secret", source: "pass(?:word|wd|code|phrase)|pwd|pw" },
   { kind: "secret", source: "combo|combination", groups: "short" },
@@ -60,7 +83,9 @@ const DEFAULTS: readonly Trigger[] = [
 
 /** The words the default triggers cover, for docs and `blind init`. */
 export const DEFAULT_CONTEXT_TRIGGERS: readonly string[] = [
-  "DOB / date of birth", "DL / driver's license", "plate", "gate code (door, garage, alarm, entry, access, keypad)",
+  "DOB / date of birth / birthday (numeric or spoken dates)", "DL / driver's license", "plate (region and groups)",
+  "username / user name / login / handle / screen name", "badge / employee id / member id / staff id",
+  "spare / house / door key under, in, behind ... (where a key is hidden)", "gate code (door, garage, alarm, entry, access, keypad)",
   "password / passcode / pw", "combo / combination", "routing", "account / acct", "card / visa / mastercard / amex ... ending",
   "CVV / CVC", "policy #",
 ];
@@ -71,11 +96,36 @@ export interface ContextOptions {
 }
 
 const MONTH = "(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)";
+
+// Spoken days and years, from the word tables in spelled.ts.
+const alt = (words: readonly string[]): string => words.join("|");
+const TENS_SEP = "(?:[ \\t]+|-)";
+const UNIT = alt(SPOKEN_UNITS);
+const TEEN = alt(SPOKEN_TEENS);
+const TENS = alt(SPOKEN_TENS);
+const ORD_DAY = `(?:(?:twenty|thirty)${TENS_SEP}(?:${alt(SPOKEN_ORDINAL_UNITS)})|${alt(SPOKEN_ORDINAL_TENS)}|${alt(SPOKEN_ORDINAL_TEENS)}|${alt(SPOKEN_ORDINAL_UNITS)})`;
+const CARD_DAY = `(?:(?:twenty|thirty)${TENS_SEP}(?:${UNIT})|twenty|thirty|${TEEN}|${UNIT})`;
+const DAY = `(?:the[ \\t]+)?(?:${ORD_DAY}|${CARD_DAY}|\\d{1,2}(?:st|nd|rd|th)?)(?![\\p{L}\\p{N}])`;
+// A year needs two parts when spoken ("forty-two", "nineteen forty"): "June third forty people" is no year.
+const YEAR = `(?:,?[ \\t]+(?:\\d{4}(?![\\p{L}\\p{N}])|['’]\\d{2}(?![\\p{L}\\p{N}])`
+  + `|(?:nineteen|eighteen|twenty)${TENS_SEP}(?:oh${TENS_SEP}(?:${UNIT})|(?:${TENS})(?:${TENS_SEP}(?:${UNIT}))?|${TEEN}|hundred)(?![\\p{L}\\p{N}])`
+  + `|two${TENS_SEP}thousand(?:[ \\t]+and)?(?:[ \\t]+(?:${TENS}(?:${TENS_SEP}(?:${UNIT}))?|${TEEN}|${UNIT}))?(?![\\p{L}\\p{N}])`
+  + `|(?:${TENS})${TENS_SEP}(?:${UNIT})(?![\\p{L}\\p{N}])|oh${TENS_SEP}(?:${UNIT})(?![\\p{L}\\p{N}])))`;
 const DATE_RES: readonly RegExp[] = [
   /^\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}(?![\p{L}\p{N}])/iu,
-  new RegExp(`^${MONTH}\\.?[ \\t]+\\d{1,2}(?:st|nd|rd|th)?(?:,?[ \\t]+\\d{4})?(?![\\p{L}\\p{N}])`, "iu"),
-  new RegExp(`^\\d{1,2}(?:st|nd|rd|th)?[ \\t]+(?:of[ \\t]+)?${MONTH}\\.?(?:,?[ \\t]+\\d{4})?(?![\\p{L}\\p{N}])`, "iu"),
+  new RegExp(`^${MONTH}\\.?[ \\t]+${DAY}(?:${YEAR})?`, "iu"),
+  new RegExp(`^${DAY}[ \\t]+(?:of[ \\t]+)?${MONTH}\\.?(?:${YEAR})?(?![\\p{L}\\p{N}])`, "iu"),
 ];
+
+/** The longest date, written or spoken, at the start of `rest`, or null. */
+function dateAt(rest: string): number | null {
+  let best: number | null = null;
+  for (const re of DATE_RES) {
+    const d = re.exec(rest);
+    if (d !== null && (best === null || d[0].length > best)) best = d[0].length;
+  }
+  return best;
+}
 
 // Between the trigger and the value: spaces, one separator, filler words. Matched repeatedly.
 const FILLER_RE = /^(?:[ \t]+|[:=#]|-(?=[ \t])|(?:is|number|num|nr|no\.|ending|ends|in|on|code|pin|at)(?![\p{L}\p{N}]))/iu;
@@ -110,10 +160,11 @@ interface Compiled {
 function compile(triggers: readonly Trigger[]): Compiled[] {
   return triggers.map((t) => {
     const src = t.source.replace(/ /g, "[ \\t]+");
+    const labelSrc = (t.label ?? t.source).replace(/ /g, "[ \\t]+");
     return {
       t,
       re: new RegExp(`(?<![\\p{L}\\p{N}_])(?:${src})(?![\\p{L}\\p{N}_])`, "giu"),
-      label: new RegExp(`^((?:[\\p{L}\\p{N}'’/-]+[ \\t]+){0,3}?)(?:${src})(?:[ \\t]+(?:number|num|no\\.?|nr|code|#))?[ \\t]*[:：]?[ \\t]*$`, "iu"),
+      label: new RegExp(`^((?:[\\p{L}\\p{N}'’/-]+[ \\t]+){0,3}?)(?:${labelSrc})(?:[ \\t]+(?:number|num|no\\.?|nr|code|#))?[ \\t]*[:：]?[ \\t]*$`, "iu"),
     };
   });
 }
@@ -163,13 +214,50 @@ function skipFiller(text: string, from: number): { at: number; marked: boolean; 
   return { at: i, marked, filled };
 }
 
+// A plate: an optional uppercase two-letter region, then one or two groups of 2-4 characters (the second
+// has a digit or is capitalised, so "7AB was" is not one plate); a digit somewhere past the region.
+const PLATE_RE = /^(?:([A-Z]{2})[ \t-])?([A-Za-z0-9]{2,4})(?:[ \t-]([A-Za-z0-9]{2,4}))?(?![\p{L}\p{N}])/u;
+
+/** The length of the plate at the start of `text` from `at`, or null; a single longer token is the caller's. */
+function plateAt(text: string, at: number): number | null {
+  const rest = text.slice(at, at + 24);
+  const m = PLATE_RE.exec(rest);
+  if (m === null) return null;
+  const [whole, , g1 = "", g2] = m;
+  let len = whole.length;
+  let groups = g1;
+  if (g2 !== undefined) {
+    if (/\d/.test(g2) || /^[A-Z]+$/.test(g2)) groups += g2;
+    else len -= g2.length + 1;
+  }
+  if (!/\d/.test(groups) || !(/\d/.test(g1) || /^[A-Z]+$/.test(g1))) return null;
+  return len >= 3 ? len : null;
+}
+
+/** A username, login or screen name: 3+ characters, letters with digits or dotted/underscored. */
+function isHandle(word: string): boolean {
+  const w = word.startsWith("@") ? word.slice(1) : word;
+  if (w.length < 3) return false;
+  return (/\p{L}/u.test(w) && /\d/.test(w) && /^[\p{L}\p{N}._-]+$/u.test(w)) || /^[\p{L}\p{N}]+(?:[._][\p{L}\p{N}]+)+$/u.test(w);
+}
+
 /** The value after `pos` for trigger `t`, as [start, end), or null. */
 function valueAfter(text: string, pos: number, t: Trigger): [number, number] | null {
   const first = skipFiller(text, pos);
   let i = first.at;
+  // A region code can read as an ordinary word ("OR", "IN", "ME"), so a plate is tried before any skipping.
+  if (t.shape === "plate" && (i > pos || /^[ \t]/.test(text.slice(pos, pos + 1)))) {
+    const p = plateAt(text, i);
+    if (p !== null) return [i, i + p];
+  }
   let marked = first.marked;
   if (i === pos && !SEP_AFTER_RE.test(text.slice(pos, pos + 1)) && !/^[:=#]/.test(text.slice(pos, pos + 1))) return null;
 
+  // A month can read as an ordinary word ("may"), so a date is tried before any skipping.
+  if (t.kind === "date") {
+    const len = dateAt(text.slice(i, i + 80));
+    if (len !== null) return [i, i + len];
+  }
   // Ordinary words between the trigger and the value ("changed to", "was reset to", "on file is").
   let skipped = 0;
   let last = "";
@@ -191,11 +279,12 @@ function valueAfter(text: string, pos: number, t: Trigger): [number, number] | n
   if (open !== null) i += open[0].length;
 
   if (t.kind === "date") {
-    const rest = text.slice(i, i + 40);
-    for (const re of DATE_RES) {
-      const d = re.exec(rest);
-      if (d !== null) return [i, i + d[0].length];
-    }
+    const len = dateAt(text.slice(i, i + 80));
+    if (len !== null) return [i, i + len];
+  }
+  if (t.shape === "plate") {
+    const p = plateAt(text, i);
+    if (p !== null) return [i, i + p];
   }
 
   const quoted = open === null ? null : /^[^"'“”‘’\n]{1,100}/u.exec(text.slice(i, i + 101));
@@ -213,6 +302,8 @@ function valueAfter(text: string, pos: number, t: Trigger): [number, number] | n
     // "its password rotated yet": a plain word straight after the trigger, with nothing between
     // ("password: dragon", "password is dragon" still count), is the sentence going on.
     if (skipped === 0 && !first.filled && /^(?:\p{Lu}?\p{Ll}+)$/u.test(plain)) return null;
+  } else if (t.shape === "handle") {
+    if (!isHandle(word)) return null;
   } else if (!hasDigit || word.length < 3) return null;
   let end = i + word.length;
   if (t.groups !== undefined && /^[\d*xX•-]+$/.test(word)) {
@@ -227,12 +318,50 @@ function valueAfter(text: string, pos: number, t: Trigger): [number, number] | n
   return [i, end];
 }
 
+// Where a key is hidden: from the preposition to the end of the clause. "key under review" is no hiding spot.
+const HIDE_PREP_RE = /^[ \t]+(under|in|inside|behind|above|on top of|beneath)(?![\p{L}\p{N}_])/iu;
+const NOT_A_KEY_BEFORE = new Set([
+  "primary", "foreign", "api", "public", "private", "sort", "hash", "encryption", "ssh", "secret", "access", "master", "shift",
+  "function", "arrow", "space", "tab", "caps", "enter", "escape", "delete", "piano", "music", "major", "minor", "composite", "unique",
+]);
+const NOT_A_PLACE = new Set([
+  "review", "reviews", "consideration", "discussion", "development", "construction", "control", "pressure", "investigation", "scrutiny",
+  "warranty", "contract", "way", "question", "case", "sense", "order", "general", "particular", "fact", "addition", "short", "summary",
+  "conclusion", "mind", "process", "progress", "table", "database", "column", "field", "document", "report", "sentence", "paragraph",
+  "code", "list", "dictionary", "map", "object", "array", "schema", "spec", "file", "row", "record", "use", "effect", "place",
+]);
+const MAX_HIDE_WORDS = 8;
+
+function hidingSpot(text: string, matchStart: number, matchEnd: number): [number, number] | null {
+  const prep = HIDE_PREP_RE.exec(text.slice(matchEnd, matchEnd + 24));
+  if (prep === null) return null;
+  const bare = !/^(?:spare|house|door)\b/i.test(text.slice(matchStart, matchEnd));
+  if (bare) {
+    const before = /([\p{L}]+)[ \t]+$/u.exec(text.slice(Math.max(0, matchStart - 24), matchStart));
+    if (before !== null && NOT_A_KEY_BEFORE.has((before[1] as string).toLowerCase())) return null;
+  }
+  const start = matchEnd + prep[0].length - prep[1]!.length;
+  const obj = /^[ \t]+(?:(?:the|a|an|this|that|these|those|our|my|your|his|her|their)[ \t]+)?([\p{L}]+)/iu.exec(text.slice(start + prep[1]!.length, start + prep[1]!.length + 40));
+  if (obj === null || NOT_A_PLACE.has((obj[1] as string).toLowerCase())) return null;
+  // Up to eight words, ending at a comma, full stop, semicolon, "!" or "?" or the line end.
+  let end = start;
+  for (let n = 0; n < MAX_HIDE_WORDS; n++) {
+    const w = /^[ \t]*[^\s]+/u.exec(text.slice(end, end + 80));
+    if (w === null) break;
+    const word = w[0].trimStart();
+    const stop = /[,.;!?:]+$/u.exec(word);
+    end += w[0].length - (stop === null ? 0 : stop[0].length);
+    if (stop !== null) break;
+  }
+  return end > start + prep[1]!.length ? [start, end] : null;
+}
+
 /** The spans to redact in `text`: sorted, non-overlapping. */
 export function findContextSpans(text: string, opts: ContextOptions = { triggers: [] }): ContextSpan[] {
   const found: ContextSpan[] = [];
   for (const { t, re } of compiledFor(opts.triggers)) {
     for (const m of text.matchAll(re)) {
-      const v = valueAfter(text, m.index + m[0].length, t);
+      const v = t.shape === "hiding" ? hidingSpot(text, m.index, m.index + m[0].length) : valueAfter(text, m.index + m[0].length, t);
       if (v !== null) found.push({ start: v[0], end: v[1] });
     }
   }
@@ -273,12 +402,10 @@ export function cellValueSpan(cell: string, rule: CellRule): [number, number] | 
   if (core === "") return null;
   const start = cell.indexOf(core);
   if (rule.kind === "date") {
-    for (const re of DATE_RES) {
-      const d = re.exec(core);
-      if (d !== null) return [start, start + d[0].length];
-    }
-    return null;
+    const len = dateAt(core);
+    return len === null ? null : [start, start + len];
   }
+  if (rule.shape === "handle") return isHandle(core) ? [start, start + core.length] : null;
   if (rule.kind === "number") return /\d/.test(core) && core.length >= 3 ? [start, start + core.length] : null;
   if (!/[\p{L}\p{N}]/u.test(core) || core.length < 2) return null;
   if (!/\d/.test(core) && PROSE.has(core.toLowerCase())) return null;

@@ -32,7 +32,7 @@ Columns you already know about can be decided in `blind.toml`, with no model at 
 with `sheet`) and keeps, scans, drops, blinds or redacts them; when rules overlap the most
 specific wins, and `blind plan` notes each overlap (see [docs/policy.md](docs/policy.md#columns)). `scan` is the one for notes, remarks and diagnoses:
 the cell is kept as written except for what the free-text scanner finds in it (phones, emails,
-names, a plate or gate code after its keyword). `[defaults] columns = "scan"` gives every column no
+names, a plate, username, badge, gate code or hidden-key place after its keyword). `[defaults] columns = "scan"` gives every column no
 rule decides that treatment too, instead of pseudonymising identifier-like ones whole.
 
 ## What a model sees

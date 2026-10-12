@@ -279,6 +279,24 @@ describe("format fidelity (AC5)", () => {
     }
   });
 
+  test(".tab and .tsv sniff the delimiter, preferring tab on a tie; profiler and engine agree (AGT-1818)", () => {
+    const cases: [string, "csv" | "tsv", string, string][] = [
+      ["x.tab", "tsv", "Owner|Note\nAvery Quill|a\nRobin Example|b\n", "|"],
+      ["x.tsv", "tsv", "Owner|Note\nAvery Quill|a\nRobin Example|b\n", "|"],
+      ["y.tab", "tsv", "Owner\tNote\nAvery Quill\ta\nRobin Example\tb\n", "\t"],
+      ["z.tab", "tsv", "Owner\tNote|x\nAvery Quill\ta|c\n", "\t"],
+    ];
+    for (const [path, fmt, body, delim] of cases) {
+      const profiled = profileTable(path, parseTable(body, fmt), 3).table.columns.map((c) => c.header);
+      const s = spec({ columns: [rule(path, "Owner", "person", "blind"), rule(path, "Note" + (path === "z.tab" ? "|x" : ""), "vocabulary", "keep")] });
+      const res = run([file(path, body)], s);
+      expect(res.files[0]?.columns.map((c) => c.header)).toEqual(profiled);
+      expect(res.files[0]?.delimiter).toBe(delim);
+      expect(profiled.length).toBe(2);
+      if (delim === "|") expect(text(res, path)).toMatch(/^Owner\|Note\nPerson_[0-9A-F]{4}\|a\nPerson_[0-9A-F]{4}\|b\n$/);
+    }
+  });
+
   test("TSV", () => {
     const tsv = "Owner\tNote\nAvery Quill\tok\n";
     const s = spec({ columns: [rule("t.tsv", "Owner", "person", "blind"), rule("t.tsv", "Note", "vocabulary", "keep")] });

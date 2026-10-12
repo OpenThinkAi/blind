@@ -207,7 +207,7 @@ export function revealFile(path: string, bytes: Uint8Array, rv: Revealer): Revea
     const { encoding, text } = decode(bytes);
     const r =
       format === "csv" || format === "tsv"
-        ? revealTable(text, format === "tsv" ? "\t" : sniffDelimiter(text), rv)
+        ? revealTable(text, sniffDelimiter(text, format === "tsv" ? "\t" : undefined), rv)
         : format === "json" || format === "jsonl"
           ? revealJson(text, format === "jsonl", rv)
           : rv.text(text);

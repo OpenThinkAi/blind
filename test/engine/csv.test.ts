@@ -52,6 +52,14 @@ describe("sniffDelimiter", () => {
   ])("%j → %j", (text, want) => {
     expect(sniffDelimiter(text)).toBe(want);
   });
+
+  test("a preferred delimiter wins ties and the no-delimiter case, but not a clear majority (AGT-1818)", () => {
+    expect(sniffDelimiter("a|b|c\n1|2|3\n", "\t")).toBe("|");
+    expect(sniffDelimiter("a\tb|c\n", "\t")).toBe("\t");
+    expect(sniffDelimiter("a,b\tc\n", "\t")).toBe("\t");
+    expect(sniffDelimiter("a\tb\tc\n", "\t")).toBe("\t");
+    expect(sniffDelimiter("single\n", "\t")).toBe("\t");
+  });
 });
 
 describe("renderCell", () => {

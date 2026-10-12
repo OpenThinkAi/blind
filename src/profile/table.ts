@@ -10,11 +10,11 @@ export class ParseError extends Error {
 
 /**
  * Parses CSV or TSV with the engine's tokenizer, so the profiler and `blind apply` always agree on
- * delimiter, quoting and column counts. CSV guesses its delimiter (`,` `;` `|` tab); TSV is always tab.
+ * delimiter, quoting and column counts. CSV guesses its delimiter (`,` `;` `|` tab); TSV (`.tsv`, `.tab`) sniffs too but prefers tab on a tie.
  */
 export function parseTable(text: string, format: "csv" | "tsv"): string[][] {
   try {
-    return parseCsv(text, format === "tsv" ? "\t" : sniffDelimiter(text)).map((r) => r.cells.map((c) => c.value));
+    return parseCsv(text, sniffDelimiter(text, format === "tsv" ? "\t" : undefined)).map((r) => r.cells.map((c) => c.value));
   } catch (e) {
     if (e instanceof CsvError) throw new ParseError(e.message);
     throw e;

@@ -39,7 +39,7 @@ npm page).
 1. Bump `version` in `package.json` on a branch (a prerelease such as `0.1.0-rc.1` publishes under the `rc` dist-tag; a plain version publishes under `latest`).
 2. Land it through stamp: `stamp review`, `stamp merge <branch> --into main`, `stamp push main`.
 3. In GitHub, open Actions, select the `release` workflow, and run it with "Run workflow" on the `main` branch. A dispatch from any other branch runs the checks but skips the publish job.
-4. The `check` job runs `bun run typecheck` and `bun test --timeout 30000`. The `publish` job then skips if that version is already on npm, otherwise runs a pinned `npm publish --access public --provenance --tag <dist-tag>` (npm 11.5.1 or later is needed for OIDC; the workflow fetches one with `npx`). There is no build step: the package ships source and runs on Bun.
+4. The `check` job runs `bun run typecheck` and `bun test --timeout 30000`. The `publish` job then skips if that version is already on npm, otherwise runs a pinned `npm publish --access public --provenance --tag <dist-tag>` (npm 11.5.1 or later is needed for OIDC; the workflow runs the npm bundled with Node 24 and fails if it is older than 11.5.1). There is no build step: the package ships source and runs on Bun.
 
 Tag pushes (`v*`) also trigger the workflow, but tags only reach GitHub if you uncomment `tags:` in `.stamp/mirror.yml`. The tag must equal `v<version>`, and the publish job refuses any commit (tagged or dispatched) that is not on `main`.
 

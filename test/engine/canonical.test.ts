@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { canonicalize, guidCore } from "../../src/engine/canonical.ts";
+import { canonicalize, guidCore, phoneDigits, PSEUDO_CLASSES } from "../../src/engine/canonical.ts";
 
 describe("canonicalize", () => {
   test("case-folds and collapses whitespace for every class", () => {
@@ -81,5 +81,25 @@ describe("guidCore", () => {
     expect(guidCore("{0f8fad5b-d9cb-469f-a165-70867728950e")).toBeUndefined();
     expect(guidCore("0f8fad5bd9cb469fa16570867728950e")).toBeUndefined();
     expect(guidCore("0f8fad5b-d9cb-469f-a165-70867728950g")).toBeUndefined();
+  });
+});
+
+describe("phone-shaped values canonicalise to digits (AGT-1824)", () => {
+  // Invented numbers in the 555-01xx fictional range.
+  test("one number written several ways is one canonical form, in every class", () => {
+    const forms = ["(801) 555-0100", "801-555-0100", "801.555.0100", "801 555 0100", "+1 801 555 0100", "+1-801-555-0100", "1 (801) 555-0100"];
+    for (const cls of PSEUDO_CLASSES) for (const f of forms) expect({ cls, f, c: canonicalize(cls, f) }).toEqual({ cls, f, c: "8015550100" });
+  });
+
+  test("international numbers with a leading + keep their country code", () => {
+    expect(phoneDigits("+44 20 7946 0018")).toBe("442079460018");
+    expect(phoneDigits("+44-20-7946-0018")).toBe("442079460018");
+  });
+
+  test("bare digits, dates, IPv4 addresses, short numbers and versions are not phones", () => {
+    for (const v of ["8015550100", "18015550100", "2026-10-12", "192.0.2.10", "555-0100", "1.2.3", "12-34-56", "AB-555-0100", "801-555-01000"]) {
+      expect({ v, d: phoneDigits(v) }).toEqual({ v, d: undefined });
+    }
+    expect(canonicalize("id", "18015550100")).toBe("18015550100");
   });
 });

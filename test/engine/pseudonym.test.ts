@@ -71,9 +71,9 @@ describe("determinism", () => {
   });
 
   test("the class is part of the HMAC input", () => {
-    const p = fresh();
+    // Separate instances: within one, the second class reuses the first's pseudonym (one entity, one pseudonym).
     const hex = (s: string) => s.slice(s.indexOf("_") + 1);
-    expect(hex(p.pseudonym("person", "Sample"))).not.toBe(hex(p.pseudonym("org", "Sample")));
+    expect(hex(fresh().pseudonym("person", "Sample"))).not.toBe(hex(fresh().pseudonym("org", "Sample")));
   });
 
   test("call order does not matter when nothing collides", () => {
@@ -472,5 +472,64 @@ describe("isPseudonym", () => {
       expect(isPseudonym(s, map)).toBe(false);
       expect(p.isPseudonym(s)).toBe(false);
     }
+  });
+});
+
+describe("one entity, one pseudonym across classes (AGT-1824)", () => {
+  test("a value already pseudonymised in one class reuses that pseudonym in another", () => {
+    const p = fresh();
+    const person = p.pseudonym("person", "Ada Lovelace");
+    expect(p.pseudonym("value", "Ada Lovelace")).toBe(person);
+    expect(p.pseudonym("value", "ADA LOVELACE")).toBe(person);
+    // The other class's canonical form is the one matched: "Lovelace, Ada" is the person.
+    expect(p.pseudonym("value", "Lovelace, Ada")).toBe(person);
+    expect(p.toMap().entries.map((e) => e.kind)).toEqual(["person"]);
+  });
+
+  test("the first class issued wins, whichever it is, and the map keeps one entry", () => {
+    const p = fresh();
+    const v = p.pseudonym("value", "Ada Lovelace");
+    expect(v).toMatch(/^Value_[0-9A-F]{4}$/);
+    expect(p.pseudonym("person", "Ada Lovelace")).toBe(v);
+    expect(p.toMap().entries).toHaveLength(1);
+  });
+
+  test("a reloaded map is consulted across classes too, without the salt", () => {
+    const a = fresh();
+    const person = a.pseudonym("person", "Ada Lovelace");
+    const b = new Pseudonymizer({ map: a.toMap() });
+    expect(b.pseudonym("value", "Ada Lovelace")).toBe(person);
+  });
+
+  test("the recorded surface is the smallest seen in any class, so reveal does not depend on order", () => {
+    const one = fresh();
+    one.pseudonym("person", "ada lovelace");
+    one.pseudonym("value", "Ada Lovelace");
+    const two = fresh();
+    two.pseudonym("person", "Ada Lovelace");
+    two.pseudonym("value", "ada lovelace");
+    expect(one.toMap()).toEqual(two.toMap());
+    expect(one.toMap().entries[0]?.value).toBe("Ada Lovelace");
+  });
+
+  test("one phone written several ways gets one pseudonym, across classes", () => {
+    const p = fresh();
+    const first = p.pseudonym("value", "(801) 555-0100");
+    for (const f of ["801-555-0100", "801.555.0100", "+1 801 555 0100"]) expect(p.pseudonym("value", f)).toBe(first);
+    expect(p.pseudonym("id", "801-555-0100")).toBe(first);
+    expect(p.toMap().entries).toEqual([{ kind: "value", canonical: "8015550100", value: "(801) 555-0100", pseudonym: first }]);
+    expect(p.pseudonym("value", "801-555-0199")).not.toBe(first);
+  });
+
+  test("an id-class phone with separators keeps the prefixed shape; a bare-digit ID stays numeric", () => {
+    const p = fresh();
+    expect(p.pseudonym("id", "(801) 555-0100")).toMatch(/^Id_[0-9A-F]{4}$/);
+    expect(p.pseudonym("id", "98765")).toBe("90932");
+  });
+
+  test("components (host labels, email local parts) are never reused as whole values", () => {
+    const p = fresh();
+    p.pseudonym("host", "app01.corp.example.com");
+    expect(p.pseudonym("value", "app01")).toMatch(/^Value_[0-9A-F]{4}$/);
   });
 });

@@ -10,9 +10,18 @@
 // rather than emitting a duplicate. Because "already issued" depends on what
 // came before, callers must ask for values in a stable order (the engine walks
 // a sorted file list); a reloaded map pins every earlier answer.
+//
+// One entity, one pseudonym: a value already recorded under another class
+// (the same name as a `value` column cell and as a transcript speaker, say)
+// reuses that class's pseudonym rather than getting a second one. The other
+// class's canonical form is used for the match, so "Lovelace, Ada" finds the
+// person "Ada Lovelace". When several classes hold it, the first in
+// PSEUDO_CLASSES order wins. The engine asks for values sorted by class, so
+// the specific classes are issued before `value` and their shape is the one
+// kept.
 
 import { createHmac } from "node:crypto";
-import { canonicalize, guidCore, type PseudoClass } from "./canonical.ts";
+import { canonicalize, guidCore, PSEUDO_CLASSES, type PseudoClass } from "./canonical.ts";
 import { type BlindMap, MAP_VERSION, type MapEntry, type MapKind, sortEntries } from "./map.ts";
 
 export { PSEUDO_CLASSES, type PseudoClass } from "./canonical.ts";
@@ -307,9 +316,29 @@ export class Pseudonymizer {
     return this.derive(cls, canonical, surface, (b) => `${PREFIX[cls]}_${hex4(b).toUpperCase()}`);
   }
 
+  /**
+   * The entry another class already holds for this value, if this class holds none. Its
+   * recorded surface is updated as `lookup` does, so reveal stays independent of call order.
+   */
+  private shared(cls: PseudoClass, c: string, value: string, surface: string): MapEntry | undefined {
+    if (this.entries.has(`${cls}\0${c}`)) return undefined;
+    for (const other of PSEUDO_CLASSES) {
+      if (other === cls) continue;
+      const known = this.entries.get(`${other}\0${this.resolve(other, value).key}`);
+      if (known === undefined) continue;
+      if (surface < known.value) known.value = surface;
+      return known;
+    }
+    return undefined;
+  }
+
   pseudonym(cls: PseudoClass, value: string): string {
     const { key: c, display } = this.resolve(cls, value);
     const surface = display ?? value;
+    const shared = this.shared(cls, c, value, surface);
+    if (shared !== undefined) {
+      return shared.kind === "id" && guidCore(shared.pseudonym) !== undefined ? formatGuidLike(value, shared.pseudonym) : shared.pseudonym;
+    }
     switch (cls) {
       case "host":
         if (IPV4_RE.test(c)) return this.derive("host", c, surface, renderIpv4);
@@ -328,7 +357,8 @@ export class Pseudonymizer {
       }
       case "id": {
         if (guidCore(c) !== undefined) return formatGuidLike(value, this.derive("id", c, surface, renderGuid));
-        if (/^\d+$/.test(c)) return this.derive("id", c, surface, (b) => renderNumeric(b, c));
+        // A phone written with separators canonicalises to digits but keeps the prefixed shape.
+        if (/^\d+$/.test(c) && /^\d+$/.test(value.trim())) return this.derive("id", c, surface, (b) => renderNumeric(b, c));
         return this.prefixed(cls, c, surface);
       }
       case "person":

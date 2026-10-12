@@ -120,7 +120,7 @@ documents ------------ engine (deterministic) ---------------+--> blinded docume
 | JSON, JSONL | Edits spliced into the original text |
 | XLSX | Cells, sheet and defined names, formulas, comments (including their legacy VML drawing, scrubbed only inside `<x:ClientData>`), metadata, pivot caches |
 | DOCX | Text across runs, tables, headers, comments, tracked changes, metadata |
-| Text, Markdown, logs | `.txt`, `.md`, `.log` |
+| Text, Markdown, logs | `.txt`, `.md`, `.log`; UTF-8 (with or without BOM) or UTF-16 with BOM. 8-bit text that is not UTF-8 is refused, not written: save it as UTF-8 and run again |
 | VTT, SRT transcripts | Also transcript-shaped text and DOCX files, found by content (a prose DOCX is profiled as a document) |
 
 File and folder names are blinded too. Files in any other format (PDF, images, PPTX, email, HTML,

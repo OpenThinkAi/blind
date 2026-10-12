@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { decode, type Encoding, EncodingError, encode } from "../../src/engine/encoding.ts";
+import { decode, type Encoding, EncodingError, encode, isEightBit, NOT_UTF8 } from "../../src/engine/encoding.ts";
 
 const SAMPLE = "Name,Ort\nAvery Quill,Zürich\n";
 
@@ -13,13 +13,11 @@ const bytesFor = (enc: Encoding): Uint8Array => {
       return Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(SAMPLE, "utf16le")]);
     case "utf16be":
       return Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from(SAMPLE, "utf16le").swap16()]);
-    case "latin1":
-      return Buffer.from(SAMPLE, "latin1");
   }
 };
 
 describe("decode / encode", () => {
-  test.each(["utf8", "utf8-bom", "utf16le", "utf16be", "latin1"] as const)("%s is detected and round-trips", (enc) => {
+  test.each(["utf8", "utf8-bom", "utf16le", "utf16be"] as const)("%s is detected and round-trips", (enc) => {
     const bytes = bytesFor(enc);
     const d = decode(bytes);
     expect(d.encoding).toBe(enc);
@@ -27,48 +25,40 @@ describe("decode / encode", () => {
     expect(Buffer.from(encode(d.text, enc)).equals(Buffer.from(bytes))).toBe(true);
   });
 
-  test("bytes that are not UTF-8 fall back to Latin-1 and round-trip exactly", () => {
-    const bytes = Uint8Array.from([0x41, 0x80, 0x9f, 0xff, 0x0a]);
-    const d = decode(bytes);
-    expect(d.encoding).toBe("latin1");
-    expect(Buffer.from(encode(d.text, "latin1")).equals(Buffer.from(bytes))).toBe(true);
-  });
-
   test("a UTF-16 BOM over an odd byte count is an error", () => {
     expect(() => decode(Uint8Array.from([0xff, 0xfe, 0x41]))).toThrow(EncodingError);
   });
-
-  test("Latin-1 refuses text outside 8 bits instead of mangling it", () => {
-    expect(() => encode("Ω", "latin1")).toThrow(EncodingError);
-  });
 });
 
-describe("windows-1252 view of 8-bit text (AGT-1854)", () => {
-  test("0x80-0x9F decode to their cp1252 characters and encode back", () => {
-    const bytes = Uint8Array.from([0x80, 0x85, 0x91, 0x92, 0x93, 0x94, 0x96, 0x97, 0x99, 0x9f, 0xe9]);
-    const d = decode(bytes);
-    expect(d.encoding).toBe("latin1");
-    expect(d.text).toBe("€…‘’“”–—™Ÿé");
-    expect(Buffer.from(encode(d.text, "latin1")).equals(Buffer.from(bytes))).toBe(true);
+describe("8-bit text that is not UTF-8 is refused (AGT-1857)", () => {
+  test("bytes that are not valid UTF-8 and have no BOM are refused with the stated reason", () => {
+    const bytes = Uint8Array.from([0x41, 0x80, 0x9f, 0xff, 0x0a]);
+    expect(isEightBit(bytes)).toBe(true);
+    expect(() => decode(bytes)).toThrow(EncodingError);
+    expect(() => decode(bytes)).toThrow(NOT_UTF8);
+    expect(NOT_UTF8).toBe("not UTF-8: save the file as UTF-8 and run again");
   });
 
-  test("the five bytes cp1252 leaves undefined keep their Latin-1 code units", () => {
-    const bytes = Uint8Array.from([0x81, 0x8d, 0x8f, 0x90, 0x9d, 0xe9]);
-    const d = decode(bytes);
-    expect(d.text).toBe("\u0081\u008d\u008f\u0090\u009dé");
-    expect(Buffer.from(encode(d.text, "latin1")).equals(Buffer.from(bytes))).toBe(true);
+  test("cp1252 punctuation (0x80-0x9F) is refused, not decoded as characters", () => {
+    expect(() => decode(Uint8Array.from([0x80, 0x85, 0x91, 0x92, 0x93, 0x94, 0x96, 0x97, 0x99, 0x9f, 0xe9]))).toThrow(NOT_UTF8);
   });
 
-  test("every byte round-trips", () => {
-    const bytes = Uint8Array.from({ length: 256 }, (_, i) => i);
-    bytes[0] = 0xe9; // not valid UTF-8 as a whole, so it is read as 8-bit
-    const d = decode(bytes);
-    expect(d.encoding).toBe("latin1");
-    expect(d.text.length).toBe(256);
-    expect(Buffer.from(encode(d.text, "latin1")).equals(Buffer.from(bytes))).toBe(true);
+  test("the five bytes cp1252 leaves undefined are refused too", () => {
+    expect(() => decode(Uint8Array.from([0x81, 0x8d, 0x8f, 0x90, 0x9d, 0xe9]))).toThrow(NOT_UTF8);
   });
 
-  test("a character outside the file's 8-bit encoding is refused", () => {
-    expect(() => encode("a中", "latin1")).toThrow(EncodingError);
+  test("a single 8-bit byte in an otherwise ASCII file is refused", () => {
+    expect(() => decode(Buffer.from("Call \xd3scar Example back.\n", "latin1"))).toThrow(NOT_UTF8);
+  });
+
+  test("valid UTF-8 and BOM-marked text are not 8-bit", () => {
+    expect(isEightBit(Buffer.from("Zürich", "utf8"))).toBe(false);
+    expect(isEightBit(bytesFor("utf8-bom"))).toBe(false);
+    expect(isEightBit(bytesFor("utf16le"))).toBe(false);
+  });
+
+  test("encode writes only the encodings the engine still reads", () => {
+    expect(encode("a", "utf16le").length).toBe(4);
+    expect(encode("Ω", "utf8").length).toBe(2);
   });
 });

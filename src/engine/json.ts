@@ -284,3 +284,45 @@ export function stringOffsets(raw: string): number[] {
 
 /** A decoded value written back as a JSON string literal; pseudonyms are ASCII, so nothing new is escaped. */
 export const quote = (value: string): string => JSON.stringify(value);
+
+/**
+ * What dropping some values removes from the text: each value with its key (when it is an object
+ * member) and one separating comma, so the rest stays valid JSON with its layout. `values` are
+ * token indices of scalars or literals. Members next to each other are removed as one run, so a
+ * comma is never taken twice. Returns the ranges to cut (sorted, disjoint) and every token inside them.
+ */
+export function jsonCuts(text: string, tokens: readonly JsonToken[], values: Iterable<number>): { ranges: [number, number][]; tokens: Set<number> } {
+  const cut = new Set<number>();
+  const members: [number, number][] = [];
+  for (const i of [...new Set(values)].sort((a, b) => a - b)) {
+    const v = tokens[i] as JsonToken;
+    cut.add(i);
+    const k = tokens[i - 1];
+    if (k !== undefined && k.kind === "key" && /^\s*:\s*$/.test(text.slice(k.end, v.start))) {
+      cut.add(i - 1);
+      members.push([k.start, v.end]);
+    } else members.push([v.start, v.end]);
+  }
+  members.sort((a, b) => a[0] - b[0]);
+  const runs: [number, number][] = [];
+  for (const m of members) {
+    const last = runs[runs.length - 1];
+    if (last !== undefined && /^\s*,\s*$/.test(text.slice(last[1], m[0]))) last[1] = m[1];
+    else runs.push([m[0], m[1]]);
+  }
+  const ws = (c: string | undefined): boolean => c === " " || c === "\t" || c === "\n" || c === "\r";
+  const ranges = runs.map(([s, e]): [number, number] => {
+    let j = e;
+    while (ws(text[j])) j++;
+    if (text[j] === ",") {
+      j++;
+      while (ws(text[j])) j++;
+      return [s, j];
+    }
+    let k = s - 1;
+    while (k >= 0 && ws(text[k])) k--;
+    // The last member: take the comma before it; the only member: take the space before it too.
+    return text[k] === "," ? [k, e] : [k + 1, e];
+  });
+  return { ranges, tokens: cut };
+}

@@ -99,7 +99,7 @@ describe("spec", () => {
   });
 
   test("parseSpec throws a SchemaError naming the source and path", () => {
-    const text = JSON.stringify(mutated(specFixture, (d) => (d.columns[2].treatment = "drop")));
+    const text = JSON.stringify(mutated(specFixture, (d) => (d.columns[2].treatment = "shred")));
     let err: unknown;
     try {
       parseSpec(text, ".blind/spec.json");

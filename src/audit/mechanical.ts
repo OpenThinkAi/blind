@@ -39,7 +39,7 @@
 // candidate, else `clean`; the audit never reports `clean` for something it
 // did not read.
 
-import type { ColumnRule, PatternName, Spec } from "../schema.ts";
+import { type ColumnRule, type PatternName, REDACTED_VALUE, type Spec } from "../schema.ts";
 import { CsvError, parseCsv, sniffDelimiter } from "../engine/csv.ts";
 import { inDateContext, isDateWord } from "../engine/datecontext.ts";
 import { decode, EncodingError } from "../engine/encoding.ts";
@@ -712,12 +712,18 @@ function tableFormat(path: string): "csv" | "tsv" | null {
 const columnLabel = (r: ColumnRule): string =>
   r.jsonPath !== undefined ? `key ${maskValue(r.jsonPath)}` : `column ${r.header === "" ? "(blank header)" : maskValue(r.header)}`;
 
-/** Declared unknowns (spec rules with class `unknown`) and, for CSV/TSV, columns the spec does not mention. */
+/**
+ * Declared unknowns (spec rules with class `unknown`, apart from dropped and redacted columns, which
+ * are decided) and, for CSV/TSV, columns the spec does not mention, a dropped column still present
+ * and a redacted column holding anything but the placeholder.
+ */
 function columnFindings(sink: PartSink, bytes: Uint8Array, rules: readonly ColumnRule[]) {
   const spec = (reason: string, masked = "") =>
     sink.findings.push({ file: sink.file, part: "", in: "content", offset: null, line: null, class: "unknown", source: "spec", severity: "candidate", masked, reason, encoding: null });
+  const breach = (r: ColumnRule, reason: string) =>
+    sink.findings.push({ file: sink.file, part: "", in: "content", offset: null, line: null, class: r.class, source: "spec", severity: "leak", masked: "", reason, encoding: null });
   for (const r of rules) {
-    if (r.class === "unknown") spec(`the spec declares ${columnLabel(r)} as unknown (treatment ${r.treatment})`);
+    if (r.class === "unknown" && r.treatment !== "drop" && r.treatment !== "redact") spec(`the spec declares ${columnLabel(r)} as unknown (treatment ${r.treatment})`);
   }
   const format = tableFormat(sink.file);
   if (format === null) return;
@@ -742,6 +748,20 @@ function columnFindings(sink: PartSink, bytes: Uint8Array, rules: readonly Colum
   const headers = (rows[headerRow]?.cells ?? []).map((c) => c.value);
   const width = Math.max(0, ...rows.map((r) => r.cells.length));
   const named = new Set(rules.filter((r) => r.header !== undefined).map((r) => (r.header as string).trim()));
+  for (const r of rules) {
+    if (r.header === undefined || (r.treatment !== "drop" && r.treatment !== "redact")) continue;
+    const col = headers.findIndex((h) => h.trim() === (r.header as string).trim());
+    if (col < 0) continue;
+    if (r.treatment === "drop") {
+      breach(r, `the spec drops ${columnLabel(r)}, but the output still has it (column ${col + 1})`);
+      continue;
+    }
+    const left = rows.slice(headerRow + 1).filter((row) => {
+      const v = row.cells[col]?.value ?? "";
+      return v.trim() !== "" && v !== REDACTED_VALUE;
+    }).length;
+    if (left > 0) breach(r, `the spec redacts ${columnLabel(r)}, but ${left} cell(s) in it are not ${REDACTED_VALUE}`);
+  }
   for (let col = 0; col < width; col++) {
     const h = headers[col] ?? "";
     if (named.has(h.trim())) continue;

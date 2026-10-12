@@ -25,7 +25,7 @@
 // is a worksheet's name is written as that sheet's blinded name, so a
 // contents sheet keeps pointing at the right sheet.
 
-import type { ColumnRule } from "../schema.ts";
+import { type ColumnRule, REDACTED_VALUE } from "../schema.ts";
 import { type Frame, localName, type MemberResult, readOoxml, rewriteOoxml, rewriteXml, ZipError } from "../formats/ooxml.ts";
 import { accountSegments, replaceAccounts } from "../formats/paths.ts";
 import {
@@ -112,6 +112,8 @@ export interface XlsxPlan {
    * elsewhere in the corpus like a pseudonymised column value. Trimmed, in member and document order.
    */
   wholes: ExtraForm[];
+  /** Set when a `drop` or `redact` column cannot be cleared in this workbook: it is not written, for this reason. */
+  refusal?: string;
 }
 
 const NUMBER = /^(-?)(\d+)(?:\.(\d+))?([Ee][+-]?\d+)?$/;
@@ -143,6 +145,7 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
   const columnValues: ExtraForm[] = [];
   const mapped: ExtraForm[] = [];
   const pending: Pending[] = [];
+  let refusal: string | undefined;
   /** Per shared string, the actions of the cells that use it. */
   const uses: Action[][] = wb.sharedStrings.map(() => []);
 
@@ -190,8 +193,14 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
       };
       // Recurring values: what this column pseudonymises, unless the column is classed vocabulary.
       const recur = action.kind === "pseudo" && rule?.class !== "vocabulary";
+      const removes = action.kind === "drop" || action.kind === "redact";
       data.forEach((c, i) => {
         const text = texts[i] as string;
+        if (removes && isFilled(text) && c.type !== "s" && c.type !== "str" && c.type !== "inlineStr") {
+          // Only text can be emptied or overwritten in place; a number, date or boolean would need its cell retyped.
+          refusal ??= `worksheet ${JSON.stringify(sheet.name)} cell ${c.ref} is not text, so its ${action.kind === "drop" ? "dropped" : "redacted"} column cannot be cleared in place; blind it (treatment "blind") instead`;
+          return;
+        }
         if (!isFilled(text) || c.type === "b" || c.type === "e" || c.type === "d") return;
         // A number cell is renumbered only when a rule (or the class it gives) pseudonymises the
         // column. Under the fail-closed fallback (`stats` set) it is left as written, like free
@@ -205,7 +214,8 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
         if (plan.renumber && !NUMBER.test(text)) {
           throw new XlsxError(`worksheet ${JSON.stringify(sheet.name)} cell ${c.ref}: a number in a form that cannot be renumbered in place`);
         }
-        if (cellAction.kind === "pseudo") {
+        if (removes) column.changed++;
+        else if (cellAction.kind === "pseudo") {
           column.changed++;
           // A number is pseudonymised as an id; only a whole number is found again as written.
           const form: ExtraForm | null = c.type !== "n" ? { cls: cellAction.cls, value: text } : /^\d+$/.test(text) ? { cls: "id", value: text } : null;
@@ -226,11 +236,14 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
     cells.set(sheet.member, plans);
   }
 
-  // One treatment per shared string: a pseudonym if any cell using it gets one, else free text if
-  // any cell treats it so, else kept. Strings no cell uses are orphans: free text all the same.
+  // One treatment per shared string: emptied if any cell using it is dropped, else redacted if any
+  // is, else a pseudonym if any cell gets one, else free text if any cell treats it so, else kept.
+  // Strings no cell uses are orphans: free text all the same.
   const rank = (a: Action): number => (a.kind === "pseudo" ? 0 : a.kind === "keep" ? 2 : 1);
   const strings = uses.map((list): Action | { kind: "orphan" } => {
     if (list.length === 0) return { kind: "orphan" };
+    if (list.some((a) => a.kind === "drop")) return { kind: "drop" };
+    if (list.some((a) => a.kind === "redact")) return { kind: "redact" };
     const pseudo = list.filter((a): a is { kind: "pseudo"; cls: PseudoClass } => a.kind === "pseudo");
     if (pseudo.length > 0) {
       const cls = PSEUDO_CLASSES[Math.min(...pseudo.map((a) => PSEUDO_CLASSES.indexOf(a.cls)))] as PseudoClass;
@@ -238,7 +251,11 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
     }
     return [...list].sort((a, b) => rank(a) - rank(b))[0] as Action;
   });
-  return { wb, cells, strings, columns, sheets, columnValues, mapped, pending, requests: [], hexIds: [], metadata: [], wholes: xlsxWholes(bytes) };
+  const removing = columns.some((c) => c.outcome === "dropped" || c.outcome === "redacted");
+  const cache = removing ? wb.members.find((m) => /^xl\/(?:pivotCache|charts)\//i.test(m.name)) : undefined;
+  // Pivot and chart caches repeat cell values that are not in the map, so nothing would clear them there.
+  if (refusal === undefined && cache !== undefined) refusal = `the workbook drops or redacts a column, but member ${cache.name} caches cell values blind cannot clear`;
+  return { wb, cells, strings, columns, sheets, columnValues, mapped, pending, requests: [], hexIds: [], metadata: [], wholes: xlsxWholes(bytes), ...(refusal === undefined ? {} : { refusal }) };
 }
 
 /**
@@ -494,6 +511,7 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
     };
     const eq = sheetEq(full);
     if (eq !== undefined) return eq === full ? [...runs] : merged(eq);
+    if (action.kind === "drop" || action.kind === "redact") return full.trim() === "" ? [...runs] : merged(action.kind === "drop" ? "" : REDACTED_VALUE);
     if (action.kind === "pseudo") return full.trim() === "" ? [...runs] : merged(pz.pseudonym(action.cls, full));
     const spans = action.kind === "keep" ? env.scanner.kept(full) : env.scanner.free(full);
     if (spans.length === 0) return [...runs];
@@ -537,6 +555,8 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
           const eq = sheetEq(value);
           if (eq !== undefined) return eq;
           if (plan.action.kind === "pseudo") return pz.pseudonym(plan.action.cls, value);
+          if (plan.action.kind === "drop") return "";
+          if (plan.action.kind === "redact") return REDACTED_VALUE;
           return plan.action.kind === "keep" ? kept(value) : free(value);
         }
         case "inlineRun":
@@ -557,7 +577,7 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
           }
           if (action === undefined || runs === undefined) return free(value);
           if (phonetic(ctx.parents)) {
-            if (action.kind === "pseudo") return "";
+            if (action.kind === "pseudo" || action.kind === "drop" || action.kind === "redact") return "";
             return action.kind === "keep" ? kept(value) : free(value);
           }
           if (cache === undefined) {

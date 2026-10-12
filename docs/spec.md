@@ -16,7 +16,7 @@ whether you wrote it, the analyst wrote it, or it came from an earlier run. Vali
 - **Wrong types and out-of-range values are rejected** (a `confidence` of `1.5`, a `class` of
   `"manager"`).
 - Every problem is reported with a path to it, for example
-  `$.columns[2].treatment: must be one of "blind", "keep", "value", got "drop"`.
+  `$.columns[2].treatment: must be one of "blind", "keep", "value", "drop", "redact", got "shred"`.
 - Error messages show at most a short prefix of a rejected value, never the whole thing.
 
 Field names are camelCase. All examples below are synthetic.
@@ -60,9 +60,9 @@ One rule per table column or JSON key path. An array, possibly empty. Each rule:
 | `header` | string | one of `header` / `jsonPath` | Column header text. May be `""` for a blank header. Example: `"Owner"`. |
 | `jsonPath` | string, non-empty | one of `header` / `jsonPath` | Key path, for JSON and JSONL. Example: `"$.items[*].ref_code"`. |
 | `class` | `person` \| `org` \| `host` \| `email` \| `id` \| `location` \| `vocabulary` \| `unknown` | yes | What the values are. `vocabulary` means ordinary words that identify no one. `unknown` means nobody could decide. |
-| `treatment` | `blind` \| `keep` \| `value` | yes | `blind`: replace with a class-prefixed pseudonym (`Person_A7F3`). `keep`: leave unchanged. `value`: replace with a neutral `Value_` pseudonym. |
+| `treatment` | `blind` \| `keep` \| `value` \| `drop` \| `redact` | yes | `blind`: replace with a class-prefixed pseudonym (`Person_A7F3`). `keep`: leave unchanged. `value`: replace with a neutral `Value_` pseudonym. `drop`: remove the column or key from the output. `redact`: write `REDACTED` in place of every non-empty value. Neither `drop` nor `redact` is recorded in the map, so neither can be revealed. The model analyst may not use them: they come from `blind.toml` ([policy.md](policy.md#columns)) or from you. |
 | `confidence` | number, 0 to 1 | yes | How sure the author of the rule was. Example: `0.95`. |
-| `source` | `analyst` \| `human` \| `heuristic` | yes | Who wrote the rule: the model analyst, you, or the built-in heuristics. |
+| `source` | `analyst` \| `human` \| `heuristic` \| `policy` | yes | Who wrote the rule: the model analyst, you, the built-in heuristics, or `blind plan` from a `[[columns]]` rule or `[keep]` term in `blind.toml`. |
 
 A rule sets exactly one of `header` and `jsonPath`; neither, or both, is an error. Two rules for
 the same column (same `file`, `sheet`, and `header` or `jsonPath`) are an error: keep one. A rule
@@ -145,6 +145,13 @@ plan (exit 2) before anything is profiled or sent.
   ask again about a column that already has a question, change a saved entity or flip a pattern
   has that part dropped and listed. A new entity's alias or part that is already a form of a saved
   entity is left out of it and listed. A new question whose id is taken gets the next free `qN`.
+- **Column rules in `blind.toml`.** After the analyst (or the heuristic), every column and key a
+  `[[columns]]` rule matches, or whose header is a `[keep]` term, gets the policy's rule with
+  `source: "policy"` and `confidence: 1` ([policy.md](policy.md#columns)). This runs on every
+  plan, so a rule added to `blind.toml` applies to columns already in the spec, and a policy rule
+  whose `blind.toml` rule is gone goes back to the heuristic rule. A rule with `source: "human"` is
+  never overridden (the plan notes it), and an unanswered question about a column the policy now
+  decides is removed. Each of these is listed in the notes.
 - **Vocabulary that would shield.** A vocabulary entry the analyst proposes (first plan or re-plan) is
   dropped and listed (`kind: "vocabulary"`) when one of its forms equals a value blinded in a profile
   column (its samples), a map value or canonical form, or a person or org entity form or part. A
@@ -225,6 +232,8 @@ and not written (exit 1). Transcripts are found by content, not by name (see
 | `treatment: keep` (any class) | Byte-identical, except that a value blinded elsewhere is replaced (see recurring values below). Cells that contain a spec entity or pattern match are left alone and reported as a warning. |
 | `treatment: blind`, class `person`/`org`/`host`/`email`/`id`/`location` | Every non-empty cell gets that class's pseudonym. |
 | `treatment: blind` with `unknown`/`vocabulary`, or `value` with any other class | Every non-empty cell gets a `Value_` pseudonym. |
+| `treatment: drop` (any class) | CSV/TSV: the column is removed from the header row down (rows above the header, such as a title, are left whole). JSON/JSONL: each member with that key path is removed with its key and one separating comma, so the document stays valid with its layout; a path of record-ID keys (`.*~`) or the root (`$`) cannot be dropped (an error). XLSX: see the workbook rules below. Reported as `dropped`. |
+| `treatment: redact` (any class) | Every non-empty value becomes `REDACTED` (a JSON number becomes the string `"REDACTED"`). Reported as `redacted`. |
 | `class: unknown, treatment: value`, or **no rule at all** | Fail closed. If distinct ratio ≥ 0.5 and (digit ratio ≥ 0.3, or dictionary-word ratio ≤ 0.3, or ≥ 80% of values are Title-Case multi-word), every cell gets a `Value_` pseudonym, reported as `unknown → pseudonymised`. Two kinds of column are exempt: **measures**, where ≥ 80% of values are a date, a time, a decimal or grouped number (`38.6`, `1,250`), a currency amount (`$120.50`, `40.00 EUR`) or a quantity with a unit (`38.6 lb`, `12%`, `5 mg`), and plain integers are not measures; and **small categoricals**, at most 10 distinct values over at least 4, ≥ 75% of values repeating, no codes (digit ratio < 0.3, every value has a letter) and not Title-Case names (`Canine`, `Feline`; `M`, `F`). Otherwise the column is kept (`unknown → kept (low cardinality)`, or `kept (not identifier-like)` for prose, measures and categoricals), but spec entities and patterns are still replaced inside its cells. A rule always wins: give a column a class or `blind` to pseudonymise it anyway. |
 
 A rule that names a column the file does not have is an error, so a stale spec never quietly stops
@@ -404,8 +413,9 @@ was. Each worksheet is a table: the header row is found as above, and rules name
 is an error). The column table above applies to every cell, with these workbook rules:
 
 - **Strings.** Shared strings and inline strings are rewritten. A shared string used by several
-  cells gets one treatment, the strictest: a pseudonym if any cell using it is pseudonymised, else
-  free text, else kept. A shared string no cell uses (an orphan) is rewritten as free text too. In
+  cells gets one treatment, the strictest: emptied if any cell using it is in a `drop` column, else
+  `REDACTED` if any is in a `redact` column, else a pseudonym if any cell using it is
+  pseudonymised, else free text, else kept. A shared string no cell uses (an orphan) is rewritten as free text too. In
   rich text, a pseudonym, or a match that spans formatting runs, is written into the first non-empty
   run and the other runs are emptied; otherwise each run keeps its formatting.
 - **Numbers.** A number cell cannot hold text, so a number cell in a column a rule pseudonymises
@@ -418,6 +428,12 @@ is an error). The column table above applies to every cell, with these workbook 
   pseudonymised; give it a rule to blind or keep it. A number cell whose whole value is a spec
   value is renumbered wherever it is.
   Booleans, errors and dates are never changed.
+- **Drop and redact.** Columns are never removed from a worksheet, so formulas, merged cells and
+  references stay valid: a `drop` column's data cells are emptied in place and its header stays; a
+  `redact` column's data cells become `REDACTED`. Only text cells can be cleared this way, so a
+  number, date or boolean in such a column, or a pivot or chart cache in the workbook (it repeats
+  cell values that nothing would clear), means the workbook is not written (exit 1, listed with
+  the reason). Blind such a column instead.
 - **Sheet and defined names.** Worksheet names, defined names and table names are rewritten through
   the same name hook as file names. Blinded worksheet names must stay distinct ignoring case, and
   every blinded name must keep the spreadsheet's naming rules; otherwise apply refuses (exit 2,
@@ -524,7 +540,8 @@ the same code as the commands themselves.
   variant comes back as that recorded form, and a number that apply had to write as a JSON string
   stays a string. A pseudonym is matched as a whole token (not beside a letter or digit, not
   inside a longer dotted name; `_` separates tokens, as in blinded file names), longest first.
-  Text that happens to equal a pseudonym is restored too.
+  Text that happens to equal a pseudonym is restored too. Dropped and redacted columns are not in
+  the map: they stay as apply left them (absent, or `REDACTED`).
 - **Formats.** CSV/TSV cell by cell (a restored value that needs quoting is quoted), JSON and JSONL
   string by string (spliced in, the rest of the text unchanged), and text (`.txt`, `.md`, `.log`, and the
   `.vtt` and `.srt` transcripts, read as text), with the file's encoding kept. XLSX and DOCX are restored at the zip and XML level in exactly the
@@ -599,10 +616,12 @@ up to three layers, mechanical, semantic, then model; the report lists the layer
   original one without the salt.
 - **Kept hosts.** A host name under a domain in the `blind.toml` keep list is not reported: the
   engine keeps it because the policy says to. An invalid `blind.toml` stops the audit (exit 3).
-- **`leak`**: a whole-word survivor in the case the engine would have replaced.
+- **`leak`**: a whole-word survivor in the case the engine would have replaced; in a CSV/TSV
+  output, a column the spec drops that is still there, or a column the spec redacts with a cell
+  that is neither empty nor `REDACTED`.
 - **`candidate`**: a case, accent or width variant; a value inside a longer word (4 characters or
   more); a value under 3 characters; a host label or email local part of a blinded value; a column
-  the spec declares `unknown`; a CSV/TSV column with no spec rule; an unanswered spec question; and
+  the spec declares `unknown` (unless it is dropped or redacted, which is a decision); a CSV/TSV column with no spec rule; an unanswered spec question; and
   anything the audit could not read in full (undecodable or encrypted archive members, binary
   content, images, symbolic links, unreadable files).
 

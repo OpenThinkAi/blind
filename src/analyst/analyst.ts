@@ -46,6 +46,10 @@ export function checkProposal(spec: Spec, profile: Profile): SchemaIssue[] {
   spec.columns.forEach((c, i) => {
     if (!known.has(locationKey(c))) issues.push({ path: `$.columns[${i}]`, message: `${where(c)} is not a column or key in the profile` });
     if (c.source !== "analyst") issues.push({ path: `$.columns[${i}].source`, message: `must be "analyst", got ${JSON.stringify(c.source)}` });
+    // Removing or overwriting data outright is the policy's or the human's call, never the analyst's.
+    if (c.treatment === "drop" || c.treatment === "redact") {
+      issues.push({ path: `$.columns[${i}].treatment`, message: `must be "blind", "keep" or "value"; only blind.toml or a human may drop or redact a column` });
+    }
   });
   const asked = new Map<string, number>();
   spec.questions.forEach((q, i) => {

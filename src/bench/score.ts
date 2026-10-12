@@ -21,7 +21,7 @@ import type { FileReport } from "../engine/apply.ts";
 import { CsvError, parseCsv } from "../engine/csv.ts";
 import { DocxError, docxParagraphs, planDocx } from "../engine/docx.ts";
 import { decode, EncodingError } from "../engine/encoding.ts";
-import { JsonError, type JsonToken, scanJson, scanJsonl } from "../engine/json.ts";
+import { JsonError, type JsonToken, jsonCuts, scanJson, scanJsonl } from "../engine/json.ts";
 import { ZipError as OoxmlZipError } from "../formats/ooxml.ts";
 import { readWorkbook, sheetRows, XlsxError, type XlsxWorkbook } from "../formats/xlsx.ts";
 
@@ -226,7 +226,9 @@ export interface ScoredFile {
   output: Uint8Array;
 }
 
-const ALLOWED: ReadonlySet<string> = new Set(["blind", "value"]);
+// `drop` and `redact` columns change by design; a dropped CSV/TSV column or JSON key is taken out
+// of the input before the shapes are compared.
+const ALLOWED: ReadonlySet<string> = new Set(["blind", "value", "drop", "redact"]);
 
 function cellDamage(f: ScoredFile, before: string, after: string, matcher: OracleMatcher, items: DamageItem[], unscored: UnscoredItem[]): void {
   const { report } = f;
@@ -246,7 +248,11 @@ function cellDamage(f: ScoredFile, before: string, after: string, matcher: Oracl
     return;
   }
   const headerRow = report.headerRow ?? 1;
-  const allowed = new Set(report.columns.filter((c) => c.treatment !== null && ALLOWED.has(c.treatment)).map((c) => c.index));
+  const dropped = new Set(report.columns.filter((c) => c.outcome === "dropped").map((c) => c.index));
+  // The engine removes a dropped column from the header row down; compare against the input without it.
+  if (dropped.size > 0) b = b.map((row, r) => (r >= headerRow - 1 ? row.filter((_, c) => !dropped.has(c)) : row));
+  const kept = (c: { index: number }) => [...dropped].filter((d) => d < c.index).length;
+  const allowed = new Set(report.columns.filter((c) => c.treatment !== null && ALLOWED.has(c.treatment) && !dropped.has(c.index)).map((c) => c.index - kept(c)));
   b.forEach((row, r) => {
     const out = a[r] as string[];
     if (out.length !== row.length) {
@@ -354,11 +360,17 @@ function jsonDamage(f: ScoredFile, before: string, after: string, matcher: Oracl
     unscored.push({ file: report.path, part: "", reason: `cannot be parsed as ${report.format} (${e.message}); its keys and values were not compared` });
     return;
   }
+  const allowed = allowedPaths(report);
+  const dropped = new Set(report.columns.filter((c) => c.outcome === "dropped" && c.jsonPath !== undefined).map((c) => c.jsonPath as string));
+  if (dropped.size > 0) {
+    // The engine cuts a dropped key path's members; compare against the input without them.
+    const cut = jsonCuts(before, b, b.flatMap((t, i) => (t.column !== null && dropped.has(t.column) ? [i] : []))).tokens;
+    b = b.filter((_, i) => !cut.has(i));
+  }
   if (a.length !== b.length) {
     items.push({ kind: "structure", file: report.path, where: "tokens", masked: "", detail: `${b.length} keys and values in, ${a.length} out` });
     return;
   }
-  const allowed = allowedPaths(report);
   const nth = new Map<string, number>();
   b.forEach((t, i) => {
     const o = a[i] as JsonToken;

@@ -123,6 +123,8 @@ const OUTCOME_TEXT: Record<FileReport["columns"][number]["outcome"], string> = {
   blinded: "blinded",
   value: "replaced with Value_ pseudonyms",
   kept: "kept",
+  dropped: "dropped",
+  redacted: "redacted",
   "unknown-pseudonymised": "pseudonymised",
   "unknown-kept-low-cardinality": "kept (low cardinality)",
   "unknown-kept-not-identifier-like": "kept (not identifier-like: prose, measures or a small repeating set)",

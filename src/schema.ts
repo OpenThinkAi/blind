@@ -6,8 +6,17 @@
 export type EntityClassName =
   | "person" | "org" | "host" | "email" | "id" | "location" | "vocabulary" | "unknown";
 
-export type Treatment = "blind" | "keep" | "value";
+/**
+ * `drop` removes the column (or JSON key) from the output; `redact` writes REDACTED_VALUE in every
+ * non-empty cell. Neither is recorded in the map, so neither can be revealed.
+ */
+export type Treatment = "blind" | "keep" | "value" | "drop" | "redact";
 export type Source = "analyst" | "human" | "heuristic";
+/** A column rule's author: `policy` for a rule `blind plan` wrote from blind.toml (`[[columns]]` or `[keep].terms`). */
+export type ColumnSource = Source | "policy";
+
+/** What a `redact` treatment writes in place of each non-empty value. */
+export const REDACTED_VALUE = "REDACTED";
 export type PatternName = "ip" | "email" | "host" | "guid" | "mac";
 
 /** Where a value lives: a table column (`header`, optionally on a `sheet`) or a JSON key path. */
@@ -20,7 +29,7 @@ export type ColumnRule = Location & {
   treatment: Treatment;
   /** 0..1 */
   confidence: number;
-  source: Source;
+  source: ColumnSource;
 };
 
 export interface Entity {

@@ -64,6 +64,17 @@ describe("blind apply", () => {
     expect(r.out).toContain("sub/notes.md (text, utf8)");
   });
 
+  test("a cp1252 text file is blinded, never written through raw (AGT-1816)", async () => {
+    const spec = { ...SPEC, entities: { person: [{ canonical: "\u00d3scar Example", aliases: [], parts: ["\u00d3scar"] }] } };
+    writeFileSync(join(dir, ".blind", "spec.json"), JSON.stringify(spec));
+    writeFileSync(join(dir, "in", "cp.txt"), Buffer.from("Call \xd3scar Example back.\n", "latin1"));
+    const r = await apply("in", "-o", "out");
+    expect(r.code).toBe(0);
+    const out = readFileSync(join(dir, "out", "cp.txt")).toString("latin1");
+    expect(out).not.toContain("\xd3scar");
+    expect(out).toMatch(/^Call Person_[0-9A-F]{4} back\.\n$/);
+  });
+
   test("a symbolic link already inside the output tree is never written through; nothing is written", async () => {
     mkdirSync(join(dir, "elsewhere"));
     mkdirSync(join(dir, "out"));

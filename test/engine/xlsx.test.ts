@@ -314,6 +314,8 @@ describe("XLSX apply: fail closed", () => {
         name, outputs: 0, reason: `embedded file ${name} cannot be blinded inside an XLSX; not written`,
       });
     }
+    const thumb = run(buildWorkbook({ extra: [{ name: "docProps/thumbnail.wmf", data: new Uint8Array([1, 2]) }] }));
+    expect(thumb.skipped[0]?.reason).toBe("docProps/thumbnail.wmf is a picture of the original document and cannot be blinded; save the file without a thumbnail; not written");
     const ok = run(buildWorkbook({ extra: [{ name: "xl/media/image1.png", data: new Uint8Array([0x89, 0x50]) }] }));
     expect(ok.skipped).toEqual([]);
     expect(ok.files[0]?.unread).toEqual(["xl/media/image1.png"]);

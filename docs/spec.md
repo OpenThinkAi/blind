@@ -293,7 +293,8 @@ rewritten at the XML level, so everything not blinded is copied byte for byte:
 - Office's own linking IDs are rewritten wherever they are (see **Office structural IDs** below).
 - Images are copied unchanged and listed as a warning. A package that cannot be read, has a part
   this handler does not know that holds text, or embeds another file (an OLE object, a chart's
-  workbook, macros) is listed and not written (exit 1).
+  workbook, macros) is listed and not written (exit 1). So is one with a saved thumbnail
+  (`docProps/thumbnail.*`), a picture of the original first page.
 
 <a id="transcripts-in-apply"></a>**Transcripts.** A file is a transcript by its content:
 
@@ -380,7 +381,8 @@ is an error). The column table above applies to every cell, with these workbook 
   does a member that cannot be parsed, a cell without a reference, and a zip that is not a workbook.
   Members that are not XML are copied unread and listed in the report when they are images, fonts
   or printer settings; any other (an embedded file or workbook, a macro, an ActiveX part) stops the
-  workbook (listed and not written, exit 1), as in a DOCX.
+  workbook (listed and not written, exit 1), as in a DOCX. So does a saved thumbnail
+  (`docProps/thumbnail.*`), a picture of the original sheet.
 
 **Office structural IDs.** Word and Excel write IDs of their own into a package. They name no
 person, but two kinds are treated differently:

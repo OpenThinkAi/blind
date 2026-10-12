@@ -290,6 +290,9 @@ function hasCharacterData(xml: string): boolean {
 /** Package members copied unchanged and reported: images (never blinded) and embedded fonts. Any other non-XML member stops the package. */
 export const IMAGE = /\.(png|jpe?g|gif|bmp|tiff?|emf|wmf|svg|ico|webp)$/i;
 export const FONT = /\.(odttf|ttf|otf|fntdata)$/i;
+/** The package thumbnail Word and Excel can save: a picture of the original first page or sheet, so never copied. */
+export const THUMBNAIL = /^docProps\/thumbnail\.[^/]+$/i;
+export const thumbnailReason = (name: string): string => `${name} is a picture of the original document and cannot be blinded; save the file without a thumbnail`;
 
 /**
  * Read the package and collect its text units. Throws DocxError when the package
@@ -308,6 +311,7 @@ export function planDocx(bytes: Uint8Array): DocxPlan {
   const images: string[] = [];
   for (const m of members) {
     if (m.kind !== "other" || m.name.endsWith("/")) continue;
+    if (THUMBNAIL.test(m.name)) throw new DocxError(thumbnailReason(m.name));
     if (IMAGE.test(m.name)) images.push(m.name);
     else if (!FONT.test(m.name)) throw new DocxError(`embedded file ${m.name} cannot be blinded inside a DOCX`);
   }

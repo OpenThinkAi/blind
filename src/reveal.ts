@@ -15,6 +15,7 @@ import { MAP_FILE } from "./apply.ts";
 import { type BlindMap, MapError, readMap } from "./engine/map.ts";
 import { RevealError, revealFile, Revealer } from "./engine/reveal.ts";
 import { BLIND_DIR } from "./init.ts";
+import { oneLine, terminalStream } from "./terminal.ts";
 
 export const REVEALED_DIR = "revealed";
 
@@ -217,9 +218,9 @@ export async function runReveal(argv: string[], io: RevealIO): Promise<number> {
 
     // Revealed names are original values: the report names files by their blinded paths only.
     for (const o of outputs) {
-      io.out.write(`${o.from}: ${o.restored} pseudonym${o.restored === 1 ? "" : "s"} restored${o.renamed ? " (name restored too)" : ""}\n`);
+      io.out.write(`${oneLine(o.from)}: ${o.restored} pseudonym${o.restored === 1 ? "" : "s"} restored${o.renamed ? " (name restored too)" : ""}\n`);
     }
-    for (const s of skipped) io.err.write(`blind reveal: ${s.path}: ${s.reason}\n`);
+    for (const s of skipped) io.err.write(`blind reveal: ${oneLine(s.path)}: ${oneLine(s.reason)}\n`);
     io.out.write(
       `wrote ${outputs.length} revealed file${outputs.length === 1 ? "" : "s"} to ${toPosix(outName)} (mode 0600; they hold the original values, keep them secret)\n`,
     );
@@ -238,5 +239,5 @@ export async function runReveal(argv: string[], io: RevealIO): Promise<number> {
 }
 
 export function processRevealIO(): RevealIO {
-  return { out: process.stdout, err: process.stderr, cwd: process.cwd() };
+  return { out: terminalStream(process.stdout), err: terminalStream(process.stderr), cwd: process.cwd() };
 }

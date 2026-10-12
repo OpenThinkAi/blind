@@ -33,6 +33,7 @@ import {
   type ReportFinding,
 } from "./fromaudit.ts";
 import { type Dropped, freshDiff, isEmptyPart, mergeProposal, type PlanDiff, seenAfter, unseenPart } from "./merge.ts";
+import { terminalStream, terminalText } from "../terminal.ts";
 
 export interface PlanIO {
   out: NodeJS.WritableStream;
@@ -481,13 +482,13 @@ async function fromAudit(reportPath: string, out: string, values: { accept?: str
 }
 
 export function processPlanIO(): PlanIO {
-  const io: PlanIO = { out: process.stdout, err: process.stderr, cwd: process.cwd() };
+  const io: PlanIO = { out: terminalStream(process.stdout), err: terminalStream(process.stderr), cwd: process.cwd() };
   if (process.stdin.isTTY) {
     io.prompt = async (question) => {
       const { createInterface } = await import("node:readline/promises");
       const rl = createInterface({ input: process.stdin, output: process.stdout });
       try {
-        return await rl.question(question);
+        return await rl.question(terminalText(question));
       } catch {
         return null;
       } finally {

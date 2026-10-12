@@ -35,6 +35,7 @@ import {
   scoreHonesty,
   type UnscoredItem,
 } from "./score.ts";
+import { oneLine, terminalStream } from "../terminal.ts";
 
 export const KIT_INPUT = "input";
 export const KIT_ORACLE = "oracle.json";
@@ -136,7 +137,7 @@ const indent = (s: string): string => s.trimEnd().split("\n").map((l) => `  ${l}
 function table(i: { kind: string; where: string; class: string; masked: string; detail: string }[]): string[] {
   if (i.length === 0) return [];
   const head = ["KIND", "WHERE", "CLASS", "VALUE", "DETAIL"];
-  const cells = i.map((x) => [x.kind, x.where, x.class, x.masked === "" ? "-" : x.masked, x.detail]);
+  const cells = i.map((x) => [x.kind, x.where, x.class, x.masked === "" ? "-" : x.masked, x.detail].map(oneLine));
   const width = head.map((h, k) => Math.max(h.length, ...cells.map((c) => (c[k] as string).length)));
   const fmt = (c: string[]) => c.map((x, k) => (k === c.length - 1 ? x : x.padEnd(width[k] as number))).join("  ");
   return [fmt(head), ...cells.map(fmt), ""];
@@ -296,5 +297,5 @@ export async function runBench(argv: string[], io: BenchIO): Promise<number> {
 }
 
 export function processBenchIO(): BenchIO {
-  return { out: process.stdout, err: process.stderr, cwd: process.cwd() };
+  return { out: terminalStream(process.stdout), err: terminalStream(process.stderr), cwd: process.cwd() };
 }

@@ -14,6 +14,7 @@ import { BLIND_DIR, SALT_FILE } from "./init.ts";
 import { loadKeepTerms, POLICY_FILE, PolicyError } from "./policy.ts";
 import type { Spec } from "./schema.ts";
 import { parseSpec, SchemaError } from "./validate.ts";
+import { oneLine, terminalStream } from "./terminal.ts";
 
 export const SPEC_FILE = "spec.json";
 export const MAP_FILE = "map.json";
@@ -135,8 +136,8 @@ export function renderReport(result: ApplyResult): string {
     const head: string[] = f.encoding === undefined ? [f.format] : [f.format, f.encoding];
     if (f.delimiter !== undefined) head.push(`${DELIMITER_NAMES[f.delimiter] ?? "other"}-delimited`);
     if (f.headerRow !== undefined) head.push(f.noHeader ? "no header row found, row 1 used" : `header row ${f.headerRow}`);
-    lines.push(`${f.path} (${head.join(", ")})${f.changed ? "" : ": unchanged"}`);
-    if (f.outputPath !== f.path) lines.push(`  written as ${f.outputPath}`);
+    lines.push(`${oneLine(f.path)} (${head.join(", ")})${f.changed ? "" : ": unchanged"}`);
+    if (f.outputPath !== f.path) lines.push(`  written as ${oneLine(f.outputPath)}`);
     let sheet: string | undefined;
     for (const s of f.sheets ?? []) {
       if (s.outputName !== s.name) lines.push(`  sheet ${JSON.stringify(s.name)} renamed ${JSON.stringify(s.outputName)}`);
@@ -278,10 +279,10 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
     }
 
     io.out.write(renderReport(result));
-    for (const i of collected.ignored) io.out.write(`ignored ${i.path}: ${i.reason}\n`);
+    for (const i of collected.ignored) io.out.write(`ignored ${oneLine(i.path)}: ${oneLine(i.reason)}\n`);
     const skipped = [...collected.skipped, ...result.skipped];
     io.onResult?.(result, skipped);
-    for (const s of skipped) io.err.write(`blind apply: ${s.path}: ${s.reason}\n`);
+    for (const s of skipped) io.err.write(`blind apply: ${oneLine(s.path)}: ${oneLine(s.reason)}\n`);
     io.out.write(
       `wrote ${result.outputs.length} file${result.outputs.length === 1 ? "" : "s"} to ${toPosix(relative(io.cwd, outDir)) || "."}; map: ${toPosix(relative(io.cwd, mapPath))} (mode 0600; keep it secret)\n`,
     );
@@ -300,5 +301,5 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
 }
 
 export function processApplyIO(): ApplyIO {
-  return { out: process.stdout, err: process.stderr, cwd: process.cwd() };
+  return { out: terminalStream(process.stdout), err: terminalStream(process.stderr), cwd: process.cwd() };
 }

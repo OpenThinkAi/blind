@@ -18,6 +18,7 @@ import { parseSpec, SchemaError } from "../validate.ts";
 import { addModelLayer } from "./auditor.ts";
 import { addSemanticLayer } from "./semantic.ts";
 import { type AuditReport, auditTree, type Finding, type Status, type TreeEntry } from "./mechanical.ts";
+import { oneLine, terminalStream } from "../terminal.ts";
 
 export interface AuditIO {
   out: NodeJS.WritableStream;
@@ -159,7 +160,7 @@ export function renderTable(r: AuditReport): string {
   const rows = [...r.files.flatMap((f) => f.findings), ...r.general];
   const lines: string[] = [];
   if (rows.length > 0) {
-    const cells = rows.map((f) => [f.severity, where(f), f.class, f.masked === "" ? "-" : f.masked, f.reason]);
+    const cells = rows.map((f) => [f.severity, where(f), f.class, f.masked === "" ? "-" : f.masked, f.reason].map(oneLine));
     const head = ["SEVERITY", "WHERE", "CLASS", "VALUE", "REASON"];
     const width = head.map((h, i) => Math.max(h.length, ...cells.map((c) => (c[i] as string).length)));
     const fmt = (c: string[]) => c.map((x, i) => (i === c.length - 1 ? x : x.padEnd(width[i] as number))).join("  ");
@@ -167,7 +168,7 @@ export function renderTable(r: AuditReport): string {
   }
   for (const f of r.files) {
     if (f.kind === "dir") continue;
-    lines.push(`${f.status.padEnd(10)}  ${f.path}`);
+    lines.push(`${f.status.padEnd(10)}  ${oneLine(f.path)}`);
   }
   if (r.model !== undefined) lines.push("", ...modelLines(r.model));
   const layers = layersLine(r);
@@ -203,7 +204,7 @@ function modelLines(m: NonNullable<AuditReport["model"]>): string[] {
   const what = m.sent === "text" ? `the output's text in ${m.chunks} chunk${m.chunks === 1 ? "" : "s"}` : "the output's profile only";
   const out = [`model layer: ${m.backend} · ${name} · ${m.mode}; sent ${what}; ${m.answered} of ${m.chunks} answered`];
   if (m.config === "analyst") out.push("model layer: [models.auditor] is not set, so the analyst's backend was used with the auditor's prompt");
-  for (const n of m.notSent) out.push(`model layer: not sent: ${n.part === "" ? n.file : `${n.file}!${n.part}`} (${n.reason})`);
+  for (const n of m.notSent) out.push(oneLine(`model layer: not sent: ${n.part === "" ? n.file : `${n.file}!${n.part}`} (${n.reason})`));
   return out;
 }
 
@@ -284,5 +285,5 @@ export async function runAudit(argv: string[], io: AuditIO): Promise<number> {
 }
 
 export function processAuditIO(): AuditIO {
-  return { out: process.stdout, err: process.stderr, cwd: process.cwd() };
+  return { out: terminalStream(process.stdout), err: terminalStream(process.stderr), cwd: process.cwd() };
 }

@@ -230,6 +230,16 @@ export function renderReport(result: ApplyResult): string {
       `${result.commonNameParts} name part${result.commonNameParts === 1 ? "" : "s"} not recurred (common words: dictionary, field-label, role or kept words); the whole names still recur`,
     );
   }
+  const sh = result.shield;
+  if (sh.spans > 0) {
+    lines.push(`${sh.shielding} kept value${sh.shielding === 1 ? "" : "s"} shielded ${sh.spans} span${sh.spans === 1 ? "" : "s"} elsewhere (kept as written)`);
+  }
+  if (sh.placeholderSpans > 0) {
+    lines.push(`${sh.placeholderSpans} textbook placeholder${sh.placeholderSpans === 1 ? "" : "s"} (John Doe, 123 Main St, 999-9999, user@example.com) kept as written; [keep] placeholders = false blinds them`);
+  }
+  if (sh.conflicts > 0) {
+    lines.push(`${sh.conflicts} kept value${sh.conflicts === 1 ? "" : "s"} not shielded elsewhere: an explicit rule or spec entity also blinds ${sh.conflicts === 1 ? "it" : "them"}`);
+  }
   const shared = result.sharedNameParts;
   if (shared.length > 0) {
     lines.push(
@@ -302,7 +312,7 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
       if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw new Refusal(`${mapPath}: cannot read the map`);
     }
 
-    const result = applySpec(files, spec, { salt, map, keep, ...(policy === null || policy === undefined ? {} : { context: policy.context, columns: policy.defaults.columns }) });
+    const result = applySpec(files, spec, { salt, map, keep, placeholders: policy?.keep.placeholders ?? true, ...(policy === null || policy === undefined ? {} : { context: policy.context, columns: policy.defaults.columns }) });
 
     // Never write through a symbolic link already inside the output tree: it could lead outside it.
     // (The output directory itself is the user's to name, link or not.) Checked before anything is written.

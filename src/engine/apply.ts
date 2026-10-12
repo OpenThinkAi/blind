@@ -56,6 +56,7 @@
 
 import { type ColumnRule, type EntityClassName, REDACTED_VALUE, type Spec, type Treatment } from "../schema.ts";
 import { newSecretCarry } from "./secret.ts";
+import { Shield, type ShieldReport } from "./shield.ts";
 import type { PseudoClass } from "./canonical.ts";
 // The profiler's header rule: spec rules name columns by the headers the profile reported.
 import { detectHeaderRow } from "../profile/table.ts";
@@ -232,6 +233,8 @@ export interface ApplyResult {
    * AGT-1852). Their whole names still recur.
    */
   commonNameParts: number;
+  /** What the kept values and the built-in placeholders shielded in this run (shield.ts, AGT-1853). */
+  shield: ShieldReport;
 }
 
 export interface ApplyOptions {
@@ -247,6 +250,8 @@ export interface ApplyOptions {
   context?: { enabled: boolean; triggers: readonly ContextTriggerSpec[] };
   /** What a column with no rule (or an unknown/value rule) gets: `fallback` (the default) or `scan`. */
   columns?: ColumnDefault;
+  /** The built-in placeholder allowlist (John Doe, 123 Main St, 999-9999, user@example.com) is kept as written unless false. */
+  placeholders?: boolean;
 }
 
 /** The spec does not fit the inputs (a rule names a column that is not there, or a shape this engine cannot apply). */
@@ -718,14 +723,15 @@ function textSpeakers(spans: readonly Span[], t: TranscriptPlan | undefined, kep
 
 const keptHostCount = (spans: readonly Span[]): number => spans.filter((s) => s.cls === null && s.source === "pattern").length;
 
-/** Trimmed text of every cell under `keep`, `scan` or the `scan` default, across the corpus. */
-function heldValues(plans: readonly Plan[]): Set<string> {
+/** Trimmed text of every cell under `keep`, `scan` or the `scan` default, across the corpus (`keepOnly`: under `keep` alone). */
+function heldValues(plans: readonly Plan[], keepOnly = false): Set<string> {
   const out = new Set<string>();
+  const held = (outcome: ColumnOutcome): boolean => (keepOnly ? outcome === "kept" : holdsWhole(outcome));
   for (const p of plans) {
     if (p.kind === "xlsx") {
-      for (const c of p.plan.pending) if (holdsWhole(c.column.outcome)) out.add(c.text.trim());
+      for (const c of p.plan.pending) if (held(c.column.outcome)) out.add(c.text.trim());
     } else if (p.kind === "table" || p.kind === "json") {
-      for (const q of p.pending) if (q.column !== null && holdsWhole(q.column.outcome)) out.add(q.value.trim());
+      for (const q of p.pending) if (q.column !== null && held(q.column.outcome)) out.add(q.value.trim());
     }
   }
   return out;
@@ -1001,8 +1007,18 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   const prose = [...proseForms(prosePeople, [...people, ...voiceNames], vocabularySet, keepSet, aliases), ...titledForms].filter(
     (f) => !claimed.has(`${f.cls}\0${f.form ?? f.value}`),
   );
+  // One rule, two halves: keptWords (above, AGT-1852) stops a word of a kept value from becoming a
+  // name part; this shield stops pattern, entity and prose spans inside a kept value or placeholder.
+  // Every distinct value of a `keep` column shields the same text everywhere (shield.ts), unless an
+  // explicit rule also pseudonymises, drops or redacts it, or a spec entity names it.
+  const explicit = [
+    ...mapped.map((f) => f.value),
+    ...columnValues.map((f) => f.value),
+    ...Object.values(spec.entities).flatMap((list) => (list ?? []).flatMap((e) => [e.canonical, ...e.aliases])),
+  ];
+  const keptShield = new Shield(heldValues(plans, true), explicit, opts.placeholders !== false);
   const nameMatcher = new EntityMatcher(spec.entities, [...columnValues, ...voices, ...parts, ...prose]);
-  const names = new NameRewriter(nameMatcher, spec.patterns, keep, { vocabulary: vocabularySet, keep: keepSet });
+  const names = new NameRewriter(nameMatcher, spec.patterns, keep, { vocabulary: vocabularySet, keep: keepSet }, keptShield);
   for (const p of plans) names.planPath(p.input.path);
 
   // Every column is decided: scan the rest of the text for patterns, entities and the values the
@@ -1012,7 +1028,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   const scanForms = [...forms.filter((f) => !voiced.has(`${f.cls}\0${f.form ?? f.value}`)), ...voices, ...prose].sort(
     (a, b) => cmp(a.cls, b.cls) || cmp(a.form ?? a.value, b.form ?? b.value) || cmp(a.value, b.value),
   );
-  const scanner = new TextScanner(spec.entities, spec.patterns, keep, scanForms, contextOf(opts), { keep: keepSet, vocabulary: vocabularySet });
+  const scanner = new TextScanner(spec.entities, spec.patterns, keep, scanForms, contextOf(opts), { keep: keepSet, vocabulary: vocabularySet }, keptShield);
   for (const p of plans) {
     // One secret-boost carry per document: its turns and paragraphs are scanned in order (secret.ts).
     const carry = newSecretCarry();
@@ -1028,7 +1044,8 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   const xlsxEnv: Env = { scanner, names };
   const unhandled = new EntityMatcher(spec.entities, forms);
   // Spec values and every pattern shape, for the parts nothing rewrites.
-  const unrewritten = unrewrittenSpans((s) => unhandled.find(s, []), keep);
+  const unrewrittenAll = unrewrittenSpans((s) => unhandled.find(s, []), keep);
+  const unrewritten = (s: string): Span[] => keptShield.filter(s, unrewrittenAll(s), false);
   for (let i = plans.length - 1; i >= 0; i--) {
     const p = plans[i] as Plan;
     if (p.kind !== "docx") continue;
@@ -1321,5 +1338,5 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     .filter((p) => p.shared && p.exclusion === null && requests.has(`person\0${p.value}`))
     .map((p) => pz.pseudonym("person", p.value))
     .sort(cmp);
-  return { outputs, files, skipped, map: pz.toMap(), mapEntriesDropped: mapDropped, sharedNameParts: [...new Set(sharedNameParts)], commonNameParts };
+  return { outputs, files, skipped, map: pz.toMap(), mapEntriesDropped: mapDropped, sharedNameParts: [...new Set(sharedNameParts)], commonNameParts, shield: keptShield.report() };
 }

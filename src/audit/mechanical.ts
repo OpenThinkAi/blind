@@ -51,6 +51,7 @@ import { findPatternSpans, keepDomains, secretSpans, type Span } from "../engine
 import { nameShaped, recurrenceExclusion, vocabularyForms } from "../engine/recur.ts";
 import { isLabelWord } from "../engine/labels.ts";
 import { keptCells } from "./keptcells.ts";
+import { Shield } from "../engine/shield.ts";
 import { detectHeaderRow } from "../profile/table.ts";
 import { DICTIONARY } from "../engine/words.ts";
 import { fold, foldWithMap, stringView, type View, viewsOf, xmlBaseView } from "./views.ts";
@@ -363,6 +364,8 @@ interface Context {
   keepTerms: ReadonlySet<string>;
   /** The spec's patterns less `secret`, which is read in document text only (secretHits), never in every view. */
   shapes: Patterns;
+  /** The values the output keeps whole in `keep` columns, and the placeholders: text the engine leaves as written wherever it stands (shield.ts). */
+  shield: Shield;
 }
 
 // The same shapes unanchored, for "is this pattern match made only of pseudonyms?": a blinded name
@@ -422,6 +425,7 @@ function scanView(view: View, ctx: Context, isName: boolean): Hit[] {
   }
   // Sorted by start, with the furthest end so far: a range is masked when some mask starting at or
   // before it ends at or after it.
+  for (const o of ctx.shield.occurrences(text)) masks.push([o.start, o.end]);
   masks.sort((x, y) => x[0] - y[0]);
   const reach: number[] = [];
   for (const [k, m] of masks.entries()) reach.push(Math.max(m[1], reach[k - 1] ?? -1));
@@ -937,6 +941,29 @@ function keptByRule(sink: PartSink, bytes: Uint8Array, rules: readonly ColumnRul
   });
 }
 
+/**
+ * The shield the engine used, read back from the output: every value held whole in a CSV/TSV `keep`
+ * column, less those the map or a spec entity also blinds, and the built-in placeholders.
+ */
+function shieldOf(entries: readonly TreeEntry[], spec: Spec, map: BlindMap, rulesByFile: ReadonlyMap<string, readonly ColumnRule[]>, placeholders: boolean): Shield {
+  const kept: string[] = [];
+  for (const entry of entries) {
+    const rules = rulesByFile.get(entry.path);
+    const format = tableFormat(entry.path);
+    if (entry.kind !== "file" || format === null || rules === undefined || !rules.some((r) => r.treatment === "keep")) continue;
+    try {
+      for (const c of keptCells(decode(entry.bytes).text, format === "tsv", rules)) kept.push(c.value);
+    } catch (e) {
+      if (!(e instanceof EncodingError)) throw e;
+    }
+  }
+  const explicit = [
+    ...map.entries.map((e) => e.value),
+    ...Object.values(spec.entities).flatMap((list) => (list ?? []).flatMap((e) => [e.canonical, ...e.aliases])),
+  ];
+  return new Shield(kept, explicit, placeholders);
+}
+
 const lastSegment = (p: string): number => p.lastIndexOf("/") + 1;
 
 export function statusOf(findings: readonly Finding[]): Status {
@@ -997,10 +1024,18 @@ export function addLayer(
 }
 
 /** Audit an output tree (every entry under it, paths relative to its root) against the spec and map. */
-export function auditTree(entries: readonly TreeEntry[], spec: Spec, map: BlindMap, keep: readonly string[] = []): AuditReport {
-  const ctx: Context = { spec, map, index: new NeedleIndex(buildNeedles(spec, map, keep)), keep: keepDomains(keep), keepTerms: new Set(keep.map(fold)), shapes: { ...spec.patterns, secret: false } };
+export function auditTree(entries: readonly TreeEntry[], spec: Spec, map: BlindMap, keep: readonly string[] = [], placeholders = true): AuditReport {
   const rulesByFile = new Map<string, ColumnRule[]>();
   for (const r of spec.columns) rulesByFile.set(r.file, [...(rulesByFile.get(r.file) ?? []), r]);
+  const ctx: Context = {
+    spec,
+    map,
+    index: new NeedleIndex(buildNeedles(spec, map, keep)),
+    keep: keepDomains(keep),
+    keepTerms: new Set(keep.map(fold)),
+    shapes: { ...spec.patterns, secret: false },
+    shield: shieldOf(entries, spec, map, rulesByFile, placeholders),
+  };
 
   const files: FileAudit[] = [];
   for (const entry of [...entries].sort((a, b) => cmp(a.path, b.path))) {

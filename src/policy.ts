@@ -74,7 +74,11 @@ export interface ColumnPolicyRule {
 
 export interface Policy {
   sensitive: { classes: SensitiveClass[]; description: string; examples: string[] };
-  keep: { terms: string[] };
+  keep: {
+    terms: string[];
+    /** The built-in placeholder allowlist (John Doe, 123 Main St, 999-9999, user@example.com) is kept as written; false turns it off. */
+    placeholders: boolean;
+  };
   /**
    * `auditor` is always the config in force. `auditorExplicit` is false when blind.toml has no
    * `[models.auditor]` table, in which case the auditor reuses the analyst's backend (with its own
@@ -129,7 +133,7 @@ export function defaultPolicy(): Policy {
         "their machines and hosts, email addresses, account or record IDs, and where they are.",
       examples: ["Ada Example", "Example Widgets Ltd", "build01.corp.example.com", "ada@example.com", "ACCT-000123", "Springfield office"],
     },
-    keep: { terms: [] },
+    keep: { terms: [], placeholders: true },
     models: { analyst: local(), auditor: local(), auditorExplicit: true },
     profile: { samples: defaultSamples("local-only"), samplesExplicit: false },
     privacy: { mode: "local-only" },
@@ -170,6 +174,10 @@ export function renderPolicy(p: Policy): string {
     "[keep]",
     "# Vocabulary that must survive blinding unchanged (product names, jargon, public terms).",
     `terms = ${list(p.keep.terms)}`,
+    "# Textbook placeholder identities in forms and documentation (John Doe, 123 Main St, (999) 999-9999,",
+    "# user@example.com) are kept as written, as is every value held in a keep column wherever else it",
+    "# appears. placeholders = false blinds the placeholders like any other value.",
+    p.keep.placeholders ? "# placeholders = true" : "placeholders = false",
     "",
     `# Model backends: ${BACKENDS.join(" | ")}.`,
     "# url: endpoint base URL (empty = backend default). model: model name (empty = not set yet).",
@@ -425,7 +433,7 @@ export function parsePolicy(text: string, source = POLICY_FILE): Policy {
     );
   }
 
-  const keep = r.table(doc, "keep", "keep", ["terms"]);
+  const keep = r.table(doc, "keep", "keep", ["terms", "placeholders"]);
   const models = r.table(doc, "models", "models", ["analyst", "auditor"]);
   const profile = r.table(doc, "profile", "profile", ["samples"]);
   const samplesExplicit = profile.samples !== undefined;
@@ -447,7 +455,7 @@ export function parsePolicy(text: string, source = POLICY_FILE): Policy {
       description: r.string(sensitive, "description", "sensitive.description"),
       examples: r.strings(sensitive, "examples", "sensitive.examples"),
     },
-    keep: { terms: r.strings(keep, "terms", "keep.terms") },
+    keep: { terms: r.strings(keep, "terms", "keep.terms"), placeholders: keep.placeholders === undefined ? true : r.boolean(keep, "placeholders", "keep.placeholders") },
     models: readModels(r, models),
     profile: { samples, samplesExplicit },
     privacy: { mode },

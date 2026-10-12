@@ -83,6 +83,7 @@ use [`[patterns]`](#patterns).
 | Key | Type | Required | Meaning |
 |---|---|---|---|
 | `terms` | array of strings | yes | Words and names that must survive blinding unchanged: product names, jargon, public terms, vendor domains. `[]` keeps nothing. |
+| `placeholders` | boolean | no, default `true` | Keep the built-in textbook placeholders as written (see below). `false` blinds them like any other value. |
 
 What a keep term does:
 
@@ -104,6 +105,39 @@ What a keep term does:
   case and runs of spaces, is kept: `blind plan` writes it into the spec as `vocabulary`/`keep`
   with `source: "policy"`, as a [`[[columns]]`](#columns) rule would. A `[[columns]]` rule that
   matches the column wins over the term.
+
+### Kept columns shield their values everywhere
+
+Every distinct value of a `keep` column (CSV, TSV, JSON key, worksheet column) is shielded in the
+whole corpus, as if it were a keep term: a pattern match, a name found in prose, a spec entity or
+a learned name that falls **inside** an occurrence of it is not replaced. So the clinic's public
+phone, kept in a `clinic_phone` column, stays `(555) 555-0199` in a handbook, a letter header or a
+transcript NOTE line; a phone is compared by its digits, so `555-555-0199` and `+1 555 555 0199`
+are the same number. A value shields only if it has at least 4 characters and is not a number,
+date or measure (`38.6 lb`, `2026-10-12`); a phone shields by its digits.
+
+An explicit rule wins. A kept value that a `blind` or `value` column, or a `drop` or `redact`
+column, also pseudonymises somewhere, or that a spec entity names, is not shielded, and `blind
+apply` reports `N kept values not shielded elsewhere`. A value a `blind`/`drop`/`redact` column
+holds is replaced even inside a kept cell, as before; secrets (`REDACTED`) and transcript speakers
+are never shielded either. Each run reports `N kept values shielded M spans elsewhere`. The audit
+reads the same values back from the `keep` columns of the CSV/TSV files in the output, so it does
+not report them as leaks.
+
+### Placeholders
+
+Forms and documentation carry textbook identities that are nobody's data. Unless `[keep]
+placeholders = false`, these are kept verbatim wherever they appear:
+
+- `John Doe`, `Jane Doe`, `John Q. Public`, `Jane Q. Public`, and `123 Main St` (`Street`, `St.`);
+- a phone whose last seven digits are one repeated digit: `(999) 999-9999`, `000-000-0000`;
+- an email whose local part is a template word (`user`, `username`, `name`, `yourname`, `you`,
+  `email`, `someone`, `first.last`) on a reserved example domain (`example.com`, `.org`, `.net`, or
+  a name ending `.example`, `.test`, `.invalid`). `dana@example.com` is not a template: it is
+  blinded.
+
+A real-looking number such as `555-0100` is not a placeholder. The run reports how many
+placeholders it kept.
 
 A keep term does **not** override your spec's values: a value or entity the spec blinds is blinded even when
 it also appears in the keep list. To keep it, take it out of the spec (or classify it as

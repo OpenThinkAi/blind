@@ -252,7 +252,7 @@ export async function runAudit(argv: string[], io: AuditIO): Promise<number> {
     const spec = withPolicyPatterns(saved, policy?.patterns ?? {});
     // Hosts the engine kept under a keep-list domain are policy, not leaks.
     const keep = policy?.keep.terms ?? [];
-    let report = addSemanticLayer(auditTree(entries, spec, map, keep), entries, spec, map, { keep });
+    let report = addSemanticLayer(auditTree(entries, spec, map, keep, policy?.keep.placeholders ?? true), entries, spec, map, { keep });
     const skip = noModelReason(values["no-model"], policy);
     if (skip !== null) io.err.write(`blind audit: ${skip}\n`);
     if (skip !== null || values["no-model"]) {

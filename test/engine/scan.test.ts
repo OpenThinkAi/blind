@@ -146,8 +146,8 @@ describe("a value held whole in a keep or scan cell", () => {
     expect(cols(r, "contacts.csv").map((c) => c.changed)).toEqual([0, 0]);
     const calls = out(r, "calls.csv").split("\n");
     expect(calls[1]).toBe("Biscuit");
-    // Held whole, but still scanned like free text: the phone pattern replaces it.
-    expect(calls[2]).toMatch(/^Id_/);
+    // Held whole in a keep column, so the owner's phone is shielded from the phone pattern (AGT-1853).
+    expect(calls[2]).toBe("801-555-0177");
     expect(calls[3]).toBe("River Clinic");
     expect(calls[4]).not.toContain("Ada Quill");
     const caller = cols(r, "calls.csv")[0];

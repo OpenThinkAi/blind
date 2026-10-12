@@ -1,5 +1,6 @@
 // Values in dropped and redacted columns still recur (AGT-1835): the column leaves, but the same
-// names, phones and codes written in prose elsewhere are replaced as if it had been pseudonymised.
+// names, phones and codes written in prose elsewhere are replaced, as the redaction placeholder, never a
+// pseudonym and never a map entry (AGT-1847).
 // Synthetic data only: invented owners, numbers and codes. The surname is not a dictionary word:
 // a part that is one is never matched alone, for a dropped column as for a blinded one (AGT-1803).
 
@@ -29,35 +30,31 @@ describe("a dropped column's values recur", () => {
     const r = apply({ "a.csv": "id,owner,pet\n1,Dana Quillfeather,Biscuit\n", "b.txt": "Dana Quillfeather called; Mr. Quillfeather will pick up Biscuit.\n" }, [rule("a.csv", { header: "id" }, "keep"), rule("a.csv", { header: "owner" }, "drop"), rule("a.csv", { header: "pet" }, "keep")]);
     expect(out(r, "a.csv")).toMatch(/^id,pet\n1,Biscuit\n$/);
     const b = out(r, "b.txt");
-    expect(b).toMatch(/^Person_[0-9A-F]+ called; Mr\. Person_[0-9A-F]+ will pick up Biscuit\.\n$/);
-    expect(b).not.toContain("Quillfeather");
-    // "Mr. Quillfeather" is the one known Quillfeather, so it gets the whole name's pseudonym (AGT-1842).
-    const [whole, part] = [...b.matchAll(/Person_[0-9A-F]+/g)].map((m) => m[0]);
-    expect(part).toBe(whole as string);
+    expect(b).toBe("REDACTED called; Mr. REDACTED will pick up Biscuit.\n");
+    expect(r.map.entries.filter((e) => e.kind === "person")).toEqual([]);
     const text = r.files.find((f) => f.path === "b.txt");
     expect(text?.removedReplacements).toBe(2);
     expect(text?.mappedReplacements).toBe(0);
   });
 
-  test("the same pseudonyms as if the column had been blinded, and reveal restores them", () => {
+  test("a dropped column's recurrences are the placeholder, not the pseudonym a blinded column would give; reveal has nothing to restore", () => {
     const files = { "a.csv": "id,owner\n1,Dana Quillfeather\n", "b.txt": "Dana Quillfeather called.\n" };
     const dropped = apply(files, [rule("a.csv", { header: "id" }, "keep"), rule("a.csv", { header: "owner" }, "drop")]);
-    const blinded = apply(files, [rule("a.csv", { header: "id" }, "keep"), rule("a.csv", { header: "owner" }, "blind", "person")]);
-    expect(out(dropped, "b.txt")).toBe(out(blinded, "b.txt"));
-    // The dropped column holds no pseudonym; only the recurrence is in the map.
+    expect(out(dropped, "b.txt")).toBe("REDACTED called.\n");
     expect(out(dropped, "a.csv")).toBe("id\n1\n");
+    expect(dropped.map.entries).toEqual([]);
     const back = dec(revealFile("b.txt", (dropped.outputs.find((o) => o.path === "b.txt") as InputFile).bytes, new Revealer(dropped.map)).bytes);
-    expect(back).toBe("Dana Quillfeather called.\n");
+    expect(back).toBe("REDACTED called.\n");
   });
 
   test("a redacted column still writes the placeholder and its values recur in another column of the same file", () => {
     const r = apply({ "a.csv": "owner,note\nDana Quillfeather,Dana Quillfeather rang again\n" }, [rule("a.csv", { header: "owner" }, "redact"), rule("a.csv", { header: "note" }, "keep", "vocabulary")]);
     const [, row] = out(r, "a.csv").trimEnd().split("\n");
-    expect(row).toMatch(/^REDACTED,Person_[0-9A-F]+ rang again$/);
+    expect(row).toBe("REDACTED,REDACTED rang again");
     expect(r.files[0]?.removedReplacements).toBe(1);
   });
 
-  test("a phone column is class id and recurs as written; a sensitive rule class wins", () => {
+  test("a phone or email column recurs as the placeholder whatever its class", () => {
     const r = apply(
       { "a.csv": "phone,mail\n(801) 555-0142,dana@example.com\n", "b.txt": "Call (801) 555-0142 or write dana@example.com.\n" },
       [rule("a.csv", { header: "phone" }, "drop"), rule("a.csv", { header: "mail" }, "drop", "email")],
@@ -65,9 +62,8 @@ describe("a dropped column's values recur", () => {
     const b = out(r, "b.txt");
     expect(b).not.toContain("555-0142");
     expect(b).not.toContain("dana@example.com");
-    expect(b).toMatch(/Id_[0-9A-F]+/);
-    expect(b).toMatch(/write user_[0-9a-f]+@host-[0-9a-f]+\.com\./);
-    expect(b).not.toContain("dana@");
+    expect(b).toBe("Call REDACTED or write REDACTED.\n");
+    expect(r.map.entries).toEqual([]);
   });
 
   test("a column classed vocabulary contributes nothing, and an empty value is skipped", () => {
@@ -89,6 +85,7 @@ describe("a dropped column's values recur", () => {
     expect(b).not.toContain("Dana");
     expect(b).not.toContain("Quillfeather");
     expect(b).not.toContain("gate-4471");
+    expect(b).not.toMatch(/Person_|Value_|Id_/);
     expect(b).toContain("Biscuit");
     expect(r.files.find((f) => f.path === "b.txt")?.removedReplacements).toBe(3);
   });
@@ -102,12 +99,12 @@ describe("a dropped column's values recur", () => {
     });
     const r = apply({ "v.xlsx": bytes, "b.txt": "Dana Quillfeather called.\n" }, [rule("v.xlsx", { sheet: "Visits", header: "Owner" }, "drop"), rule("v.xlsx", { sheet: "Visits", header: "Pet" }, "keep"), rule("v.xlsx", { sheet: "Visits", header: "Note" }, "keep", "vocabulary")]);
     expect(r.skipped).toEqual([]);
-    expect(out(r, "b.txt")).toMatch(/^Person_[0-9A-F]+ called\.\n$/);
+    expect(out(r, "b.txt")).toBe("REDACTED called.\n");
     const wb = readWorkbook((r.outputs.find((o) => o.path === "v.xlsx") as InputFile).bytes);
     const rows = sheetRows(wb.sheets[0] as (typeof wb.sheets)[number], wb.sharedStrings);
     expect(rows[1]?.[0]).toBe("");
     expect(rows[1]?.[1]).toBe("Biscuit");
-    expect(rows[1]?.[2]).toMatch(/^Person_[0-9A-F]+ paid$/);
+    expect(rows[1]?.[2]).toBe("REDACTED paid");
     expect(r.files.find((f) => f.path === "v.xlsx")?.removedReplacements).toBe(1);
   });
 });

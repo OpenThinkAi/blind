@@ -4,7 +4,7 @@
 // salt.
 
 import { closeSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from "node:fs";
-import { PSEUDO_CLASSES } from "./canonical.ts";
+import { canonicalize, PSEUDO_CLASSES } from "./canonical.ts";
 
 /** Components of shaped pseudonyms are recorded too, so hosts and emails rebuild without the salt. */
 export const MAP_KINDS = [...PSEUDO_CLASSES, "host-label", "email-local"] as const;
@@ -128,4 +128,36 @@ export function writeMap(path: string, map: BlindMap): void {
 
 export function readMap(path: string): BlindMap {
   return parseMap(readFileSync(path, "utf8"), path);
+}
+
+const foldText = (s: string): string => s.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+
+/**
+ * `map` without the entries that record any of `values` (a value of a `drop`, `redact` or credential
+ * column must never sit in the map, AGT-1847), by surface or canonical form, and without the host
+ * label and email local-part components of the removed hosts and emails that no remaining entry uses.
+ * `dropped` counts the entries removed; it says nothing of their content.
+ */
+export function withoutValues(map: BlindMap, values: readonly string[]): { map: BlindMap; dropped: number } {
+  const wanted = new Set<string>();
+  for (const v of values) {
+    wanted.add(foldText(v));
+    for (const cls of PSEUDO_CLASSES) wanted.add(foldText(canonicalize(cls, v)));
+  }
+  const isComponent = (k: string): boolean => k === "host-label" || k === "email-local";
+  const hit = (e: MapEntry): boolean => !isComponent(e.kind) && (wanted.has(foldText(e.value)) || wanted.has(foldText(e.canonical)));
+  const pieces = (e: MapEntry): string[] => {
+    const c = e.canonical;
+    if (e.kind === "email") {
+      const at = c.lastIndexOf("@");
+      return [c.slice(0, at), ...c.slice(at + 1).split(".")];
+    }
+    return e.kind === "host" ? c.split(".") : [];
+  };
+  const gone = map.entries.filter(hit);
+  const kept = map.entries.filter((e) => !hit(e));
+  const used = new Set(kept.flatMap(pieces));
+  const orphaned = new Set(gone.flatMap(pieces).filter((p) => !used.has(p)));
+  const entries = kept.filter((e) => !(isComponent(e.kind) && orphaned.has(e.canonical)));
+  return { map: { version: map.version, entries }, dropped: map.entries.length - entries.length };
 }

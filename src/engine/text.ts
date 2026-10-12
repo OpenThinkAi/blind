@@ -252,6 +252,8 @@ export interface ExtraForm {
   form?: string;
   /** The span source for matches; `map` when omitted. */
   source?: "map" | "speaker" | "prose" | "removed";
+  /** A value of a removed (`drop`/`redact`) column that is a person's name: its name parts are redacted too (AGT-1847). */
+  named?: boolean;
   /** A name part (recur.ts nameParts): a month or weekday word among them is left alone in a date context (AGT-1813). */
   datePart?: boolean;
   /**

@@ -259,16 +259,21 @@ export class Pseudonymizer {
    * True when the variable part of a candidate (the hex suffix, or a whole
    * numeric ID) equals a real token, so a reader could not tell it from that
    * real value. The fixed literals (Id_, host-, user_) are not checked: they
-   * are common words and would reject every candidate. IPv4 and GUID forms are
-   * checked whole only.
+   * are common words and would reject every candidate. IPv4 forms are checked
+   * whole only; GUID forms are also checked group by group.
    */
   private suffixAvoided(candidate: string): boolean {
     const m = /^(?:(?:Person|Org|Host|Id|Value|Loc)_|host-|user_)([0-9A-Za-z]+)$/.exec(candidate);
     const variable = m?.[1] ?? (/^\d+$/.test(candidate) ? candidate : undefined);
-    if (variable === undefined) return false;
-    return (
-      this.avoid.has(variable) || this.avoid.has(variable.toLowerCase()) || this.avoid.has(variable.toUpperCase())
-    );
+    if (variable !== undefined) return this.isAvoided(variable);
+    // A GUID reads as its hyphen-separated groups: an all-digit group can equal a real numeric ID
+    // (AGT-1805), and any group can equal an avoided token.
+    if (guidCore(candidate) !== undefined) return candidate.split("-").some((g) => this.isAvoided(g));
+    return false;
+  }
+
+  private isAvoided(token: string): boolean {
+    return this.avoid.has(token) || this.avoid.has(token.toLowerCase()) || this.avoid.has(token.toUpperCase());
   }
 
   /** Record a pseudonym built from already-unique components (hostnames, emails). */

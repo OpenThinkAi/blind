@@ -378,6 +378,18 @@ describe("collision handling", () => {
     expect(out).not.toBe(first);
   });
 
+  test("a GUID candidate with a group equal to an avoided value is rejected (AGT-1805)", () => {
+    const v = "0f8fad5b-d9cb-469f-a165-70867728950e";
+    const first = fresh().pseudonym("id", v);
+    const group = first.split("-")[1] as string;
+    const out = fresh({ avoid: [group.toUpperCase()] }).pseudonym("id", v);
+    expect(out).not.toBe(first);
+    expect(out.split("-").map((g) => g.toLowerCase())).not.toContain(group);
+    expect(fresh({ avoid: [group] }).pseudonym("id", v)).toBe(out);
+    // Avoiding nothing that matches leaves the golden value alone.
+    expect(fresh({ avoid: ["1234"] }).pseudonym("id", v)).toBe(first.split("-")[1] === "1234" ? out : first);
+  });
+
   test("distinct values never share a pseudonym, and the retry is exercised", () => {
     const p = fresh();
     const names = Array.from({ length: 3000 }, (_, i) => `Synthetic Person ${i}`);

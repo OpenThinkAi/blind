@@ -10,8 +10,8 @@
 //   cell uses that holds an IP address, a pivot cache over the people and
 //   organisations, a defined name and document metadata.
 // - meetings/renewal-call.docx and .vtt: one Teams meeting, saved as Word
-//   (speaker-and-time paragraphs, names split across runs) and as WebVTT (voice
-//   tags).
+//   (speaker-and-time paragraphs, names split across runs) and as WebVTT (cue
+//   GUIDs, voice tags).
 // - exports/scopes.json: a scope list with snake_case keys, hex IDs and
 //   four-digit IDs written as strings.
 // - logs/agent-container.log: a container log whose registry host carries the
@@ -192,12 +192,10 @@ export function generateV2(seed: number, rows: number, oracle: OracleBuilder): K
   const host = SPEAKERS[0] as CastPerson;
   add(host.canonical, "person", host.canonical, "canonical", CALL_DOCX, "docProps/core.xml");
   files.push({ path: CALL_DOCX, bytes: buildDocument(paragraphs, { title: "Renewal call", creator: host.canonical, modifiedBy: host.canonical }) });
-  // No cue identifiers. Teams writes a GUID per cue, and the engine replaces cue GUIDs with GUIDs
-  // drawn from the salt, whose groups can be all digits and equal a real 4-digit ID elsewhere in
-  // the corpus (an engine gap, recorded as test.failing in test/bench/kit2.test.ts). With GUID cues
-  // the bench would fail at random, salt by salt.
+  const guid = () => `${hex(8)}-${hex(4)}-4${hex(3)}-8${hex(3)}-${hex(12)}`;
+  const cueIds = Array.from({ length: 4 }, guid);
   const ts = (s: number) => `00:${pad2(Math.floor(s / 60))}:${pad2(s % 60)}.000`;
-  const cues = turns.map((t, i) => `${ts(i * 17)} --> ${ts(i * 17 + 15)}\n<v ${t.speaker.canonical}>${t.text}</v>`);
+  const cues = turns.map((t, i) => `${cueIds[i % cueIds.length]}/${i + 10}-0\n${ts(i * 17)} --> ${ts(i * 17 + 15)}\n<v ${t.speaker.canonical}>${t.text}</v>`);
   files.push({ path: CALL_VTT, text: `WEBVTT\n\n${cues.join("\n\n")}\n` });
 
   // ---------------------------------------------------------- the JSON scope list

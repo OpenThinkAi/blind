@@ -245,12 +245,11 @@ describe("blind bench on kit v2", () => {
   }, BENCH_TIMEOUT);
 });
 
-// Engine gap found by kit v2 (why its WebVTT has no cue GUIDs): a Teams cue GUID is replaced with a
-// GUID drawn from the salt, and a 4-character group of it can come out all digits and equal a real
-// 4-digit ID elsewhere in the corpus, which then reads as that ID left in the output. Numeric IDs
-// avoid every real value (AGT-1785); GUID groups do not yet. Over 200 fixed salts some output always
-// collides today; once GUID pseudonyms avoid real values none will, and this must become `test`.
-test.failing("GUID pseudonyms never reproduce a real 4-digit ID of the corpus as one of their groups", () => {
+// AGT-1805: a Teams cue GUID is replaced with a GUID drawn from the salt, and a 4-character group
+// of it could come out all digits and equal a real 4-digit ID elsewhere in the corpus, which then
+// reads as that ID left in the output. The Pseudonymizer now rejects GUID candidates whose groups
+// equal an avoided value, as it does for numeric IDs (AGT-1785).
+test("GUID pseudonyms never reproduce a real 4-digit ID of the corpus as one of their groups", () => {
   const v1 = generateKit(DEFAULT_SEED);
   const ids = new Set(v1.oracle.values.filter((v) => v.class === "id" && /^\d{4}$/.test(v.value)).map((v) => v.value));
   const hex = (n: number, i: number) => createHash("sha256").update(`cue ${i}`).digest("hex").slice(0, n);

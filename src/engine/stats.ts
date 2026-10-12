@@ -108,6 +108,8 @@ export function isTitleCaseMultiWord(value: string): boolean {
 }
 
 export interface ColumnContext {
+  /** The column's header, or a JSON key path's last key: a birth-date name makes an unruled column redacted (AGT-1858). */
+  name?: string;
   /** The file's field delimiter, for tables; it decides whether `4,250` is a decimal comma. */
   delimiter?: string;
   /** Per value (aligned with `values`): the cell is a date or time, by its number format (XLSX). */

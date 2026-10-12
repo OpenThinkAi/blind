@@ -140,6 +140,7 @@ const OUTCOME_TEXT: Record<FileReport["columns"][number]["outcome"], string> = {
   "unknown-kept-low-cardinality": "kept (low cardinality)",
   "unknown-kept-not-identifier-like": "kept (not identifier-like: prose, measures or a small repeating set)",
   "unknown-kept-empty": "kept (empty)",
+  "unknown-redacted": "redacted (birth-date header, no rule)",
 };
 
 const DELIMITER_NAMES: Record<string, string> = { ",": "comma", ";": "semicolon", "\t": "tab", "|": "pipe" };

@@ -687,6 +687,22 @@ describe("blind plan --answer", () => {
 });
 
 describe("blind plan --no-model", () => {
+  test("a birth-date column no rule decides is noted as redacted, and a ruled or non-birth date column is not (AGT-1858)", async () => {
+    writeFileSync(join(dir, "in", "clients.csv"), "Owner,Visit Date,DOB,Pet DOB\nDana Example,2026-01-05,1979-04-12,2019-06-01\nSam Sample,2026-01-09,1985-11-30,2020-02-02\n");
+    writeFileSync(join(dir, "in", "clients.json"), '[{"owner":{"dob":"1979-04-12"},"visit":{"date":"2026-01-05"}}]');
+    writePolicy((p) => {
+      p.columns = [{ header: ["Pet DOB"], treatment: "keep", class: "vocabulary" }] as never;
+    });
+    const r = await plan(["in", "--no-model"], noFetch);
+    expect(r.err).toBe("");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('note: "clients.csv" "DOB": redact, birth-date header, no rule');
+    expect(r.out).toContain("redact, birth-date header, no rule");
+    expect(r.out).not.toContain('"Pet DOB": redact');
+    expect(r.out).not.toContain('"Visit Date": redact');
+    expect(r.out.match(/redact, birth-date header, no rule/g)?.length).toBe(2);
+  });
+
   test("classifies only detector-matched columns and leaves the rest unknown, without a model", async () => {
     const r = await plan(["in", "--no-model"], noFetch);
     expect(r.code).toBe(0);

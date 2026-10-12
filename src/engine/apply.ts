@@ -65,6 +65,7 @@ import { decode, type Encoding, EncodingError, encode } from "./encoding.ts";
 import { isJsonNumber, type JsonFormat, JsonError, type JsonToken, jsonCuts, quote, scanJson, scanJsonl, stringOffsets } from "./json.ts";
 import { type BlindMap, foldText, withoutValues } from "./map.ts";
 import { type EntityEntry, Pseudonymizer } from "./pseudonym.ts";
+import { lastKey } from "./birthdate.ts";
 import { type ColumnDefault, type ColumnOutcome, decide, holdsWhole, isFallback, removedForms } from "./columns.ts";
 import { type ContextOptions, type ContextTriggerSpec, pairCells } from "./context.ts";
 import { DocxError, type DocxPlan, docxParagraphs, docxWholes, FONT, IMAGE, planDocx, THUMBNAIL, thumbnailReason, refuseDocxUnrewritten, renderDocx, scanDocx } from "./docx.ts";
@@ -440,7 +441,7 @@ function planTable(
     // The cells of this column in a row, with their positions: the last column also owns the overflow.
     const owned = (row: Row): { cell: Cell; at: number }[] =>
       (col === lastCol ? row.cells.slice(col) : row.cells.slice(col, col + 1)).map((cell, i) => ({ cell, at: col + i }));
-    const { action, outcome } = decide(rule, data.flatMap((r) => (col === lastCol ? owned(r).map((o) => o.cell.value) : [r.cells[col]?.value ?? ""])), { delimiter: delim }, unruled);
+    const { action, outcome } = decide(rule, data.flatMap((r) => (col === lastCol ? owned(r).map((o) => o.cell.value) : [r.cells[col]?.value ?? ""])), { delimiter: delim, name: header }, unruled);
     const column: ColumnReport = {
       index: col,
       header,
@@ -578,7 +579,7 @@ function planJson(
       );
     }
     const valued = indices.filter((i) => (tokens[i] as JsonToken).kind !== "literal");
-    const { action, outcome } = decide(rule, valued.map((i) => (tokens[i] as JsonToken).value), {}, unruled);
+    const { action, outcome } = decide(rule, valued.map((i) => (tokens[i] as JsonToken).value), { name: lastKey(path) }, unruled);
     const column: ColumnReport = {
       index: columns.length,
       header: "",

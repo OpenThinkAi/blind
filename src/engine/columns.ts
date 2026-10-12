@@ -2,6 +2,7 @@
 // worksheets): what a spec rule, or its absence, does to a column's cells.
 
 import type { ColumnRule, EntityClassName } from "../schema.ts";
+import { isBirthDateName } from "./birthdate.ts";
 import { type PseudoClass, phoneDigits } from "./canonical.ts";
 import { isPersonColumn } from "./prose.ts";
 import type { ExtraForm } from "./text.ts";
@@ -19,7 +20,8 @@ export type ColumnOutcome =
   | "unknown-person"
   | "unknown-kept-low-cardinality"
   | "unknown-kept-not-identifier-like"
-  | "unknown-kept-empty";
+  | "unknown-kept-empty"
+  | "unknown-redacted";
 
 const SENSITIVE: ReadonlySet<EntityClassName> = new Set(["person", "org", "host", "email", "id", "location"]);
 
@@ -60,11 +62,14 @@ export interface Decision {
  * What a column gets: its rule's action, or for no rule (or unknown/value) what `unruled` says:
  * the fail-closed identifier-like test, or `scan`. An identifier-like column of people's names
  * (prose.ts isPersonColumn) is pseudonymised as `person`, not `value`, so their name parts recur in
- * free text (AGT-1830).
+ * free text (AGT-1830). A column or key named for a birth date (`ctx.name`) with no deciding rule is redacted.
  */
 export function decide(rule: ColumnRule | undefined, values: readonly string[], ctx: ColumnContext = {}, unruled: ColumnDefault = "fallback"): Decision {
   const planned = rule === undefined ? "heuristic" : ruleAction(rule);
   if (planned !== "heuristic") return { action: planned, stats: undefined, outcome: outcomeOf(planned, undefined) };
+  // A birth-date column nothing decides is a person's date, not a visit or invoice date: redacted, never
+  // exempted as a measure and never pseudonymised into the map (AGT-1858).
+  if (isBirthDateName(ctx.name)) return { action: { kind: "redact" }, stats: undefined, outcome: "unknown-redacted" };
   // A column of phone numbers, bare ones among them, is not free text: the free-text scanner cannot tell
   // a lone bare digit run from an accession number, but the column can (AGT-1848).
   const phones = isPhoneColumn(values);

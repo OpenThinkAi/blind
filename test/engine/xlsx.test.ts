@@ -65,7 +65,7 @@ describe("XLSX apply: cells and shared strings", () => {
       "Staff/Employee ID:blinded",
       "Staff/Notes:unknown-kept-not-identifier-like",
       "Staff/Status:kept",
-      "Avery Quill/Amount:unknown-pseudonymised",
+      "Avery Quill/Amount:unknown-kept-not-identifier-like", // a decimal: a measure (AGT-1822)
       "Contents/Sheet:unknown-kept-not-identifier-like",
       "Contents/Link:unknown-kept-not-identifier-like",
     ]);

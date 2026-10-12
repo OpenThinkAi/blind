@@ -2,7 +2,7 @@
 // Timing is the only thing allowed to differ between runs; it is left out of every comparison.
 
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AuditReport, TreeEntry } from "../../src/audit/mechanical.ts";
@@ -144,14 +144,12 @@ describe("blind bench on synthetic kit v1", () => {
     expect(r.out).toContain("Ig***4");
   });
 
-  test("a kept column the engine pseudonymised is damage, cell by cell", async () => {
-    // No rule for Amount: the engine fails closed on its numbers, so every amount changes.
-    const r = await bench({ edit: (s) => void (s.columns = s.columns.filter((c) => c.header !== "Amount")) });
-    expect(r.code).toBe(1);
+  test("no rule for the amount and date columns: they are measures, so nothing is damaged (AGT-1822)", async () => {
+    const r = await bench({ edit: (s) => void (s.columns = s.columns.filter((c) => c.header !== "Amount" && c.header !== "Opened")) });
+    expect(r.err).toBe("");
+    expect(r.code).toBe(0);
     const rep = r.report as BenchReport;
-    expect(rep.leaks.count).toBe(0);
-    expect(rep.damage.count).toBe(60);
-    expect(new Set(rep.damage.items.map((d) => `${d.kind} ${d.file} ${d.where.replace(/row \d+/, "row N")}`))).toEqual(new Set(["cell accounts.csv row N, column 9"]));
+    expect({ leaks: rep.leaks.count, damage: rep.damage.count }).toEqual({ leaks: 0, damage: 0 });
   });
 
   test("a decoy that does not survive is damage", async () => {
@@ -415,4 +413,34 @@ test("the bench leaves no workspace behind", async () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+describe("bench case: measures under the heuristic plan (AGT-1822)", () => {
+  // A hand-made synthetic kit: a visit table with a date, a weight, an amount, a species and a
+  // 15-digit chip number (invented). The spec is what `blind plan --no-model` writes for it under the
+  // default policy: one rule, the chip as a numericId (`id`, blinded). The other four columns have
+  // no rule, so they are scored for damage (an unknown/value rule would not be), and must come
+  // through unchanged.
+  test("dates, weights, amounts and species are not damaged; the chips are blinded as IDs", async () => {
+    const species = ["Canine", "Feline", "Canine", "Feline", "Equine", "Lapine", "Lapine", "Equine"];
+    const chips = species.map((_, i) => `98511200020000${i}`);
+    const rows = species.map((s, i) => [`2026-0${1 + (i % 9)}-1${i}`, `${(9.5 + i * 6.3).toFixed(1)} lb`, `"$${(1000 + i * 137.25).toLocaleString("en-US", { minimumFractionDigits: 2 })}"`, s, chips[i]].join(","));
+    const dir = mkdtempSync(join(tmpdir(), "blind-bench-measures-"));
+    try {
+      mkdirSync(join(dir, "input"));
+      writeFileSync(join(dir, "input", "visits.csv"), `Visit Date,Weight,Amount,Species,Chip\n${rows.join("\n")}\n`);
+      writeFileSync(join(dir, "oracle.json"), JSON.stringify({ values: chips.map((value) => ({ value, class: "id" })) }));
+      const chipRule = { file: "visits.csv", header: "Chip", class: "id", treatment: "blind", confidence: 1, source: "heuristic" };
+      const spec: Spec = { version: 1, columns: [chipRule as Spec["columns"][number]], entities: {}, patterns: { ip: true, email: true, host: true, guid: true, mac: true }, questions: [] };
+      writeFileSync(join(dir, "spec.json"), JSON.stringify(spec));
+      const out = new Sink();
+      const err = new Sink();
+      const code = await runBench([dir], { out: out as unknown as NodeJS.WritableStream, err: err as unknown as NodeJS.WritableStream, cwd: dir });
+      const rep = JSON.parse(readFileSync(join(dir, REPORT_FILE), "utf8")) as BenchReport;
+      expect(err.text).toBe("");
+      expect({ code, leaks: rep.leaks.items, damage: rep.damage.items, notWritten: rep.apply.notWritten }).toEqual({ code: 0, leaks: [], damage: [], notWritten: [] });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

@@ -120,6 +120,11 @@ export interface ColumnReport {
   changed: number;
   /** Kept (`keep`) cells that contain a spec entity or a pattern match, left unchanged as the spec says. */
   flagged: number;
+  /**
+   * XLSX only, when the column failed closed with no rule (`unknown-pseudonymised`): its number
+   * cells, left as written because only a rule renumbers a number (AGT-1822). Absent when 0.
+   */
+  numbersLeft?: number;
 }
 
 export interface FileReport {

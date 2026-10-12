@@ -219,9 +219,10 @@ describe("blind bench on kit v2", () => {
     expect(rep.audit.leaks).toBe(0);
   }, BENCH_TIMEOUT);
 
-  test("a wrong spec is scored: damage in a DOCX paragraph, a worksheet name and JSON values", async () => {
+  test("a wrong spec is scored: damage in a DOCX paragraph and a worksheet name; an unruled date key is not damaged", async () => {
     const r = await bench((s) => {
       // A reviewer's mistakes: the meeting title and the sheet list taken for organisations, and no rule for a date key.
+      // The date key passes all the same: dates are measures, never pseudonymised by the fallback (AGT-1822).
       s.entities.org = [...(s.entities.org ?? []), { canonical: "Renewal call", aliases: [], parts: [] }, { canonical: CONTENTS_SHEET, aliases: [], parts: [] }];
       s.columns = s.columns.filter((c) => c.jsonPath !== "$.scopes[*].granted_on");
     });
@@ -230,7 +231,7 @@ describe("blind bench on kit v2", () => {
     const kinds = new Set(r.report.damage.items.map((d) => `${d.kind} ${d.file} ${d.where.replace(/\d+/g, "N")}`));
     expect(kinds).toContain(`paragraph ${CALL_DOCX} paragraph N`);
     expect(kinds).toContain(`rename ${ACCESS_XLSX} sheet N name`);
-    expect(kinds).toContain(`cell ${SCOPES_JSON} value N of $.scopes[*].granted_on`);
+    expect([...kinds].filter((k) => k.includes("granted_on"))).toEqual([]);
   }, BENCH_TIMEOUT);
 
   test("a forgotten rule or entity leaks from the v2 files", async () => {

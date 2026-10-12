@@ -81,7 +81,8 @@ documents ------------ engine (deterministic) ---------------+--> blinded docume
 - **Engine** (no model): applies the spec byte for byte. The same value gets the same
   pseudonym everywhere (`Person_A7F3`, `Org_2C9E`), IPs stay IPs and emails stay emails, formulas,
   joins and formatting survive. A column nobody classified that looks like identifiers is
-  pseudonymised, not passed through.
+  pseudonymised, not passed through; dates, amounts, quantities with units and small repeating
+  categories (species, status) are not identifiers, and pass.
 - **Auditor** (independent of the engine): reads the output as it is on disk and reports leaks and
   candidates. Its rule-based layers never depend on a model.
 

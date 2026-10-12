@@ -283,19 +283,23 @@ describe("blind profile", () => {
     expect((await profile("a.csv", "--samples", "2")).code).toBe(0);
   });
 
-  test("under profile-only the printed and saved profile has no outlines (AGT-1778); local-only keeps them", async () => {
-    put("notes.md", "# Marlo Fenwick weekly\n\n## Quorrin Labs renewal\n\nText.\n");
+  test("under profile-only the printed and saved profile has no outlines (AGT-1778) and no samples, even with --samples (AGT-1832); local-only keeps them", async () => {
+    put("notes.md", "# Marlo Fenwick weekly\n\n## Quorrin Labs renewal\n\nText about the pier.\n");
     const p = defaultPolicy();
     p.privacy.mode = "profile-only";
+    p.profile = { samples: 0, samplesExplicit: false };
     put("blind.toml", renderPolicy(p));
     for (const args of [["notes.md"], ["notes.md", "--samples", "2"], ["notes.md", "--json"]]) {
       const r = await profile(...args);
       expect(r.code).toBe(0);
       expect(r.out + r.err).not.toContain("Marlo Fenwick");
       expect(r.out + r.err).not.toContain("Quorrin Labs");
+      expect(r.out + r.err).not.toContain("pier");
       expect(r.out + r.err).toContain("privacy.mode is profile-only: the outline of 1 document(s) is left out");
       const saved = parseProfile(readFileSync(join(dir, ".blind", "profile.json"), "utf8"));
       expect(saved.documents[0]?.outline).toEqual([]);
+      expect(saved.documents[0]?.sampleSentences).toEqual([]);
+      expect(saved.sampleCount).toBe(0);
     }
     policy(5);
     const local = await profile("notes.md");

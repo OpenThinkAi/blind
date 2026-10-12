@@ -90,7 +90,8 @@ export function withPolicyPatterns(spec: Spec, patterns: PolicyPatterns): Spec {
 
 /**
  * Samples per column when blind.toml does not set `[profile] samples`: 5 while nothing leaves the
- * machine, 0 (headers and statistics only) under profile-only, where the profile goes to a remote model.
+ * machine, 0 under profile-only, where the profile goes to a remote model that may see statistics
+ * but never a value. It is also the only count profile-only accepts (parsePolicy refuses more).
  */
 export function defaultSamples(mode: PrivacyMode): number {
   return mode === "profile-only" ? 0 : 5;
@@ -162,16 +163,16 @@ export function renderPolicy(p: Policy): string {
         ]),
     "",
     "[profile]",
-    "# Sample values per column the analyst sees (each truncated to 120 characters). 0 = headers and stats only.",
-    `# Unset, it is ${defaultSamples("local-only")} under local-only and none, and ${defaultSamples("profile-only")} under profile-only. Set it to override.`,
+    "# Sample values per column the analyst sees (each truncated to 120 characters). 0 = statistics only.",
+    `# Unset, it is ${defaultSamples("local-only")} under local-only and none, and ${defaultSamples("profile-only")} under profile-only, where it must stay 0.`,
     // Written out when set, or when it differs from the mode's default (so it is never silently changed).
     p.profile.samplesExplicit || p.profile.samples !== defaultSamples(p.privacy.mode)
       ? `samples = ${p.profile.samples}`
       : `# samples = ${p.profile.samples}`,
     "",
     "[privacy]",
-    "# local-only: refuse any non-loopback endpoint. profile-only: remote allowed, only the profile is sent.",
-    "# none: no model is called.",
+    "# local-only: refuse any non-loopback endpoint. none: no model is called.",
+    "# profile-only: remote allowed; the model sees statistics, with every name as a token, and never a value.",
     `mode = ${str(p.privacy.mode)}`,
     "",
     "[patterns]",
@@ -349,6 +350,13 @@ export function parsePolicy(text: string, source = POLICY_FILE): Policy {
   const privacy = r.table(doc, "privacy", "privacy", ["mode"]);
   const mode = r.oneOf(privacy, "mode", "privacy.mode", PRIVACY_MODES);
   const samples = samplesExplicit ? r.count(profile, "samples", "profile.samples") : defaultSamples(mode);
+  // profile-only means a remote model never sees a value (AGT-1832), so it takes no samples at all.
+  if (mode === "profile-only" && samples > 0) {
+    throw new PolicyError(
+      `${source}: profile.samples must be 0 under privacy.mode = "profile-only" (got ${samples}): a model there sees statistics, never a value; ` +
+        `remove the line, or use "local-only" with a loopback model to show it samples`,
+    );
+  }
   const patterns = readPatterns(r, doc);
 
   return {

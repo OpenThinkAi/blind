@@ -8,9 +8,9 @@
 //                 values), cut into lines of at most MAX_DATA_STRING characters, and sent in
 //                 chunks of at most CHUNK_BYTES, to a loopback endpoint only (model.ts refuses any
 //                 other). Each file's name goes too. Binary content is not sent and is listed.
-//   profile-only  the output's profile and the policy, exactly profilePayload(), with paths and
-//                 value-like names tokenised (tokeniseProfile) and mapped back here. No text
-//                 beyond what the profile's sampleCount bounds.
+//   profile-only  the output's profile and the policy, exactly profilePayload(), with every
+//                 path, sheet name, header and key tokenised (tokeniseProfile) and file tokens
+//                 mapped back here. No values: no samples and no other document text (AGT-1832).
 //   none          nothing: the layer does not run.
 //
 // The reply is a schema-checked list of candidates, each a quote and a reason from a fixed
@@ -28,7 +28,7 @@ import type { AskOptions, PolicyView } from "../model.ts";
 import { ask, MAX_DATA_STRING, ModelError, ModelRefusal, ModelRejected, policyView, profilePayload, resolveEndpoint } from "../model.ts";
 import type { Policy } from "../policy.ts";
 import { buildProfile, forPrivacyMode } from "../profile/profile.ts";
-import { entityForms, tokeniseProfile } from "../profile/tokens.ts";
+import { tokeniseProfile } from "../profile/tokens.ts";
 import type { Spec } from "../schema.ts";
 import type { Schema } from "../validate.ts";
 import {
@@ -409,8 +409,7 @@ async function auditProfile(entries: readonly TreeEntry[], policy: Policy, opts:
   const result = forPrivacyMode(buildProfile([opts.root], policy.profile.samples, opts.cwd), "profile-only");
   summary.notSent = result.skipped.map((s) => ({ file: s.path, part: "", reason: `not in the profile: ${s.reason}` }));
   summary.chunks = 1;
-  const forms = entityForms(opts.spec.entities);
-  const tokens = tokeniseProfile(result.profile, { keep: policy.keep.terms, entities: forms });
+  const tokens = tokeniseProfile(result.profile);
   const real = new Map(tokens.profile.files.map((f, i) => [f.path, result.profile.files[i]?.path as string]));
   let reply: Reply<{ file: string }>;
   try {
@@ -418,11 +417,11 @@ async function auditProfile(entries: readonly TreeEntry[], policy: Policy, opts:
       "auditor",
       AUDITOR_SYSTEM,
       {
-        task: "The data block holds the policy and a profile of the documents (file names as tokens, headers, statistics and a few samples). Find everything in it that tells you who they are about. Give each finding's file as the profile names it.",
+        task: "The data block holds the policy and a profile of the documents (file names, sheet names, headers and keys as tokens, and statistics; no values). Find everything in it that tells you who they are about. Give each finding's file as the profile names it.",
         data: profilePayload(tokens.profile, policy),
       },
       PROFILE_REPLY_SCHEMA,
-      { ...opts.ask, policy, entityForms: forms },
+      { ...opts.ask, policy },
     );
   } catch (e) {
     if (e instanceof ModelRefusal || !(e instanceof ModelError)) throw e;

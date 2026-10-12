@@ -185,15 +185,16 @@ gets 10 minutes per call; a timeout is a failure, never an empty answer.
 
 | Key | Type | Required | Meaning |
 |---|---|---|---|
-| `samples` | whole number, 0 or more | no | Sample values the profile carries for each column, key, document and transcript. `0` means headers and statistics only. |
+| `samples` | whole number, 0 or more | no | Sample values the profile carries for each column, key, document and transcript. `0` means headers and statistics only. Must be `0` (or unset) under `profile-only`. |
 
 Unset, `samples` follows the privacy mode: **5** under `local-only` and `none`, **0** under
-`profile-only`, where the profile goes to a remote model. Setting it overrides the mode. `--samples
-N` on `blind profile` overrides the file for one run. Each sample is cut to 120 characters, ending
-in `…`. Samples are the only document text a profile carries (apart from the outlines and speaker
-names that `local-only` also sends, and which `profile-only` leaves out: there a transcript sample
-line's speaker label goes as `speaker_N`, and a transcript with more speakers than the profile lists
-sends no sample lines).
+`profile-only`, where the profile goes to a remote model. Under `local-only` and `none` setting it
+overrides the mode. Under `profile-only` a model never sees a value, so `samples` above 0 is an
+error (`profile.samples must be 0 under privacy.mode = "profile-only"`), and `blind init` does not
+ask for it. `--samples N` on `blind profile` overrides the file for one run; under `profile-only`
+the samples are still left out of what it prints and saves. Each sample is cut to 120 characters,
+ending in `…`. Samples are the only document text a profile carries, apart from the outlines and
+speaker names that `local-only` also sends and `profile-only` leaves out.
 
 ## `[privacy]`
 
@@ -204,7 +205,7 @@ sends no sample lines).
 | Mode | Models | What is sent |
 |---|---|---|
 | `local-only` | Only a loopback server: `127.0.0.1` (the whole `127.0.0.0/8`), `::1` or `localhost`. `claude-cli`, the hosted Anthropic API and any other host are refused. | Analyst: the profile and the policy. Auditor: the blinded output's text in lines of at most 120 characters, in chunks of at most 8 kB, and the policy. |
-| `profile-only` | Remote servers over https, and `claude-cli`. A loopback server may use http. | Exactly the profile and the policy, nothing else; anything else is refused. No document outlines, no speaker names; file, folder and sheet names and some keys and headers as opaque tokens. Auditor: the profile of the output tree. |
+| `profile-only` | Remote servers over https, and `claude-cli`. A loopback server may use http. | Exactly the profile's statistics and the policy, nothing else; anything else is refused. No value: no samples, sample sentences or lines, document outlines or speaker names. Every file, folder and sheet name, header and JSON key as an opaque token. Auditor: the profile of the output tree, the same way. |
 | `none` | No model. `blind plan` uses the built-in detectors; `blind audit` runs its rule-based layers only. | Nothing. |
 
 Every check runs before anything is sent. A refused call exits 2 and names the mode, except under
@@ -256,17 +257,26 @@ as a pattern sets it in the spec, but a `false` here still wins.
 |---|---|
 | Nothing leaves this machine, with a local model | `mode = "local-only"`, both models `openai-compatible` at a loopback `url` |
 | Nothing leaves this machine, no model at all | `mode = "none"` (or `blind plan --no-model` and `blind audit --no-model` per run) |
-| A hosted analyst that sees only the profile | `mode = "profile-only"`, analyst `backend = "anthropic"`, `model = "<id>"`, `key_env = "ANTHROPIC_API_KEY"` (example below) |
+| A hosted analyst that never sees a value (recommended when a model must help) | `mode = "profile-only"`, analyst `backend = "anthropic"`, `model = "<id>"`, `key_env = "ANTHROPIC_API_KEY"`, and `[[columns]]` rules for what you already know (example below) |
+
+Under `profile-only` the analyst writes column rules from statistics (count, distinct ratio,
+digit ratio, dictionary ratio, mean length, shape-detector rates) and the policy alone: every
+header is `col_N` and every key `["key_N"]`, so it classifies by shape, not by name, and asks when
+the statistics cannot decide. Its rules are mapped back to the real headers and written into the
+spec with `source: "analyst"`; your `[[columns]]` rules are applied after it, the same way as in
+every mode, and win (`source: "policy"`). So the more you state in `[[columns]]`, the less the
+model has to guess.
 
 `privacy.mode` is one setting for the whole file: the analyst and the auditor both obey it. Under
 `profile-only` the auditor, which reuses the analyst when `[models.auditor]` is absent, is sent
-only the profile of the output, a coarse check: parts of the output that a profile does not
+only the profile of the output, with no values, a coarse check: parts of the output that a profile does not
 describe (such as a DOCX that is not a transcript) are listed as not sent. To have a local model
 read the output text instead, audit from a `blind.toml` whose mode is `local-only` and whose
 `[models.auditor]` is a loopback server; the analyst table is not used by `blind audit`. Or audit
 without a model (`blind audit --no-model`), which still runs the rule-based layers.
 
-For example, a hosted analyst that only ever sees the profile:
+For example, a hosted analyst that never sees a value, with the columns you already know decided
+in `blind.toml`:
 
 ```toml
 [sensitive]
@@ -287,6 +297,15 @@ key_env = "ANTHROPIC_API_KEY"
 
 [privacy]
 mode = "profile-only"
+
+[[columns]]
+header = ["species", "weight*", "visit date"]
+treatment = "keep"
+
+[[columns]]
+header = ["microchip*"]
+treatment = "blind"
+class = "id"
 ```
 
 ## `blind init`
@@ -294,7 +313,8 @@ mode = "profile-only"
 `blind init [dir]` writes `blind.toml` and `.blind/salt` (32 random bytes, mode 0600) in `dir`
 (default `.`).
 
-- On a terminal it asks for the main settings (mode, the two models, samples, classes, keep terms);
+- On a terminal it asks for the main settings (mode, the two models, samples, classes, keep terms;
+  not samples under `profile-only`);
   Enter takes the default. `--defaults`, or input that is not a terminal, writes the defaults.
 - An existing `blind.toml` is kept. An existing salt makes `init` refuse (exit 1): a new salt gives
   every value a different pseudonym, so it breaks the match with earlier runs and with the map.

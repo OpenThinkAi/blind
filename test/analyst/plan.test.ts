@@ -84,18 +84,25 @@ function dataOf(body: { messages: { content: string }[] }): { profile: { tables:
   return JSON.parse(user.slice(user.indexOf("<data>\n") + 7, user.indexOf("\n</data>")));
 }
 
+const STAFF_HEADERS = (STAFF.split("\n")[0] as string).split(",");
+
 /**
  * A fake OpenAI-compatible server that answers every chat call with `reply`. Like a real analyst
- * it names staff.csv as the profile it was sent does: under profile-only, by its file token.
+ * it names staff.csv's columns as the profile it was sent does: under profile-only, by its file
+ * token and each header's `col_N` token (AGT-1832), found by the table's width.
  */
 function fakeFetch(reply: () => unknown): AskOptions["fetch"] {
   return async (input, init) => {
     const body = JSON.parse(String(init?.body));
     sent.push({ url: String(input), body });
-    const token = dataOf(body).profile.tables.find((t) => t.columns.some((c) => c.header === "Owner"))?.file ?? "staff.csv";
+    const staff = dataOf(body).profile.tables.find((t) => t.columns.some((c) => c.header === "Owner") || (t.columns.length === STAFF_HEADERS.length && t.columns[0]?.header === "col_1"));
+    const tokens = staff?.columns[0]?.header === "col_1";
     const answer = () => {
       const r = reply();
-      return typeof r === "string" ? r : JSON.stringify(r).replaceAll('"file":"staff.csv"', `"file":${JSON.stringify(token)}`);
+      if (typeof r === "string") return r;
+      let text = JSON.stringify(r).replaceAll('"file":"staff.csv"', `"file":${JSON.stringify(staff?.file ?? "staff.csv")}`);
+      if (tokens) STAFF_HEADERS.forEach((h, i) => (text = text.replaceAll(`"header":${JSON.stringify(h)}`, `"header":"col_${i + 1}"`)));
+      return text;
     };
     const content = answer();
     return new Response(JSON.stringify({ choices: [{ message: { content }, finish_reason: "stop" }] }), { status: 200 });
@@ -466,18 +473,17 @@ describe("the analyst's reply is rejected whole when it does not fit the profile
       expect(saved.documents.every((d: { outline: string[] }) => d.outline.length === 0)).toBe(true);
     });
 
-    test("profile-only with samples set still leaves outlines out", async () => {
+    test("profile-only with samples set is refused before anything is profiled or sent (AGT-1832)", async () => {
       corpus();
       writePolicy((p) => {
         p.privacy.mode = "profile-only";
         p.profile = { samples: 1, samplesExplicit: true };
         p.models.analyst.url = "https://analyst.example.com/v1";
       });
-      expect((await plan(["in"])).code).toBe(0);
-      const user = (sent[0]?.body as { messages: { content: string }[] }).messages[1]?.content ?? "";
-      const data = JSON.parse(user.slice(user.indexOf("<data>\n") + 7, user.indexOf("\n</data>")));
-      expect(data.profile.documents.every((d: { outline: string[] }) => d.outline.length === 0)).toBe(true);
-      expect(sentText()).not.toContain("Tessaly Brook weekly");
+      const r = await plan(["in"], noFetch);
+      expect(r.code).toBe(2);
+      expect(r.err).toContain('profile.samples must be 0 under privacy.mode = "profile-only" (got 1)');
+      expect(existsSync(join(dir, ".blind", "spec.json"))).toBe(false);
     });
 
     test("local-only still sends outlines", async () => {
@@ -547,9 +553,11 @@ describe("profile-only tokens (AGT-1782)", () => {
     const body = JSON.stringify(sent.map((x) => x.body));
     for (const name of NAMES) expect(body).not.toContain(name);
     const data = dataOf(sent[0]?.body as { messages: { content: string }[] }) as unknown as { profile: Profile };
+    // Every header and key goes as a token too, not only name-like ones (AGT-1832).
+    for (const name of ["Owner", "contact_addr", "asset_tag", "Vendor", "role"]) expect(JSON.stringify(data.profile)).not.toContain(name);
     expect(data.profile.files.map((f) => f.path)).toEqual(["dir_1/file_1", "file_2", "file_3", "file_4"]);
     expect(data.profile.tables.find((t) => t.file === "dir_1/file_1")?.columns.map((c) => c.header)).toEqual(["col_1", "col_2", "col_3"]);
-    expect(data.profile.jsonKeys.map((j) => j.path)).toEqual(['$["key_2"].role', '$["key_1"].role']);
+    expect(data.profile.jsonKeys.map((j) => j.path)).toEqual(['$["key_2"]["key_3"]', '$["key_1"]["key_3"]']);
 
     const spec = savedSpec();
     const review = "Avery Quill/Marlo Fenwick review.csv";
@@ -571,7 +579,7 @@ describe("profile-only tokens (AGT-1782)", () => {
     // The saved profile keeps the real names; only what is sent is tokenised.
     const saved = JSON.parse(readFileSync(join(dir, ".blind", "profile.json"), "utf8")) as Profile;
     expect(saved.files.map((f) => f.path)).toContain(review);
-    expect(r.out).toContain("note: privacy.mode is profile-only: a model is sent 4 file path(s), 0 sheet name(s), 3 header(s) in 1 table(s) and 2 JSON key segment(s) as opaque tokens");
+    expect(r.out).toContain("note: privacy.mode is profile-only: a model is sent 4 file path(s), 0 sheet name(s), 10 header(s) in 2 table(s) and 3 JSON key segment(s) as opaque tokens");
   });
 
   test("a reply naming a location that was not sent is rejected and nothing is saved", async () => {
@@ -594,13 +602,13 @@ describe("profile-only tokens (AGT-1782)", () => {
     expect(data.profile.jsonKeys.map((j) => j.path)).toEqual(['$["Tessaly Brook"].role', '$["Pell Varrick"].role']);
   });
 
-  // AGT-1808: a single name header among ordinary ones, and an identifier-shaped key segment.
+  // AGT-1808, AGT-1832: a name header among ordinary ones, and an identifier-shaped key segment.
   const names = () => {
     writeFileSync(join(dir, "in", "ledger.csv"), "Avery,Status,Amount\nyes,open,12\nno,closed,30\n");
     writeFileSync(join(dir, "in", "users.json"), '{"users": {"avery_q": {"role": "lead"}}}\n');
   };
 
-  test("a single name header and an identifier-shaped key go as tokens, and the spec keeps the real locations", async () => {
+  test("a name header, its ordinary neighbours and every key segment go as tokens, and the spec keeps the real locations", async () => {
     names();
     remote("profile-only");
     const r = await plan(["in"], echoAnalyst());
@@ -608,15 +616,15 @@ describe("profile-only tokens (AGT-1782)", () => {
     const body = JSON.stringify(sent.map((x) => x.body));
     expect(body.toLowerCase()).not.toContain("avery");
     const data = dataOf(sent[0]?.body as { messages: { content: string }[] }) as unknown as { profile: Profile };
-    expect(data.profile.tables.map((t) => t.columns.map((c) => c.header))).toContainEqual(["col_1", "Status", "Amount"]);
-    expect(data.profile.jsonKeys.map((j) => j.path)).toEqual(['$.users["key_1"].role']);
+    expect(data.profile.tables.map((t) => t.columns.map((c) => c.header))).toContainEqual(["col_1", "col_2", "col_3"]);
+    expect(data.profile.jsonKeys.map((j) => j.path)).toEqual(['$["key_3"]["key_1"]["key_2"]']);
     const spec = savedSpec();
     const real = spec.columns.map((c) => [c.file, c.header ?? c.jsonPath]);
     for (const loc of [["ledger.csv", "Avery"], ["ledger.csv", "Status"], ["ledger.csv", "Amount"], ["users.json", "$.users.avery_q.role"]]) expect(real).toContainEqual(loc);
     expect(spec.questions[0]?.about).toEqual({ file: "users.json", jsonPath: "$.users.avery_q.role" });
   });
 
-  test("a re-plan tokenises a header or key that carries a saved spec entity", async () => {
+  test("a re-plan tokenises a header or key that carries a saved spec entity, like every other", async () => {
     remote("profile-only");
     expect((await plan(["in"], echoAnalyst())).code).toBe(0);
     // The saved spec now names an entity; a new file carries it in a lower-case header and a key.

@@ -11,11 +11,11 @@
 //   - privacy.mode "none" calls no model; "local-only" refuses anything that is not a
 //     loopback literal (127.0.0.0/8, ::1, localhost), which rules out claude-cli and the
 //     hosted Anthropic API. There is no fallback to another backend.
-//   - privacy.mode "profile-only" allows a remote model, but the data must be exactly
-//     profilePayload(profile, policy): a schema-valid profile and the policy, nothing else, and
-//     no document outlines or speaker labels (text that sampleCount does not bound), and every
-//     file path, sheet name, value-like header and flagged JSON key segment a token.
-//     The mode and the profile's sample count are printed before every call, even when quiet.
+//   - privacy.mode "profile-only" allows a remote model that never sees a value (AGT-1832): the
+//     data must be exactly profilePayload(profile, policy), a schema-valid profile and the policy,
+//     nothing else; the profile carries no samples (sampleCount 0, no sample values, sentences or
+//     lines), no document outlines and no speaker labels, and every file path, sheet name, header
+//     and JSON key segment is a token. The mode is printed before every call, even when quiet.
 //   - the caller's data is quoted as JSON inside a <data> block, and any string in it
 //     longer than MAX_DATA_STRING characters is refused, not truncated: a long string
 //     there means document text is about to leave the machine.
@@ -75,11 +75,6 @@ export interface AskOptions {
   env?: Record<string, string | undefined>;
   stderr?: (line: string) => void;
   timeoutMs?: number;
-  /**
-   * Under profile-only, the spec's entity forms (entityForms in src/profile/tokens.ts): a header or
-   * key segment that carries one must have been tokenised, or the call is refused.
-   */
-  entityForms?: readonly string[];
 }
 
 export class ModelError extends Error {
@@ -252,11 +247,10 @@ export function policyView(policy: Pick<Policy, "sensitive" | "keep">): PolicyVi
 }
 
 /**
- * Refuses data that is not exactly a profile payload: other keys, an invalid profile, an invalid
- * policy view, or a name the profile should carry as a token. Name-likeness uses the payload's own
- * keep terms and `entityForms` (the spec's entities, AGT-1808).
+ * Refuses data that is not exactly a value-free profile payload: other keys, an invalid profile,
+ * an invalid policy view, any sample or other document text, or a name that is not a token.
  */
-export function assertProfilePayload(data: unknown, entityForms: readonly string[] = []): asserts data is ProfilePayload {
+export function assertProfilePayload(data: unknown): asserts data is ProfilePayload {
   const refuse = (why: string): never => {
     throw new ModelRefusal(`privacy.mode is profile-only: only the profile and the policy may be sent, ${why}`);
   };
@@ -270,20 +264,29 @@ export function assertProfilePayload(data: unknown, entityForms: readonly string
   if (!checked.ok) refuse(`but the profile is not valid: ${checked.issues.map((i) => `${i.path}: ${i.message}`).join("; ")}`);
   const issues = validateSchema(POLICY_VIEW_SCHEMA, policy);
   if (issues.length > 0) refuse(`but the policy is not valid: ${issues.map((i) => `${i.path}: ${i.message}`).join("; ")}`);
-  // Document text the sample count does not bound. validateProfile already holds samples,
-  // sampleSentences and sampleLines to sampleCount; outlines and speaker labels have no such
-  // bound, so under profile-only they must be empty (forPrivacyMode in src/profile/profile.ts).
-  const unbounded = [
-    ...(profile as Profile).documents.flatMap((d, i) => (d.outline.length > 0 ? [`$.profile.documents[${i}].outline`] : [])),
-    // Transcript speaker names (VTT, SRT, transcript-shaped text and DOCX): forPrivacyMode empties them.
-    ...(profile as Profile).transcripts.flatMap((t, i) => (t.speakers.length > 0 ? [`$.profile.transcripts[${i}].speakers`] : [])),
+  // Values and other document text: samples, sample sentences and sample lines (whatever
+  // sampleCount says), document outlines and transcript speaker labels. forPrivacyMode in
+  // src/profile/profile.ts empties all of them; anything left here is refused, never trimmed.
+  const p = profile as Profile;
+  const text = [
+    ...(p.sampleCount === 0 ? [] : ["$.profile.sampleCount"]),
+    ...p.tables.flatMap((t, i) => t.columns.flatMap((c, j) => (c.stats.samples.length > 0 ? [`$.profile.tables[${i}].columns[${j}].stats.samples`] : []))),
+    ...p.jsonKeys.flatMap((k, i) => (k.stats.samples.length > 0 ? [`$.profile.jsonKeys[${i}].stats.samples`] : [])),
+    ...p.documents.flatMap((d, i) => [
+      ...(d.outline.length > 0 ? [`$.profile.documents[${i}].outline`] : []),
+      ...(d.sampleSentences.length > 0 ? [`$.profile.documents[${i}].sampleSentences`] : []),
+    ]),
+    ...p.transcripts.flatMap((t, i) => [
+      ...(t.speakers.length > 0 ? [`$.profile.transcripts[${i}].speakers`] : []),
+      ...(t.sampleLines.length > 0 ? [`$.profile.transcripts[${i}].sampleLines`] : []),
+    ]),
   ];
-  if (unbounded.length > 0) {
-    refuse(`but the profile carries document text that sampleCount does not bound (${unbounded.join(", ")}); re-run blind profile or blind plan under profile-only`);
+  if (text.length > 0) {
+    refuse(`but the profile carries values or other document text (${text.join(", ")}); a model may see statistics only: set [profile] samples to 0 (or leave it unset) and re-run blind plan`);
   }
-  // Names that are document text: paths, sheet names, value-like header rows, name-like headers and
-  // flagged JSON key segments go out only as tokens (tokeniseProfile in src/profile/tokens.ts).
-  const named = untokenised(profile as Profile, { keep: (policy as PolicyView).keep, entities: entityForms });
+  // Names that are document text: every path, sheet name, header and JSON key segment goes out
+  // only as a token (tokeniseProfile in src/profile/tokens.ts).
+  const named = untokenised(p);
   if (named.length > 0) {
     refuse(`but the profile carries names that must be sent as tokens (${named.join(", ")}); tokenise it with tokeniseProfile first`);
   }
@@ -524,7 +527,7 @@ export async function ask<T>(role: Role, system: string, prompt: Prompt, schema:
   const cfg = opts.policy.models[role];
   const mode = opts.policy.privacy.mode;
   const url = resolveEndpoint(role, cfg, mode);
-  if (mode === "profile-only") assertProfilePayload(prompt.data, opts.entityForms);
+  if (mode === "profile-only") assertProfilePayload(prompt.data);
   assertShortStrings(prompt.data);
   const samples = mode === "profile-only" ? (prompt.data as ProfilePayload).profile.sampleCount : undefined;
   const key = readKey(role, cfg, opts.env ?? process.env);

@@ -360,6 +360,7 @@ describe("profile-only: the auditor is sent the output's profile, not its text",
   test("a reply naming a file that was not sent is rejected", async () => {
     writePolicy((p) => {
       p.privacy.mode = "profile-only";
+      p.profile = { samples: 0, samplesExplicit: false };
       p.models.auditor = { ...LOCAL("fake-auditor"), url: "https://auditor.example.com/v1" };
     });
     const r = await audit(fakeModel(() => '{"candidates": [{"file": "notes.txt", "quote": "pier", "reason": "location"}]}'), "out", "--json");

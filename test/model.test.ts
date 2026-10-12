@@ -428,12 +428,13 @@ describe("claude-cli", () => {
     expect(args).toContain("[You classify columns.]");
     expect(args).not.toContain("[--model]");
     const stdin = readFileSync(join(dir, "stdin"), "utf8");
-    expect(stdin).toContain('"Owner"');
+    expect(stdin).toContain('"col_1"');
+    expect(stdin).not.toContain("Owner");
     expect(args.join("\n")).not.toContain("Owner");
     const cwd = readFileSync(join(dir, "cwd"), "utf8").trim();
     expect(cwd).toContain("blind-claude-");
     expect(existsSync(cwd)).toBe(false);
-    expect(lines[0]).toStartWith("analyst · claude-cli · default · profile-only · samples 3 · ");
+    expect(lines[0]).toStartWith("analyst · claude-cli · default · profile-only · samples 0 · ");
   });
 
   test("passes --model when configured and rejects a non-conforming result twice", async () => {

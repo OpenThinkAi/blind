@@ -49,7 +49,7 @@ import { inDateContext, isDateWord } from "../engine/datecontext.ts";
 import { decode, EncodingError, isEightBit } from "../engine/encoding.ts";
 import type { BlindMap } from "../engine/map.ts";
 import { isPlaceholderImage } from "../engine/images.ts";
-import { isPseudonym } from "../engine/pseudonym.ts";
+import { isPseudonym, nameSafe } from "../engine/pseudonym.ts";
 import { nameWordExcluded, onNameTokens } from "../engine/names.ts";
 import { findPatternSpans, keepDomains, secretSpans, type Span } from "../engine/text.ts";
 import { nameShaped, recurrenceExclusion, vocabularyForms } from "../engine/recur.ts";
@@ -328,7 +328,33 @@ class NeedleIndex {
 // Pseudonym shapes, recognised by shape alone (and confirmed with isPseudonym), so pseudonyms from an
 // earlier map are still recognised.
 export const SHAPED_RE =
-  /(?<![A-Za-z0-9_.-])(?:user_[0-9a-f]{4}@host-[0-9a-f]{4}(?:\.host-[0-9a-f]{4})*(?:\.[a-z]{2,63})?|host-[0-9a-f]{4}(?:\.host-[0-9a-f]{4})*(?:\.[a-z]{2,63})?|(?:Person|Org|Host|Id|Value|Loc)_[0-9A-F]{4}|(?:192\.0\.2|198\.51\.100|203\.0\.113)\.\d{1,3})/g;
+  /(?<![A-Za-z0-9_.-])(?:\[[A-Za-z0-9][A-Za-z0-9 -]*[ ][A-Z]+ #[0-9A-F]{4}\]|user_[0-9a-f]{4}@host-[0-9a-f]{4}(?:\.host-[0-9a-f]{4})*(?:\.[a-z]{2,63})?|host-[0-9a-f]{4}(?:\.host-[0-9a-f]{4})*(?:\.[a-z]{2,63})?|(?:Person|Org|Host|Id|Value|Loc)_[0-9A-F]{4}|(?:192\.0\.2|198\.51\.100|203\.0\.113)\.\d{1,3})/g;
+
+const nameSafeCache = new WeakMap<BlindMap, string[]>();
+
+/**
+ * The name-safe twins (`Client_A_7F3A`) of the readable pseudonyms in the map, and where they stand in
+ * text. A twin with a role label cannot be told from an ordinary identifier by shape, so the map is
+ * what says it is one. Only whole runs count: not inside a longer letter or digit run.
+ */
+export function nameSafeSpans(text: string, map: BlindMap): [number, number][] {
+  let twins = nameSafeCache.get(map);
+  if (twins === undefined) {
+    twins = [...new Set(map.entries.filter((e) => e.pseudonym.startsWith("[")).map((e) => nameSafe(e.pseudonym)))].filter((t) => t !== "" && !t.startsWith("["));
+    nameSafeCache.set(map, twins);
+  }
+  const out: [number, number][] = [];
+  if (!text.includes("_")) return out;
+  for (const t of twins) {
+    for (let at = text.indexOf(t); at !== -1; at = text.indexOf(t, at + 1)) {
+      const end = at + t.length;
+      if (at > 0 && /[A-Za-z0-9]/.test(text[at - 1] as string)) continue;
+      if (end < text.length && /[A-Za-z0-9]/.test(text[end] as string)) continue;
+      out.push([at, end]);
+    }
+  }
+  return out;
+}
 
 interface Hit {
   start: number;
@@ -408,6 +434,8 @@ function scanView(view: View, ctx: Context, isName: boolean): Hit[] {
   for (const m of ascii ? text.matchAll(SHAPED_ANY_RE) : []) {
     if (isPseudonym(m[0], ctx.map)) pseudo.fill(1, m.index, m.index + m[0].length);
   }
+  const twins = ascii ? nameSafeSpans(text, ctx.map) : [];
+  for (const [s, e] of twins) pseudo.fill(1, s, e);
   /** Every letter and digit of text[s, e) is inside a pseudonym. */
   const onlyPseudonyms = (s: number, e: number): boolean => {
     for (let i = s; i < e; i++) if (pseudo[i] === 0 && /[\p{L}\p{N}]/u.test(text[i] as string)) return false;
@@ -416,6 +444,7 @@ function scanView(view: View, ctx: Context, isName: boolean): Hit[] {
   for (const m of ascii ? text.matchAll(SHAPED_RE) : []) {
     if (isPseudonym(m[0], ctx.map)) masks.push([m.index, m.index + m[0].length]);
   }
+  for (const t of twins) masks.push(t);
   const found: [number, Needle][] = [];
   for (const [i, n] of ctx.index.find(f.text)) {
     const whole = (!n.wordStart || !isWordAt(f.text, i - 1)) && (!n.wordEnd || !isWordAt(f.text, i + n.folded.length));

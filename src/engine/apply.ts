@@ -826,8 +826,9 @@ function settleFallback(plans: readonly Plan[]): void {
 }
 
 /** Readable-shaped text in a name or value, as a placeholder-masked copy for error messages (AGT-1933). */
-const masked = (s: string): string => s.replace(READABLE_SHAPE_RE, "<pseudonym>").replace(NAME_SAFE_SHAPE_RE, "<pseudonym>");
-const shaped = (s: string): boolean => s.search(READABLE_SHAPE_RE) >= 0 || s.search(NAME_SAFE_SHAPE_RE) >= 0;
+const masked = (s: string): string =>
+  s.replace(new RegExp(READABLE_SHAPE_RE.source, "g"), "<pseudonym>").replace(new RegExp(NAME_SAFE_SHAPE_RE.source, "g"), "<pseudonym>");
+const shaped = (s: string): boolean => READABLE_SHAPE_RE.test(s) || NAME_SAFE_SHAPE_RE.test(s);
 
 /**
  * Under the readable style, refuses input that already holds readable-shaped text, before anything is

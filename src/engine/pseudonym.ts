@@ -82,6 +82,8 @@ export interface PseudonymizerOptions {
    * placeholder and has no map entry (AGT-1848).
    */
   redactCards?: boolean;
+  /** Blinded-name shape from blind.toml `[pseudonyms] style`: `readable` or `compact` (nothing reads it yet). */
+  style?: "readable" | "compact";
 }
 
 export class PseudonymError extends Error {

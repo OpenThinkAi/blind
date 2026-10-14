@@ -260,6 +260,8 @@ export interface ApplyOptions {
    * placeholder of the same format under the same part name; `keep` copies them unchanged, with a warning.
    */
   images?: ImageMode;
+  /** Blinded-name shape (blind.toml `[pseudonyms] style`), passed to the Pseudonymizer. Nothing reads it yet. */
+  pseudonymStyle?: "readable" | "compact";
 }
 
 /** The spec does not fit the inputs (a rule names a column that is not there, or a shape this engine cannot apply). */
@@ -1108,7 +1110,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   for (const [cls, list] of Object.entries(spec.entities)) {
     if (cls !== "vocabulary" && list !== undefined) entities[cls as PseudoClass] = list;
   }
-  const pz = new Pseudonymizer({ salt: opts.salt, map: priorMap, entities, avoid, personAliases: aliases, redactCards: patternOn(spec.patterns, "card") });
+  const pz = new Pseudonymizer({ salt: opts.salt, map: priorMap, entities, avoid, personAliases: aliases, redactCards: patternOn(spec.patterns, "card"), style: opts.pseudonymStyle });
   const officeIds = new OfficeIds(opts.salt);
 
   // Pass 1 ends here: derive every pseudonym in sorted order.

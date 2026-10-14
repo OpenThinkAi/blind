@@ -181,3 +181,31 @@ describe("[images]", () => {
     expect(errorOf(`${valid()}\n[images]\nresize = true\n`)).toContain("unknown key images.resize");
   });
 });
+
+describe("[pseudonyms]", () => {
+  const withoutTable = () => valid().replace(/\[pseudonyms\][^\[]*/, "");
+
+  test("style = readable parses", () => {
+    expect(parsePolicy(`${withoutTable()}\n[pseudonyms]\nstyle = "readable"\n`).pseudonyms).toEqual({ style: "readable" });
+  });
+
+  test("style = compact parses", () => {
+    expect(parsePolicy(`${withoutTable()}\n[pseudonyms]\nstyle = "compact"\n`).pseudonyms).toEqual({ style: "compact" });
+  });
+
+  test("an absent table resolves to compact", () => {
+    const text = withoutTable();
+    expect(text).not.toContain("[pseudonyms]");
+    expect(parsePolicy(text).pseudonyms).toEqual({ style: "compact" });
+  });
+
+  test("a bad style value is refused, naming it", () => {
+    const msg = errorOf(`${withoutTable()}\n[pseudonyms]\nstyle = "fancy"\n`);
+    expect(msg).toContain("pseudonyms.style");
+    expect(msg).toContain("fancy");
+  });
+
+  test("an unknown key is refused, naming it", () => {
+    expect(errorOf(`${withoutTable()}\n[pseudonyms]\nflavor = "readable"\n`)).toContain("unknown key pseudonyms.flavor");
+  });
+});

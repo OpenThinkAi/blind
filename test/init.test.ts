@@ -214,3 +214,16 @@ describe("arguments", () => {
     expect(existsSync(join(dir, "blind.toml"))).toBe(false);
   });
 });
+
+describe("blind init pseudonym style", () => {
+  test("writes [pseudonyms] style = readable and it loads as readable", async () => {
+    const c = capture(true);
+    expect(await runInit([dir, "--defaults"], c.io)).toBe(0);
+    expect(readFileSync(join(dir, "blind.toml"), "utf8")).toContain('[pseudonyms]\nstyle = "readable"');
+    expect(loadPolicy(dir).pseudonyms).toEqual({ style: "readable" });
+  });
+
+  test("renderPolicy of the default policy contains the readable table", () => {
+    expect(renderPolicy(defaultPolicy())).toContain('[pseudonyms]\nstyle = "readable"');
+  });
+});

@@ -95,6 +95,12 @@ const PREFIXED_RE = /^(?:Person|Org|Host|Id|Value|Loc)_[0-9A-F]{4}$/;
 const READABLE_RE = /^\[([A-Za-z0-9][A-Za-z0-9 -]*) ([A-Z]+) #([0-9A-F]{4})\]$/;
 /** The name-safe twin of a readable form: spaces in the label become `_`, brackets and `#` are dropped. */
 const NAME_SAFE_RE = /^([A-Za-z0-9][A-Za-z0-9 _-]*)_([A-Z]+)_([0-9A-F]{4})$/;
+/**
+ * Unanchored scans for input text (AGT-1933): a readable pseudonym anywhere in a line, and its
+ * name-safe twin bounded so it is not part of a longer word. Global: use `search` or `matchAll`.
+ */
+export const READABLE_SHAPE_RE = /\[[A-Za-z0-9][A-Za-z0-9 -]* [A-Z]+ #[0-9A-F]{4}\]/g;
+export const NAME_SAFE_SHAPE_RE = /(?<![A-Za-z0-9_])[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*_[A-Z]+_[0-9A-F]{4}(?![A-Za-z0-9_])/g;
 const CLASS_LABELS = ["Person", "Org", "Host", "Id", "Value", "Place"];
 const NAME_SAFE_CLASS_RE = new RegExp(`^(?:${CLASS_LABELS.join("|")})_[A-Z]+_[0-9A-F]{4}$`);
 

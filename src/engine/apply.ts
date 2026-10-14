@@ -64,7 +64,8 @@ import { assertRowWidths, type Cell, CsvError, parseCsv, renderCell, type Row, s
 import { decode, type Encoding, EncodingError, encode } from "./encoding.ts";
 import { isJsonNumber, type JsonFormat, JsonError, type JsonToken, jsonCuts, quote, scanJson, scanJsonl, stringOffsets } from "./json.ts";
 import { type BlindMap, foldText, withoutValues } from "./map.ts";
-import { type EntityEntry, Pseudonymizer } from "./pseudonym.ts";
+import { type EntityEntry, NAME_SAFE_SHAPE_RE, Pseudonymizer, READABLE_SHAPE_RE } from "./pseudonym.ts";
+import { cellText, readWorkbook } from "../formats/xlsx.ts";
 import { lastKey } from "./birthdate.ts";
 import { type ColumnDefault, type ColumnOutcome, decide, holdsWhole, isFallback, removedForms } from "./columns.ts";
 import { type ContextOptions, type ContextTriggerSpec, pairCells } from "./context.ts";
@@ -824,6 +825,42 @@ function settleFallback(plans: readonly Plan[]): void {
   }
 }
 
+/** Readable-shaped text in a name or value, as a placeholder-masked copy for error messages (AGT-1933). */
+const masked = (s: string): string => s.replace(READABLE_SHAPE_RE, "<pseudonym>").replace(NAME_SAFE_SHAPE_RE, "<pseudonym>");
+const shaped = (s: string): boolean => s.search(READABLE_SHAPE_RE) >= 0 || s.search(NAME_SAFE_SHAPE_RE) >= 0;
+
+/**
+ * Under the readable style, refuses input that already holds readable-shaped text, before anything is
+ * written, so reveal can never rewrite author text (AGT-1933). Names the file and position; never the value.
+ */
+function refuseShaped(inputs: readonly InputFile[]): void {
+  const refuse = (where: string, what: string): never => {
+    throw new ApplyError(`${where}: ${what} already holds readable-pseudonym-shaped text; refusing under the readable style (nothing written)`);
+  };
+  for (const input of inputs) {
+    const file = masked(input.path);
+    if (shaped(input.path)) refuse(file, "the file name");
+    const format = engineFormat(input.path);
+    try {
+      if (format === "xlsx") {
+        const wb = readWorkbook(input.bytes);
+        wb.sheets.forEach((s, i) => {
+          if (shaped(s.name)) refuse(file, `sheet ${i + 1} (its name)`);
+          for (const c of s.cells) if (shaped(cellText(c, wb.sharedStrings))) refuse(file, `sheet ${i + 1}, cell ${c.ref}`);
+        });
+        wb.definedNames.forEach((n) => shaped(n) && refuse(file, "a defined name"));
+      } else if (format === "docx") {
+        docxParagraphs(planDocx(input.bytes, "replace"), "all").forEach((t, i) => shaped(t) && refuse(file, `paragraph ${i + 1}`));
+      } else if (format !== null) {
+        decode(input.bytes).text.split("\n").forEach((line, i) => shaped(line) && refuse(`${file}:${i + 1}`, "this line"));
+      }
+    } catch (e) {
+      // Unreadable input is reported by the planning pass below, with its usual skip or error; only a refusal escapes here.
+      if (e instanceof ApplyError) throw e;
+    }
+  }
+}
+
 export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyOptions): ApplyResult {
   const sorted = [...inputs].sort((a, b) => cmp(a.path, b.path));
   for (let i = 1; i < sorted.length; i++) {
@@ -831,6 +868,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       throw new ApplyError(`two inputs share the path ${JSON.stringify((sorted[i] as InputFile).path)}`);
     }
   }
+  if (opts.pseudonymStyle === "readable") refuseShaped(sorted);
   const keep = keepDomains(opts.keep ?? []);
   const unruled = opts.columns ?? "fallback";
   const rulesByFile = new Map<string, ColumnRule[]>();

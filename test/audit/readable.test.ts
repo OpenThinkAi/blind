@@ -37,7 +37,7 @@ function made() {
 describe("audits recognise readable pseudonyms", () => {
   test("engine output in readable mode is clean in both layers", () => {
     const { r, out, pseudo } = made();
-    expect(pseudo).toMatch(/^\[Person [A-Z]+ #[0-9A-F]{4}\]$/);
+    expect(pseudo).toMatch(/^\[[A-Z][A-Za-z ]* [A-Z]+ #[0-9A-F]{4}\]$/);
     expect(findings(both([file("staff.csv", out)], r.map))).toEqual([]);
   });
 

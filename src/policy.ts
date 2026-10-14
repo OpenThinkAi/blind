@@ -290,6 +290,7 @@ export function renderPolicy(p: Policy): string {
     p.images.keep ? "keep = true" : "# keep = false",
     "",
     "# Blinded names: readable is [Client A #7F3A] (role and letters, easy to read); compact is Person_7F3A.",
+    "# The readable renderer is not built yet: until it lands, both styles produce compact output.",
     "[pseudonyms]",
     `style = ${str(p.pseudonyms.style)}`,
     "",

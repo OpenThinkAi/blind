@@ -46,7 +46,7 @@ import { type LinkShape, officeLinkAttribute } from "../formats/officeids.ts";
 import { accountSegments } from "../formats/paths.ts";
 import type { PseudoClass } from "./canonical.ts";
 import { type HexNamer, rewriteOfficeId } from "./officeid.ts";
-import type { Pseudonymizer } from "./pseudonym.ts";
+import { nameSafe, type Pseudonymizer } from "./pseudonym.ts";
 import { type CellRule, type ContextOptions, pairCells } from "./context.ts";
 import { type ExtraForm, type Span, withCellRedaction } from "./text.ts";
 import { customPartRefusal } from "./customxml.ts";
@@ -647,7 +647,9 @@ function renderNode(node: Node, pz: Pseudonymizer, ids: HexNamer): string {
   for (let i = 0; i < node.value.length; i++) {
     for (; k < inserts.length && (inserts[k] as (typeof inserts)[number]).at === i; k++) {
       const { edit } = inserts[k] as (typeof inserts)[number];
-      out += pz.pseudonym(edit.cls, edit.value);
+      const to = pz.pseudonym(edit.cls, edit.value);
+      // An account name sits in a path, which cannot hold brackets, spaces or "#".
+      out += edit.source === "account" ? nameSafe(to) : to;
     }
     if (!blank[i]) out += node.value[i];
   }

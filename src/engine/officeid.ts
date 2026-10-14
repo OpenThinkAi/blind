@@ -18,6 +18,7 @@
 import { createHmac } from "node:crypto";
 import { guidCore, type PseudoClass } from "./canonical.ts";
 import type { LinkShape } from "../formats/officeids.ts";
+import { nameSafe } from "./pseudonym.ts";
 
 export interface IdNamer {
   pseudonym(cls: PseudoClass, value: string): string;
@@ -73,7 +74,7 @@ const DOCUMENT_ID = /^(\d+_(?:[A-Za-z]+:\d+_)?)(.+)$/;
 function rewritePart(part: string, pz: IdNamer, hex: HexNamer): string | null {
   if (guidCore(part) !== undefined) {
     // Office writes GUIDs in upper case; one with no letters at all ("{00000000-0001-...}") stays upper case too.
-    const g = pz.pseudonym("id", part);
+    const g = nameSafe(pz.pseudonym("id", part));
     return /[a-f]/.test(part) ? g : g.toUpperCase();
   }
   if (HEX.test(part)) return hex.hex(part);
@@ -98,5 +99,5 @@ export function rewriteOfficeId(shape: LinkShape, value: string, pz: IdNamer, he
     const r = rewritePart(value, pz, hex);
     if (r !== null) return r;
   }
-  return pz.pseudonym("id", value);
+  return nameSafe(pz.pseudonym("id", value));
 }

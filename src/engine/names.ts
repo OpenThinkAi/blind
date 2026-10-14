@@ -15,7 +15,7 @@
 // throws NameError rather than writing a workbook the application refuses.
 
 import type { PseudoClass } from "./canonical.ts";
-import type { Pseudonymizer } from "./pseudonym.ts";
+import { nameSafe, type Pseudonymizer } from "./pseudonym.ts";
 import type { PatternName, Patterns } from "../schema.ts";
 import { partExclusion } from "./recur.ts";
 import type { Shield } from "./shield.ts";
@@ -54,12 +54,26 @@ export function violation(slot: NameSlot, name: string): string | null {
   return null;
 }
 
+const URL_TOKEN = /^[<("'[]*(?:[a-z][a-z0-9+.-]*:\/\/|www\.)/i;
+
+/** Whether [start, end) of `text` sits in a whitespace-delimited token that is a URL. */
+function inUrl(text: string, start: number, end: number): boolean {
+  let a = start;
+  while (a > 0 && !/\s/.test(text[a - 1] as string)) a--;
+  let b = end;
+  while (b < text.length && !/\s/.test(text[b] as string)) b++;
+  return URL_TOKEN.test(text.slice(a, b));
+}
+
 /** `value` with each span replaced by its pseudonym; spans with no class are kept as written. */
 export function rewriteSpans(value: string, spans: readonly Span[], pz: Pseudonymizer): string {
   let out = "";
   let at = 0;
   for (const s of spans) {
-    out += value.slice(at, s.start) + (s.cls === null ? value.slice(s.start, s.end) : pz.pseudonym(s.cls, s.value));
+    let to = s.cls === null ? value.slice(s.start, s.end) : pz.pseudonym(s.cls, s.value);
+    // A pseudonym inside a URL cannot hold brackets, spaces or "#": it gets the name-safe twin.
+    if (s.cls !== null && inUrl(value, s.start, s.end)) to = nameSafe(to);
+    out += value.slice(at, s.start) + to;
     at = s.end;
   }
   return out + value.slice(at);
@@ -81,7 +95,7 @@ function rewriteNameSpans(name: string, spans: readonly Span[], pz: Pseudonymize
     else {
       const before = ALNUM.test([...name.slice(0, s.start)].pop() ?? "");
       const after = ALNUM.test(String.fromCodePoint(name.codePointAt(s.end) ?? 0x20));
-      out += (before ? "_" : "") + pz.pseudonym(s.cls, s.value) + (after ? "_" : "");
+      out += (before ? "_" : "") + nameSafe(pz.pseudonym(s.cls, s.value)) + (after ? "_" : "");
     }
     at = s.end;
   }

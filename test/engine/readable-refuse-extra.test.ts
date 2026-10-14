@@ -92,6 +92,47 @@ describe("readable style refuses shaped XLSX cells, name-safe twins and DOCX par
   });
 });
 
+// The fixture workbook with its one defined name renamed to the name-safe twin (names cannot hold brackets).
+const xlsxWithDefinedName = (name: string): Uint8Array =>
+  buildZip(
+    workbookEntries().map((e) =>
+      e.name === "xl/workbook.xml" ? { ...e, data: String(e.data).replace('name="Avery_Total"', `name="${name}"`) } : e,
+    ),
+  );
+
+describe("readable style refuses a shaped file path and a shaped defined name", () => {
+  test("a file name in name-safe form: refused naming the file, value masked", () => {
+    const e = refusal(SAFE + ".txt", enc("Avery Quill met the team.\n"));
+    expect(e.message).toContain(".txt");
+    masked(e);
+  });
+
+  test("a file name in readable form: refused naming the file, value masked", () => {
+    const e = refusal("[Client A #7F3A].txt", enc("Avery Quill met the team.\n"));
+    expect(e.message).toContain(".txt");
+    masked(e);
+  });
+
+  test("a clean file name is not refused", () => {
+    const r = run("clean-notes.txt", enc("Avery Quill met the team.\n"), { pseudonymStyle: "readable" });
+    expect(r.outputs.map((o) => o.path)).toContain("clean-notes.txt");
+  });
+
+  test("an XLSX defined name in name-safe form: refused naming the file and the name, value masked", () => {
+    const e = refusal("names.xlsx", xlsxWithDefinedName(SAFE));
+    expect(e.message).toContain("names.xlsx");
+    expect(e.message).toMatch(/defined name/);
+    masked(e);
+  });
+
+  test("compact writes a file with a shaped name and a shaped defined name", () => {
+    const a = run(SAFE + ".txt", enc("Avery Quill met the team.\n"), { pseudonymStyle: "compact" });
+    expect(a.outputs.length).toBe(1);
+    const b = run("names.xlsx", xlsxWithDefinedName(SAFE), { pseudonymStyle: "compact" });
+    expect(b.outputs.map((o) => o.path)).toContain("names.xlsx");
+  });
+});
+
 describe("compact style writes the same input without refusing", () => {
   test.each([
     ["cells.xlsx", () => xlsxWithCell(SHAPED)],

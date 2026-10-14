@@ -82,7 +82,7 @@ export interface PseudonymizerOptions {
    * placeholder and has no map entry (AGT-1848).
    */
   redactCards?: boolean;
-  /** Blinded-name shape from blind.toml `[pseudonyms] style`: `readable` or `compact` (nothing reads it yet). */
+  /** Blinded-name shape from blind.toml `[pseudonyms] style`: `readable` (`[Person A #7F3A]`) or `compact` (`Person_7F3A`, the default). */
   style?: "readable" | "compact";
 }
 
@@ -91,6 +91,63 @@ export class PseudonymError extends Error {
 }
 
 const PREFIXED_RE = /^(?:Person|Org|Host|Id|Value|Loc)_[0-9A-F]{4}$/;
+/** Readable form: `[<Label> <Letters> #<HEX4>]`. Labels are ASCII words, digits, spaces and hyphens. */
+const READABLE_RE = /^\[([A-Za-z0-9][A-Za-z0-9 -]*) ([A-Z]+) #([0-9A-F]{4})\]$/;
+/** The name-safe twin of a readable form: spaces in the label become `_`, brackets and `#` are dropped. */
+const NAME_SAFE_RE = /^([A-Za-z0-9][A-Za-z0-9 _-]*)_([A-Z]+)_([0-9A-F]{4})$/;
+const CLASS_LABELS = ["Person", "Org", "Host", "Id", "Value", "Place"];
+const NAME_SAFE_CLASS_RE = new RegExp(`^(?:${CLASS_LABELS.join("|")})_[A-Z]+_[0-9A-F]{4}$`);
+
+/** Readable label per class; a role label (later work) replaces it through the `label` argument. */
+const READABLE_LABEL: Record<PseudoClass, string> = {
+  person: "Person",
+  org: "Org",
+  host: "Host",
+  id: "Id",
+  value: "Value",
+  location: "Place",
+  email: "Value",
+  redact: "Redacted",
+};
+
+/** Letters for a zero-based index: A..Z, AA, AB, ..., AZ, BA, ... */
+function lettersFor(n: number): string {
+  let out = "";
+  let i = n;
+  do {
+    out = String.fromCharCode(65 + (i % 26)) + out;
+    i = Math.floor(i / 26) - 1;
+  } while (i >= 0);
+  return out;
+}
+
+function indexOfLetters(letters: string): number {
+  let n = 0;
+  for (const ch of letters) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n - 1;
+}
+
+/** A usable label, or undefined: ASCII words, digits, spaces and hyphens only; `_` reads as a space. */
+function cleanLabel(label: string | undefined): string | undefined {
+  if (label === undefined) return undefined;
+  const l = label.replace(/_/g, " ").replace(/\s+/g, " ").trim();
+  return /^[A-Za-z0-9][A-Za-z0-9 -]*$/.test(l) ? l : undefined;
+}
+
+/** `[Client A #7F3A]` -> `Client_A_7F3A`, for slots that cannot hold brackets, spaces or `#`. */
+export function nameSafe(p: string): string {
+  const m = READABLE_RE.exec(p);
+  if (!m) return p;
+  return `${(m[1] as string).replace(/ /g, "_")}_${m[2]}_${m[3]}`;
+}
+
+/** Reverse of `nameSafe`; a string that is not a name-safe twin is returned unchanged. */
+export function fromNameSafe(s: string): string {
+  const m = NAME_SAFE_RE.exec(s);
+  if (!m) return s;
+  const label = (m[1] as string).replace(/_/g, " ");
+  return `[${label} ${m[2]} #${m[3]}]`;
+}
 const LABEL = "host-[0-9a-f]{4}";
 const HOST_RE_SRC = `${LABEL}(?:\\.${LABEL})*(?:\\.[a-z]{2,63})?`;
 const HOST_RE = new RegExp(`^${HOST_RE_SRC}$`);
@@ -103,7 +160,7 @@ const TLD_RE = /^[a-z]{2,63}$/;
 
 /** True for the forms recognisable by shape alone (everything except GUIDs and numeric IDs). */
 function isShapedPseudonym(s: string): boolean {
-  if (PREFIXED_RE.test(s) || HOST_RE.test(s) || EMAIL_RE.test(s)) return true;
+  if (PREFIXED_RE.test(s) || READABLE_RE.test(s) || NAME_SAFE_CLASS_RE.test(s) || HOST_RE.test(s) || EMAIL_RE.test(s)) return true;
   const ip = DOC_IPV4_RE.exec(s);
   if (!ip) return false;
   const last = Number(ip[1]);
@@ -119,7 +176,7 @@ export function isPseudonym(s: string, map?: BlindMap): boolean {
   if (isShapedPseudonym(s)) return true;
   if (!map) return false;
   const norm = guidCore(s) ?? s;
-  return map.entries.some((e) => e.pseudonym === norm);
+  return map.entries.some((e) => e.pseudonym === norm || nameSafe(e.pseudonym) === norm);
 }
 
 function isHostname(c: string): boolean {
@@ -217,9 +274,15 @@ export class Pseudonymizer {
   private readonly rekeyed = new Map<string, MapEntry>();
   private readonly personAliases: PersonAliases | undefined;
   private readonly redactCards: boolean;
+  private readonly readable: boolean;
+  /** Next unused letter index per readable label. */
+  private readonly nextLetter = new Map<string, number>();
+  /** Hex tags already issued or recorded in readable pseudonyms: unique within the upload. */
+  private readonly usedTags = new Set<string>();
 
   constructor(opts: PseudonymizerOptions) {
     this.redactCards = opts.redactCards === true;
+    this.readable = opts.style === "readable";
     if (opts.salt !== undefined && opts.salt.length < MIN_SALT_BYTES) {
       throw new PseudonymError(`salt must be at least ${MIN_SALT_BYTES} bytes`);
     }
@@ -235,6 +298,12 @@ export class Pseudonymizer {
     for (const e of opts.map?.entries ?? []) {
       this.entries.set(`${e.kind}\0${e.canonical}`, { ...e });
       this.issued.add(e.pseudonym);
+      const r = READABLE_RE.exec(e.pseudonym);
+      if (r) {
+        const label = r[1] as string;
+        this.usedTags.add(r[3] as string);
+        this.nextLetter.set(label, Math.max(this.nextLetter.get(label) ?? 0, indexOfLetters(r[2] as string) + 1));
+      }
     }
     for (const e of this.entries.values()) {
       if (e.kind !== "person") continue;
@@ -313,6 +382,11 @@ export class Pseudonymizer {
       if (candidate === canonical || candidate === surface) continue;
       if (this.avoid.has(candidate) || this.issued.has(candidate)) continue;
       if (this.suffixAvoided(candidate)) continue;
+      const tag = READABLE_RE.exec(candidate)?.[3];
+      if (tag !== undefined) {
+        if (this.usedTags.has(tag)) continue;
+        this.usedTags.add(tag);
+      }
       this.issued.add(candidate);
       this.entries.set(`${kind}\0${canonical}`, { kind, canonical, value: surface, pseudonym: candidate });
       return candidate;
@@ -329,7 +403,7 @@ export class Pseudonymizer {
    */
   private suffixAvoided(candidate: string): boolean {
     const m = /^(?:(?:Person|Org|Host|Id|Value|Loc)_|host-|user_)([0-9A-Za-z]+)$/.exec(candidate);
-    const variable = m?.[1] ?? (/^\d+$/.test(candidate) ? candidate : undefined);
+    const variable = m?.[1] ?? READABLE_RE.exec(candidate)?.[3] ?? (/^\d+$/.test(candidate) ? candidate : undefined);
     if (variable !== undefined) return this.isAvoided(variable);
     // A GUID reads as its hyphen-separated groups: an all-digit group can equal a real numeric ID
     // (AGT-1805), and any group can equal an avoided token.
@@ -368,7 +442,16 @@ export class Pseudonymizer {
     return keepTld ? `${out.join(".")}.${last}` : out.join(".");
   }
 
-  private prefixed(cls: RealPseudoClass, canonical: string, surface: string): string {
+  private prefixed(cls: RealPseudoClass, canonical: string, surface: string, label?: string): string {
+    if (this.readable) {
+      const known = this.lookup(cls, canonical, surface);
+      if (known !== undefined) return known;
+      const lab = cleanLabel(label) ?? READABLE_LABEL[cls];
+      const letters = lettersFor(this.nextLetter.get(lab) ?? 0);
+      const out = this.derive(cls, canonical, surface, (b) => `[${lab} ${letters} #${hex4(b).toUpperCase()}]`);
+      this.nextLetter.set(lab, (this.nextLetter.get(lab) ?? 0) + 1);
+      return out;
+    }
     return this.derive(cls, canonical, surface, (b) => `${PREFIX[cls]}_${hex4(b).toUpperCase()}`);
   }
 
@@ -389,7 +472,8 @@ export class Pseudonymizer {
     return undefined;
   }
 
-  pseudonym(cls: PseudoClass, value: string): string {
+  /** `label` (readable style only) names the value's role; it defaults to the class word. */
+  pseudonym(cls: PseudoClass, value: string, label?: string): string {
     // Redacted text is a fixed placeholder: no pseudonym, no map entry, so it cannot be revealed.
     if (cls === "redact" || (this.redactCards && cardDigits(value) !== undefined)) return REDACTED_VALUE;
     const { key: c, display } = this.resolve(cls, value);
@@ -402,12 +486,12 @@ export class Pseudonymizer {
       case "host":
         if (IPV4_RE.test(c)) return this.derive("host", c, surface, renderIpv4);
         if (isHostname(c)) return this.compose("host", c, surface, () => this.hostLabels(c));
-        return this.prefixed(cls, c, surface);
+        return this.prefixed(cls, c, surface, label);
       case "email": {
         const m = EMAIL_SHAPE_RE.exec(c);
         const [local, domain] = [m?.[1], m?.[2]];
         if (local === undefined || domain === undefined || !domain.split(".").every((l) => HOST_LABEL_RE.test(l))) {
-          return this.prefixed(cls, c, surface);
+          return this.prefixed(cls, c, surface, label);
         }
         return this.compose("email", c, surface, () => {
           const user = this.derive("email-local", local, local, (b) => `user_${hex4(b)}`);
@@ -418,18 +502,18 @@ export class Pseudonymizer {
         if (guidCore(c) !== undefined) return formatGuidLike(value, this.derive("id", c, surface, renderGuid));
         // A phone written with separators canonicalises to digits but keeps the prefixed shape.
         if (/^\d+$/.test(c) && /^\d+$/.test(value.trim())) return this.derive("id", c, surface, (b) => renderNumeric(b, c));
-        return this.prefixed(cls, c, surface);
+        return this.prefixed(cls, c, surface, label);
       }
       case "person":
       case "org":
       case "location":
       case "value":
-        return this.prefixed(cls, c, surface);
+        return this.prefixed(cls, c, surface, label);
     }
   }
 
   isPseudonym(s: string): boolean {
-    return isShapedPseudonym(s) || this.issued.has(guidCore(s) ?? s);
+    return isShapedPseudonym(s) || this.issued.has(guidCore(s) ?? s) || this.issued.has(fromNameSafe(s));
   }
 
   toMap(): BlindMap {

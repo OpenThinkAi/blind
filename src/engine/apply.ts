@@ -260,7 +260,7 @@ export interface ApplyOptions {
    * placeholder of the same format under the same part name; `keep` copies them unchanged, with a warning.
    */
   images?: ImageMode;
-  /** Blinded-name shape (blind.toml `[pseudonyms] style`), passed to the Pseudonymizer. Nothing reads it yet. */
+  /** Blinded-name shape (blind.toml `[pseudonyms] style`), passed to the Pseudonymizer, which renders it. The CLI does not forward it yet (AGT-1931). */
   pseudonymStyle?: "readable" | "compact";
 }
 

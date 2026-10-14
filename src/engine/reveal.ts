@@ -30,6 +30,7 @@ import { decode, EncodingError, encode } from "./encoding.ts";
 import { engineFormat } from "./apply.ts";
 import { isJsonNumber, JsonError, quote, scanJson, scanJsonl, stringOffsets } from "./json.ts";
 import type { BlindMap } from "./map.ts";
+import { nameSafe } from "./pseudonym.ts";
 import { DocxError, type DocxPlan, planDocx, rulesFor } from "./docx.ts";
 import { type NameSlot, splitExtension, violation } from "./names.ts";
 
@@ -67,7 +68,12 @@ export class Revealer {
         const target = { value: e.value, guid: guidCore(e.value) };
         this.targets.set(core, target);
         this.targets.set(core.toUpperCase(), target);
-      } else this.targets.set(e.pseudonym, { value: e.value });
+      } else {
+        this.targets.set(e.pseudonym, { value: e.value });
+        // The name-safe twin (`Client_A_7F3A`) of a readable form, as written in name slots and URLs.
+        const twin = nameSafe(e.pseudonym);
+        if (twin !== e.pseudonym) this.targets.set(twin, { value: e.value });
+      }
     }
     const forms = [...this.targets.keys()].sort((a, b) => b.length - a.length || cmp(a, b));
     this.re =

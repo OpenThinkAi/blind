@@ -85,4 +85,14 @@ describe("audits recognise readable pseudonyms", () => {
       expect(findSecretSpans(t).length).toBeGreaterThan(0);
     }
   });
+
+  test("a map value shaped like a name-safe twin is a leak; a real twin stays clean", () => {
+    const { r, pseudo } = made();
+    for (const original of ["Host_A_1234", "Id_A_1234"]) {
+      const map = { ...r.map, entries: [...r.map.entries, { kind: "id" as const, canonical: original.toLowerCase(), value: original, pseudonym: "Id_ABCD" }] };
+      const rep = both([file("notes.md", `see ${original} here\n`)], map);
+      expect(findings(rep).some((f) => f.severity === "leak" && f.reason.includes("from the map survives"))).toBe(true);
+      expect(findings(both([file(`x_${nameSafe(pseudo)}.txt`, "ok\n")], map))).toEqual([]);
+    }
+  });
 });

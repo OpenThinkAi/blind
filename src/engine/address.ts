@@ -113,7 +113,8 @@ function addressAt(text: string, start: number, afterNumber: number): AddressSpa
 }
 
 const capitalised = (w: string): boolean => /^\p{Lu}/u.test(w);
-const isPseudonymWord = (w: string): boolean => new RegExp(`^(?:${PSEUDONYM}|${READABLE_PSEUDONYM}|${NAME_SAFE_PSEUDONYM})$`, "u").test(w);
+// Name-safe twins are not exempt here: without the map a shape is no proof, and a real `Host_A_1234` must not be.
+const isPseudonymWord = (w: string): boolean => new RegExp(`^(?:${PSEUDONYM}|${READABLE_PSEUDONYM})$`, "u").test(w);
 
 /** The street's end extended over an optional unit and `City ST ZIP`. */
 function extend(text: string, end: number): number {

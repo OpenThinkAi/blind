@@ -70,7 +70,6 @@ import { lastKey } from "./birthdate.ts";
 import { type ColumnDefault, type ColumnOutcome, decide, holdsWhole, isFallback, removedForms } from "./columns.ts";
 import { type ContextOptions, type ContextTriggerSpec, pairCells } from "./context.ts";
 import { DocxError, type DocxPlan, docxParagraphs, docxWholes, FONT, planDocx, THUMBNAIL, thumbnailReason, refuseDocxUnrewritten, renderDocx, scanDocx } from "./docx.ts";
-import { cellText } from "../formats/xlsx.ts";
 import { OfficeIds } from "./officeid.ts";
 import { NameRewriter, rewriteSpans } from "./names.ts";
 import { canonicalize } from "./canonical.ts";

@@ -50,6 +50,7 @@ import {
   type Finding,
   MAX_ZIP_DEPTH,
   SHAPED_RE,
+  nameSafeSpans,
   type TreeEntry,
 } from "./mechanical.ts";
 import { fold, stringView, unescapeView, type View, viewsOf, xmlBaseView } from "./views.ts";
@@ -364,6 +365,16 @@ function findCandidates(
     const blanks: [number, number][] = [];
     for (const m of original.matchAll(PSEUDONYM_SHAPE_RE)) {
       if (POOL_IP_RE.test(m[0]) ? issuedIp(m[0], map) : isPseudonym(m[0], map)) blanks.push([m.index, m.index + m[0].length]);
+    }
+    for (const t of nameSafeSpans(original, map)) blanks.push(t);
+    blanks.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+    for (let k = blanks.length - 1; k > 0; k--) {
+      const prev = blanks[k - 1] as [number, number];
+      const cur = blanks[k] as [number, number];
+      if (cur[0] < prev[1]) {
+        if (cur[1] > prev[1]) prev[1] = cur[1];
+        blanks.splice(k, 1);
+      }
     }
     if (blanks.length > 0) {
       let t = "";

@@ -86,7 +86,7 @@ const TECH = new Set([
   "oauth2", "http2", "http3", "tls12", "tls13", "s3", "ec2", "win32", "win64", "x509", "pkcs12", "pkcs7", "ascii85",
 ]);
 
-const PSEUDONYM_RE = /(?:Person|Org|Host|Id|Value|Loc)_[0-9A-F]{4}|user_[0-9a-f]{4}@|host-[0-9a-f]{4}|REDACTED|Redacted/u;
+const PSEUDONYM_RE = /\[[A-Za-z0-9][A-Za-z0-9 -]*[ ][A-Z]+ #[0-9A-F]{4}\]|[A-Z][A-Za-z0-9_-]*_[A-Z]+_[0-9A-F]{4}\b|(?:Person|Org|Host|Id|Value|Loc)_[0-9A-F]{4}|user_[0-9a-f]{4}@|host-[0-9a-f]{4}|REDACTED|Redacted/u;
 const URL_RE = /^(?:[a-z][a-z0-9+.-]*:\/\/|www\.|mailto:|urn:|file:)/iu;
 const PATH_RE = /^(?:\/|~\/|\.\.?\/|\\\\|[A-Za-z]:[\\/])/u;
 const DATE_RE = /^\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}(?:[T _]?\d{1,2}(?::\d{2}){1,2}(?:[.,]\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$/iu;

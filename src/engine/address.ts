@@ -43,7 +43,10 @@ const STATES = new Set([
 
 const SP = "[ \\t\\u00a0]";
 const PSEUDONYM = "(?:Person|Org|Host|Id|Value|Loc)_[0-9A-F]{4}";
-const NAME_WORD = `(?:${PSEUDONYM}(?![\\p{L}\\p{N}_])|\\p{Lu}[\\p{L}\\p{N}'’-]*|\\d{1,3}(?:st|nd|rd|th)(?![\\p{L}\\p{N}]))`;
+// Readable pseudonym (`[Client A #7F3A]`, spaces inside) and its name-safe twin (`Client_A_7F3A`): one street-name word.
+const READABLE_PSEUDONYM = "\\[[A-Za-z0-9][A-Za-z0-9 -]*[ ][A-Z]+ #[0-9A-F]{4}\\]";
+const NAME_SAFE_PSEUDONYM = "\\p{Lu}[\\p{L}\\p{N}-]*(?:_[\\p{L}\\p{N}-]+)*_[A-Z]+_[0-9A-F]{4}(?![\\p{L}\\p{N}_])";
+const NAME_WORD = `(?:${READABLE_PSEUDONYM}|${NAME_SAFE_PSEUDONYM}|${PSEUDONYM}(?![\\p{L}\\p{N}_])|\\p{Lu}[\\p{L}\\p{N}'’-]*|\\d{1,3}(?:st|nd|rd|th)(?![\\p{L}\\p{N}]))`;
 
 // The house number: 1-6 digits, optionally a letter or a half, standing alone (not in a longer number,
 // a decimal, a price, a time or a range).
@@ -110,7 +113,7 @@ function addressAt(text: string, start: number, afterNumber: number): AddressSpa
 }
 
 const capitalised = (w: string): boolean => /^\p{Lu}/u.test(w);
-const isPseudonymWord = (w: string): boolean => new RegExp(`^${PSEUDONYM}$`).test(w);
+const isPseudonymWord = (w: string): boolean => new RegExp(`^(?:${PSEUDONYM}|${READABLE_PSEUDONYM}|${NAME_SAFE_PSEUDONYM})$`, "u").test(w);
 
 /** The street's end extended over an optional unit and `City ST ZIP`. */
 function extend(text: string, end: number): number {

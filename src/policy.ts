@@ -109,7 +109,12 @@ export interface Policy {
    * placeholder of the same format; true copies them unchanged, with a warning and an audit candidate.
    */
   images: { keep: boolean };
+  /** `[pseudonyms] style`: `readable` writes `[Client A #7F3A]`; `compact` writes `Person_7F3A`. No table means compact. */
+  pseudonyms: { style: PseudonymStyle };
 }
+
+export const PSEUDONYM_STYLES = ["readable", "compact"] as const;
+export type PseudonymStyle = (typeof PSEUDONYM_STYLES)[number];
 
 /** The spec with blind.toml's `[patterns]` switches laid over its own: the patterns apply and audit use. */
 export function withPolicyPatterns(spec: Spec, patterns: PolicyPatterns): Spec {
@@ -149,6 +154,7 @@ export function defaultPolicy(): Policy {
     context: { enabled: true, triggers: [] },
     defaults: { columns: "fallback" },
     images: { keep: false },
+    pseudonyms: { style: "readable" },
   };
 }
 
@@ -282,6 +288,10 @@ export function renderPolicy(p: Policy): string {
     "# cannot read them. By default each is replaced with a neutral placeholder of the same format. keep = true",
     "# copies them unchanged (the apply report warns and the audit lists them as unscanned).",
     p.images.keep ? "keep = true" : "# keep = false",
+    "",
+    "# Blinded names: readable is [Client A #7F3A] (role and letters, easy to read); compact is Person_7F3A.",
+    "[pseudonyms]",
+    `style = ${str(p.pseudonyms.style)}`,
     "",
   ].join("\n");
 }
@@ -435,7 +445,7 @@ export function parsePolicy(text: string, source = POLICY_FILE): Policy {
   }
   if (!isTable(doc)) throw new PolicyError(`${source}: not a TOML table`);
   const r = new Reader(source);
-  r.noExtra(doc, "", ["sensitive", "keep", "models", "profile", "privacy", "patterns", "columns", "context", "defaults", "images"]);
+  r.noExtra(doc, "", ["sensitive", "keep", "models", "profile", "privacy", "patterns", "columns", "context", "defaults", "images", "pseudonyms"]);
 
   const sensitive = r.table(doc, "sensitive", "sensitive", ["classes", "description", "examples"]);
   const classes = r.strings(sensitive, "classes", "sensitive.classes");
@@ -477,7 +487,15 @@ export function parsePolicy(text: string, source = POLICY_FILE): Policy {
     context: readContext(r, doc),
     defaults: readDefaults(r, doc),
     images: readImages(r, doc),
+    pseudonyms: readPseudonyms(r, doc),
   };
+}
+
+/** `[pseudonyms]` is optional, and so is its one key. Without the table the style is compact (existing output). */
+function readPseudonyms(r: Reader, doc: Table): Policy["pseudonyms"] {
+  if (doc.pseudonyms === undefined) return { style: "compact" };
+  const t = r.table(doc, "pseudonyms", "pseudonyms", ["style"]);
+  return { style: t.style === undefined ? "compact" : r.oneOf(t, "style", "pseudonyms.style", PSEUDONYM_STYLES) };
 }
 
 /** `[images]` is optional, and so is its one key. */

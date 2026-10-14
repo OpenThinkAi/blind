@@ -69,6 +69,7 @@ import { lastKey } from "./birthdate.ts";
 import { type ColumnDefault, type ColumnOutcome, decide, holdsWhole, isFallback, removedForms } from "./columns.ts";
 import { type ContextOptions, type ContextTriggerSpec, pairCells } from "./context.ts";
 import { DocxError, type DocxPlan, docxParagraphs, docxWholes, FONT, planDocx, THUMBNAIL, thumbnailReason, refuseDocxUnrewritten, renderDocx, scanDocx } from "./docx.ts";
+import { cellText } from "../formats/xlsx.ts";
 import { OfficeIds } from "./officeid.ts";
 import { NameRewriter, rewriteSpans } from "./names.ts";
 import { canonicalize } from "./canonical.ts";
@@ -271,6 +272,34 @@ export class ApplyError extends Error {
 
 /** Code-unit order, never locale order. */
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+/** Header and key words that say nothing about a role. */
+const GENERIC_ROLES = new Set(["name", "value", "id", "field", "column", "col"]);
+
+/**
+ * The readable role label a header or JSON key gives its values (AGT-1932), or undefined for the class
+ * word: ASCII letters and spaces, Title Case, at most 24 characters; `_`, `-` and camelCase split into words.
+ * Generic (`name`, `value`, `id`, `field`, `column`, `col`), empty, numeric and non-ASCII headers give none.
+ */
+export function roleLabel(header: string | undefined): string | undefined {
+  if (header === undefined || /[^\x00-\x7f]/.test(header)) return undefined;
+  const words = header
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[^A-Za-z]+/g, " ")
+    .trim()
+    .split(" ")
+    .filter((w) => w !== "")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+  let label = "";
+  for (const w of words) {
+    const next = label === "" ? w : `${label} ${w}`;
+    if (next.length > 24) break;
+    label = next;
+  }
+  if (label === "" && words.length > 0) label = (words[0] as string).slice(0, 24);
+  if (label === "" || GENERIC_ROLES.has(label.toLowerCase())) return undefined;
+  return label;
+}
 
 /** `fixed`: the whole value replaced by a set text (a `redact` column's REDACTED_VALUE). */
 type CellEdit = { kind: "pseudo"; cls: PseudoClass } | { kind: "spans"; spans: Span[] } | { kind: "fixed"; value: string };
@@ -1147,9 +1176,63 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     }
   }
   for (const r of names.requests()) want(r.cls, r.value);
+  // Role labels (AGT-1932): a value in a column or under a key is labelled from that header as written in
+  // the output. The first label a value gets wins; it is only read by a readable-style Pseudonymizer.
+  const labels = new Map<string, string>();
+  const setLabel = (cls: PseudoClass, value: string, header: string | undefined, headerHidden: boolean) => {
+    const label = headerHidden || header === undefined || pz.isPseudonym(header) || /[A-Za-z]_[0-9A-Fa-f]{4}/.test(header) ? undefined : roleLabel(header);
+    if (label === undefined) return;
+    const key = `${cls}\0${value}`;
+    if (!labels.has(key)) labels.set(key, label);
+  };
+  /** Whether a header cell's output differs from its input: it was pseudonymised or holds a pseudonymised span. */
+  const hidden = (e: CellEdit | undefined): boolean => e !== undefined && (e.kind !== "spans" || e.spans.some((s) => s.cls !== null));
+  const requestValues = [...requests].map((r) => r.slice(r.indexOf("\0") + 1).toLowerCase()).filter((v) => v.length >= 3);
+  for (const p of plans) {
+    if (p.kind === "table") {
+      if (p.noHeader || p.headerRow < 0) continue;
+      for (const [key, edit] of p.edits) {
+        if (edit.kind !== "pseudo") continue;
+        const [r, c] = key.split(":").map(Number) as [number, number];
+        if (r <= p.headerRow) continue;
+        const header = (p.rows[p.headerRow] as Row).cells[c]?.value;
+        const cell = (p.rows[r] as Row).cells[c];
+        if (cell !== undefined) setLabel(edit.cls, cell.value, header, hidden(p.edits.get(`${p.headerRow}:${c}`)));
+      }
+    } else if (p.kind === "json") {
+      const keyTokens = p.tokens.map((t, i) => ({ t, i })).filter((x) => x.t.kind === "key");
+      for (const [i, edit] of p.edits) {
+        if (edit.kind !== "pseudo") continue;
+        const tok = p.tokens[i] as JsonToken;
+        const header = tok.column === null ? undefined : lastKey(tok.column);
+        if (header === undefined) continue;
+        const gone = keyTokens.some((k) => k.t.value === header && hidden(p.edits.get(k.i)));
+        setLabel(edit.cls, tok.value, header, gone);
+      }
+    } else if (p.kind === "xlsx") {
+      const { wb, cells, sheets } = p.plan;
+      for (const sheet of wb.sheets) {
+        const info = sheets.find((s) => s.name === sheet.name);
+        const plans = sheet.member === null ? undefined : cells.get(sheet.member);
+        if (info === undefined || plans === undefined || info.noHeader || info.headerRow < 1) continue;
+        const headers = new Map(sheet.cells.filter((c) => c.row === info.headerRow - 1).map((c) => [c.col, cellText(c, wb.sharedStrings)]));
+        for (const c of sheet.cells) {
+          if (c.row < info.headerRow || c.type === "n") continue;
+          const plan = plans.get(c.ref);
+          if (plan === undefined || plan.action.kind !== "pseudo") continue;
+          const header = headers.get(c.col);
+          const text = cellText(c, wb.sharedStrings);
+          const lower = (header ?? "").toLowerCase();
+          const gone = requestValues.some((v) => lower.includes(v));
+          setLabel(plan.action.cls, text, header, gone);
+          setLabel(plan.action.cls, text.trim(), header, gone);
+        }
+      }
+    }
+  }
   for (const req of [...requests].sort(cmp)) {
     const cut = req.indexOf("\0");
-    pz.pseudonym(req.slice(0, cut) as PseudoClass, req.slice(cut + 1));
+    pz.pseudonym(req.slice(0, cut) as PseudoClass, req.slice(cut + 1), labels.get(req));
   }
   // Office's hex linking IDs, also in sorted order, so a collision is resolved the same way every run.
   const hexIds = new Set<string>();

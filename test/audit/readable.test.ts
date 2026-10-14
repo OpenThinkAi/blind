@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { AUDITOR_SYSTEM, AUDITOR_SYSTEM_READABLE } from "../../src/audit/auditor.ts";
 import { type AuditReport, auditTree, type Finding, type TreeEntry } from "../../src/audit/mechanical.ts";
 import { addSemanticLayer } from "../../src/audit/semantic.ts";
+import { findSecretSpans } from "../../src/engine/secret.ts";
 import { findAddresses } from "../../src/engine/address.ts";
 import { applySpec } from "../../src/engine/apply.ts";
 import { nameSafe } from "../../src/engine/pseudonym.ts";
@@ -73,5 +74,15 @@ describe("audits recognise readable pseudonyms", () => {
     expect(AUDITOR_SYSTEM).toContain("Person_1A2B");
     expect(AUDITOR_SYSTEM_READABLE).toContain("[Person A #1A2B]");
     expect(AUDITOR_SYSTEM_READABLE).not.toContain("Person_1A2B");
+  });
+
+  test("secret detector: a readable pseudonym after a trigger is not flagged", () => {
+    expect(findSecretSpans("password: [Client A #7F3A]")).toEqual([]);
+  });
+
+  test("secret detector: shaped identifiers after a trigger are still secrets, as on main", () => {
+    for (const t of ["password: Prod_API_KEY_1234", "password: My_API_TOKEN_1234"]) {
+      expect(findSecretSpans(t).length).toBeGreaterThan(0);
+    }
   });
 });

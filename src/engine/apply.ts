@@ -836,7 +836,7 @@ const shaped = (s: string): boolean => READABLE_SHAPE_RE.test(s) || NAME_SAFE_SH
  */
 function refuseShaped(inputs: readonly InputFile[]): void {
   const refuse = (where: string, what: string): never => {
-    throw new ApplyError(`${where}: ${what} already holds readable-pseudonym-shaped text; refusing under the readable style (nothing written)`);
+    throw new ApplyError(`${where}: ${what} already holds readable-pseudonym-shaped text; refusing under the readable style (nothing written; the compact style does not refuse)`);
   };
   for (const input of inputs) {
     const file = masked(input.path);

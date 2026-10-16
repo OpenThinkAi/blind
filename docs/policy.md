@@ -53,10 +53,14 @@ secret = true
 [context]
 # enabled = true
 # triggers = ["locker code", { word = "license", kind = "number" }]
+
+[pseudonyms]
+style = "readable"
 ```
 
 `[sensitive]`, `[keep]`, `[models.analyst]`, `[profile]` and `[privacy]` must be present.
-`[models.auditor]`, `profile.samples`, `[patterns]`, [`[context]`](#context), [`[defaults]`](#defaults), [`[images]`](#images) and [`[[columns]]`](#columns) rules are optional.
+`[models.auditor]`, `profile.samples`, `[patterns]`, [`[context]`](#context), [`[defaults]`](#defaults), [`[images]`](#images), [`[pseudonyms]`](#pseudonyms) and [`[[columns]]`](#columns) rules are optional.
+A missing `[pseudonyms]` table means the compact style.
 
 ## `[sensitive]`
 
@@ -194,7 +198,7 @@ treatment = "redact"
 | `sheet` | string | no | A worksheet-name glob (`*`, `?`, any case). A rule with `sheet` matches XLSX columns only. `sheet` and `path` cannot both be set. |
 | `file` | string | no | A glob on the input-relative path (`/`-separated): `*` and `?` within one folder, `**` across folders. Absent: every file. |
 | `treatment` | `"keep"`, `"scan"`, `"drop"`, `"blind"`, `"value"` or `"redact"` | yes | What the matching columns get (the spec's treatments, [spec.md](spec.md#columns)). `keep` leaves every cell byte-identical, whatever it holds. `scan` keeps the cell as written except for what the free-text scanner finds in it: pattern matches (phone, email, IP), spec entities, values blinded elsewhere, people named only in prose and the value after a [context](#context) keyword; use it for notes, remarks and diagnoses. `drop` removes the column or key from the output; `redact` writes `REDACTED` in each non-empty value. The column itself is not in the map, so it cannot be revealed; but every non-empty value still recurs: the same text in another file or column is replaced with `REDACTED`, and so are a person's name parts. They are never pseudonymised and never written to `map.json` (whatever the rule's `class`, `secret` included), so `blind reveal` cannot restore them. |
-| `class` | a spec class (`person`, `org`, `host`, `email`, `id`, `location`, `vocabulary`, `secret`, `unknown`) | no | Default: `vocabulary` for `keep`, `unknown` otherwise. `keep` with `unknown` is an error; `scan` needs no class (the audit reads a `scan` column as free text whatever its class). `blind` with a sensitive class gives that class's pseudonyms; with `unknown`, `Value_` ones; with `secret` (a password or key column), `REDACTED` in every non-empty cell, as `redact` does. `value` with `unknown` leaves the column to the engine's identifier-like test. |
+| `class` | a spec class (`person`, `org`, `host`, `email`, `id`, `location`, `vocabulary`, `secret`, `unknown`) | no | Default: `vocabulary` for `keep`, `unknown` otherwise. `keep` with `unknown` is an error; `scan` needs no class (the audit reads a `scan` column as free text whatever its class). `blind` with a sensitive class gives that class's pseudonyms; with `unknown`, `Value` ones (`Value_` in the compact style); with `secret` (a password or key column), `REDACTED` in every non-empty cell, as `redact` does. `value` with `unknown` leaves the column to the engine's identifier-like test. |
 
 How they apply:
 
@@ -281,6 +285,30 @@ A picture in a format blind has no placeholder for (TIFF, EMF, WMF, ICO, WebP) s
 reported as not written, unless `keep = true`. With `keep = true` the report warns `N images copied
 unchanged (images are not blinded)` and `blind audit` lists each picture as an `unscanned` candidate;
 the placeholders blind writes are not listed.
+
+## `[pseudonyms]`
+
+```toml
+[pseudonyms]
+style = "readable"
+```
+
+| Key | Values | Default | Meaning |
+|---|---|---|---|
+| `style` | `"readable"` or `"compact"` | `"compact"` when the table is missing | The shape of every blinded name. `readable` writes `[Label LETTERS #HEX4]`, such as `[Org C #24D2]` or `[Person A #BCF6]`, with the role from the column header where there is one. `compact` writes `Org_24D2` or `Person_BCF6`. The grammar, the letters and the role labels are in [spec.md](spec.md#pseudonym-styles). |
+
+- `blind init` writes `style = "readable"`. A `blind.toml` without the table (one written before the
+  setting existed) is **compact**, so its output does not change.
+- Any other value is refused and the message names the key: `pseudonyms.style must be one of
+  "readable", "compact"` (`blind apply` exits 2).
+- The style sets the shape of new pseudonyms. A value already in `.blind/map.json` keeps the pseudonym
+  it was given, so switching a corpus from readable to compact and applying again leaves the readable
+  forms the map holds; only values the map does not hold take the new style.
+- What reads it: `blind apply` writes the chosen style. `blind audit` uses it only to pick the example
+  pseudonyms in the model auditor's instructions; its rule-based checks recognise both styles.
+  `blind reveal` does not read it: it restores both forms from the map.
+- Under `readable`, `blind apply` refuses input that already holds readable-shaped text (exit 2, nothing
+  written), naming the file and line. Compact does not refuse. See [spec.md](spec.md#pseudonym-styles).
 
 ## `[models.analyst]` and `[models.auditor]`
 
@@ -393,9 +421,9 @@ A street address written only in prose, a cell kept as text or a JSON value, wit
 behind it, is found by its shape: a house number, an optional direction, one to four capitalised
 street-name words and a street suffix (`St`, `Rd`, `Ave`, `Blvd`, `Ln`, `Dr`, `Way`, `Ct`, `Pkwy`, `Hwy`,
 `Loop` and the spelled-out forms; the full list is in [spec.md](spec.md#patterns)), then optionally a
-unit (`Apt 4`, `Unit 12`, `#3`) and `, City ST 12345`. The whole match is one `Loc_` pseudonym, so
+unit (`Apt 4`, `Unit 12`, `#3`) and `, City ST 12345`. The whole match is one `Loc_` pseudonym (`Place` in the readable style), so
 `77 Example Rd, Springfield UT 84000` never leaves a house number or suffix beside a token, even
-when a street-name word was already replaced (`9071 S Person_A1B2 Pkwy` is one address too).
+when a street-name word was already replaced (a street with a replaced word in its name is one address too).
 
 It is off when the spec says nothing, and `blind plan` turns it on when `location` is in
 `[sensitive] classes` (set `address = false` here to keep it off). A column where at least 80% of
@@ -614,4 +642,6 @@ class = "id"
   `--force` replaces both files, and the old pseudonyms no longer match.
 - `[sensitive] description` and `examples` get the defaults above; edit them to say what matters
   for your documents.
+- `blind init` writes `[pseudonyms] style = "readable"`. A `blind.toml` without that table stays
+  compact; see [`[pseudonyms]`](#pseudonyms).
 - The salt is a secret. Never commit `.blind/`.

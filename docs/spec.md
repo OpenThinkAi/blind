@@ -60,7 +60,7 @@ One rule per table column or JSON key path. An array, possibly empty. Each rule:
 | `header` | string | one of `header` / `jsonPath` | Column header text. May be `""` for a blank header. Example: `"Owner"`. |
 | `jsonPath` | string, non-empty | one of `header` / `jsonPath` | Key path, for JSON and JSONL. Example: `"$.items[*].ref_code"`. |
 | `class` | `person` \| `org` \| `host` \| `email` \| `id` \| `location` \| `vocabulary` \| `secret` \| `unknown` | yes | What the values are. `vocabulary` means ordinary words that identify no one. `secret` means passwords, keys or tokens: under `blind` every non-empty value is written as `REDACTED`, as `redact` does, and the model analyst may not propose it with `blind`. `unknown` means nobody could decide. |
-| `treatment` | `blind` \| `keep` \| `value` \| `drop` \| `redact` \| `scan` | yes | `blind`: replace with a class-prefixed pseudonym (`Person_A7F3`). `keep`: leave unchanged. `value`: replace with a neutral `Value_` pseudonym. `scan`: keep the cell as written except for what the free-text scanner finds in it. `drop`: remove the column or key from the output. `redact`: write `REDACTED` in place of every non-empty value. Neither `drop` nor `redact` is recorded in the map, so neither can be revealed. The model analyst may not use `drop`, `redact` or `scan`: they come from `blind.toml` ([policy.md](policy.md#columns)) or from you. A column rule in the analyst's reply with one of them is dropped, not the reply: `blind plan` prints a note per dropped rule and that column is ruled as if the analyst had left it out (heuristic, then your `[[columns]]` rules, which may set them). The analyst also may not `keep` (or class `vocabulary`) an identifying column (an email, host, ID, address, phone or a column of names): that rule is dropped and noted the same way, and it may not turn a pattern off that the policy's classes call sensitive (it is turned back on and noted); `blind.toml` or you can do either. |
+| `treatment` | `blind` \| `keep` \| `value` \| `drop` \| `redact` \| `scan` | yes | `blind`: replace with a class-labelled pseudonym (`Person_BCF6` compact, `[Person A #BCF6]` readable; see [pseudonym styles](#pseudonym-styles)). `keep`: leave unchanged. `value`: replace with a neutral `Value` pseudonym. `scan`: keep the cell as written except for what the free-text scanner finds in it. `drop`: remove the column or key from the output. `redact`: write `REDACTED` in place of every non-empty value. Neither `drop` nor `redact` is recorded in the map, so neither can be revealed. The model analyst may not use `drop`, `redact` or `scan`: they come from `blind.toml` ([policy.md](policy.md#columns)) or from you. A column rule in the analyst's reply with one of them is dropped, not the reply: `blind plan` prints a note per dropped rule and that column is ruled as if the analyst had left it out (heuristic, then your `[[columns]]` rules, which may set them). The analyst also may not `keep` (or class `vocabulary`) an identifying column (an email, host, ID, address, phone or a column of names): that rule is dropped and noted the same way, and it may not turn a pattern off that the policy's classes call sensitive (it is turned back on and noted); `blind.toml` or you can do either. |
 | `confidence` | number, 0 to 1 | yes | How sure the author of the rule was. Example: `0.95`. |
 | `source` | `analyst` \| `human` \| `heuristic` \| `policy` | yes | Who wrote the rule: the model analyst, you, the built-in heuristics, or `blind plan` from a `[[columns]]` rule or `[keep]` term in `blind.toml`. |
 
@@ -96,8 +96,8 @@ the `[patterns]` table of `blind.toml` wins over the spec's value at apply and a
 | `host` | boolean | Host names, e.g. `db01.example.com`. |
 | `guid` | boolean | GUIDs, e.g. `123e4567-e89b-12d3-a456-426614174000`. |
 | `mac` | boolean | MAC addresses, e.g. `00:00:5e:00:53:01`. |
-| `phone` | boolean, optional | Phone numbers written with separators: North American (`(801) 555-0100`, `801-555-0100`, `801.555.0100`, `801 555 0100`, with an optional `+1` or `1`) and international with a leading `+` (`+44 20 7946 0958`). Replaced as an `Id_` pseudonym, and every way of writing one number (and the same number in a table column) shares one pseudonym. A group separator may also be `/`, `?` (a dash a lossy 8-bit conversion mangled: `555?555?0104`) or a Unicode dash (U+2010 to U+2015). A bare run of 10 digits (or `1` and 10) is a phone only when it is NANP-valid (area code and exchange start 2-9) and the text around it vouches for it: a phone word within a few words before it (`phone`, `tel`, `cell`, `mobile`, `call`, `text`, `contact`, `ph`, `#`), or a parenthetical relation next to it (`Sam Sample (sister) 5555550100`); or it is a cell in a column or key whose other values are all phones. An accession, order or account number with no such context, a date, an amount or an id that merely contains digits is not a phone. A spec without this field has it on. `blind plan` turns it on when the policy calls `id` sensitive, which the default policy does. |
-| `address` | boolean, optional | Street addresses in free text and in cells kept as text: a house number (1-6 digits, optionally a letter or `1/2`), an optional direction (`N`, `SW`, `North` ...), one to four capitalised street-name words (or an already-issued pseudonym token such as `Person_A1B2`, or an ordinal such as `5th`) and a street suffix (`St`, `Street`, `Rd`, `Road`, `Ave`, `Avenue`, `Blvd`, `Boulevard`, `Ln`, `Lane`, `Dr`, `Drive`, `Way`, `Ct`, `Court`, `Cir`, `Circle`, `Pl`, `Place`, `Pkwy`, `Parkway`, `Hwy`, `Highway`, `Ter`, `Terrace`, `Trl`, `Trail`, `Loop`), then optionally a unit (`Apt 4`, `Unit 12`, `#3`) and `, City ST 12345` (or ZIP+4). The whole match, house number through ZIP, is one span and one `Loc_` pseudonym, so no number or suffix is left beside a token. Never matched: a street with no house number (`a car on Example Rd`), a measure, dose or time (`2 Tabs`, `10 Days`, `5 Units`, `3 doses daily`), a room, suite, bed or page number before the house number (`Room 12 Oak Way`), `Dr` as an honorific (`Dr Sample`), a lowercase street. A spec without this field has it off; `blind plan` turns it on when the policy calls `location` sensitive, which the default policy does. |
+| `phone` | boolean, optional | Phone numbers written with separators: North American (`(801) 555-0100`, `801-555-0100`, `801.555.0100`, `801 555 0100`, with an optional `+1` or `1`) and international with a leading `+` (`+44 20 7946 0958`). Replaced as an `Id` pseudonym, and every way of writing one number (and the same number in a table column) shares one pseudonym. A group separator may also be `/`, `?` (a dash a lossy 8-bit conversion mangled: `555?555?0104`) or a Unicode dash (U+2010 to U+2015). A bare run of 10 digits (or `1` and 10) is a phone only when it is NANP-valid (area code and exchange start 2-9) and the text around it vouches for it: a phone word within a few words before it (`phone`, `tel`, `cell`, `mobile`, `call`, `text`, `contact`, `ph`, `#`), or a parenthetical relation next to it (`Sam Sample (sister) 5555550100`); or it is a cell in a column or key whose other values are all phones. An accession, order or account number with no such context, a date, an amount or an id that merely contains digits is not a phone. A spec without this field has it on. `blind plan` turns it on when the policy calls `id` sensitive, which the default policy does. |
+| `address` | boolean, optional | Street addresses in free text and in cells kept as text: a house number (1-6 digits, optionally a letter or `1/2`), an optional direction (`N`, `SW`, `North` ...), one to four capitalised street-name words (or an already-issued pseudonym token, in either style, or an ordinal such as `5th`) and a street suffix (`St`, `Street`, `Rd`, `Road`, `Ave`, `Avenue`, `Blvd`, `Boulevard`, `Ln`, `Lane`, `Dr`, `Drive`, `Way`, `Ct`, `Court`, `Cir`, `Circle`, `Pl`, `Place`, `Pkwy`, `Parkway`, `Hwy`, `Highway`, `Ter`, `Terrace`, `Trl`, `Trail`, `Loop`), then optionally a unit (`Apt 4`, `Unit 12`, `#3`) and `, City ST 12345` (or ZIP+4). The whole match, house number through ZIP, is one span and one `Loc_` pseudonym, so no number or suffix is left beside a token. Never matched: a street with no house number (`a car on Example Rd`), a measure, dose or time (`2 Tabs`, `10 Days`, `5 Units`, `3 doses daily`), a room, suite, bed or page number before the house number (`Room 12 Oak Way`), `Dr` as an honorific (`Dr Sample`), a lowercase street. A spec without this field has it off; `blind plan` turns it on when the policy calls `location` sensitive, which the default policy does. |
 | `card` | boolean, optional | Payment card numbers: 13 to 19 digits, unseparated or grouped by spaces or dashes as 4-4-4-4, 4-6-5, 4-6-4 or 4-4-4-4-3, that start with a card prefix (4; 51-55; 2221-2720; 34, 37; 6011, 65; 35) **and** pass the Luhn checksum, so a 15-digit microchip number, an order or accession number and a random digit run are left alone. Written as `REDACTED`, never a pseudonym, and not recorded in the map; a whole cell that is a card number is redacted the same way in a column blinded by any rule. A spec without this field follows `secret`: on when `secret` is on. |
 | `secret` | boolean, optional | Passwords, keys and tokens by their shape, and by a `password`, `key` or `token` in the same or the two sentences or turns before: `Tr0ub4dor&3`, an API key, `Example2031!` read out a turn after the password was mentioned. Written as `REDACTED`, never a pseudonym, and not recorded in the map. Product codes, versions, CamelCase words, doses, pseudonyms, hex hashes and ids are not matched; the rules are in [policy.md](policy.md#the-secret-pattern). A spec without this field has it off (`blind init` writes `secret = true` in `[patterns]`, which wins). `blind plan` turns it on when the policy calls `secret` sensitive, which the default policy does. |
 
@@ -118,7 +118,7 @@ that column's rule as your decision (`source: "human"`, `confidence: 1`):
 
 | Answer | Column rule becomes |
 |---|---|
-| `blind` | treatment `blind`, class unchanged (an `unknown` column gets `Value_` pseudonyms) |
+| `blind` | treatment `blind`, class unchanged (an `unknown` column gets `Value` pseudonyms) |
 | `value` | treatment `value`; on an `unknown` column, treatment `blind`, so it is always pseudonymised |
 | `keep` | treatment `keep`; an `unknown` column becomes `vocabulary` |
 | a class name | that class, treatment `blind` if the policy calls it sensitive, otherwise `keep` |
@@ -178,7 +178,7 @@ plan (exit 2) before anything is profiled or sent.
     space or dash, an optional two-letter region code before it (`7ABC123`, `ST 12-3456`), and up
     to three words before it (`blue Civic 7ABC123`). When every word before the plate is a colour,
     make, model or body style, `blind apply` replaces only the plate and keeps the words
-    (`blue Civic Id_…`); any other word before it (a name, say) and the whole cell is replaced.
+    (`blue Civic` followed by an `Id` pseudonym); any other word before it (a name, say) and the whole cell is replaced.
   - **username / login handle:** one lowercase token of letters, digits, `.`, `_`, `-`, 3–32
     characters with at least three letters (`dana42`, `lee.sample7`, `rspec`), not a dictionary word.
     A handle column also needs digits in its values and mostly distinct values, so a lowercase
@@ -243,7 +243,7 @@ same blinded output tree. No model is called.
 - **`--accept-leaks`** decides the leaks without asking: every candidate with a `leak` finding (a
   spec entity, a map value or an enabled pattern match that survives, all from the mechanical
   layer) is accepted at its suggested class, or `id` when it suggests none (a map value a column
-  pass pseudonymised as `Value_`, an account name in a path). Candidates that are not leaks
+  pass pseudonymised as `Value`, an account name in a path). Candidates that are not leaks
   (semantic and model findings, variants in another case) stay undecided unless `--accept` or
   `--reject` decides them, and an `--accept` or `--reject` of a leak wins. A leak that cannot be
   accepted (a saved vocabulary form) is listed with why and left undecided; the rest are still
@@ -252,8 +252,8 @@ same blinded output tree. No model is called.
   and file names included), even when an earlier round's map holds it, a
   value that occurs whole in a `keep` column of the output or equals a `[keep].terms` entry, a
   measure (a date, decimal, amount or quantity) and a number of under 5 digits with no letters.
-  A value that matches a shape pattern (an email, say) is never left out for its words. Until two classes share a pseudonym, a map value accepted as `id` gets an `Id_`
-  pseudonym where it recurs, not its column's `Value_`.
+  A value that matches a shape pattern (an email, say) is never left out for its words. Until two classes share a pseudonym, a map value accepted as `id` gets an `Id`
+  pseudonym where it recurs, not its column's `Value`.
 
 - **Saved entries are never changed.** New entities are appended; everything saved is written back
   byte-identical. A value that is already a form of a saved entity changes nothing (and is said so);
@@ -267,6 +267,92 @@ same blinded output tree. No model is called.
   "unmapped" }`. The candidates hold the
   values read back from `<out>` in the clear, as the table does, so you can decide on them: treat
   that output as you treat the spec, and do not save it where others can read it.
+
+## Pseudonym styles
+
+`[pseudonyms] style` in `blind.toml` sets the shape of every blinded name (see
+[policy.md](policy.md#pseudonyms)). `blind init` writes `readable`; a `blind.toml` without the table is
+`compact`. Both styles come from the same HMAC, so one value has the same tag in each. The two rows
+below are one CSV, blinded under each style with the same salt:
+
+```text
+readable  6162,[Org C #24D2],[Client Scope Code AR #FE8B],[Ledger Ref AX #0A3E],[Person A #BCF6],host-3716.host-e799.example
+compact   6162,Org_24D2,Value_FE8B,Id_0A3E,Person_BCF6,host-3716.host-e799.example
+```
+
+### Readable form
+
+```text
+[<Label> <Letters> #<HEX4>]
+```
+
+- **Label**: a class word (`Person`, `Org`, `Host`, `Id`, `Value`, `Place`) or a role label (below).
+  ASCII letters, digits, spaces and hyphens only.
+- **Letters**: `A` to `Z`, then `AA`, `AB` and so on up to `AZ`, then `BA`. Each label has its own
+  sequence, numbered in the engine's sorted request order, so the same input gives the same letters.
+  A map that already holds readable pseudonyms pins them; new letters continue after the highest one
+  the map holds.
+- **Tag**: four uppercase hex digits from the same HMAC as compact. It is unique within one upload and
+  is never equal to a real value's token (the check compact makes too).
+- A `location` value writes the label `Place` (compact: `Loc_`). An email-class value that is not
+  email-shaped writes `Value`. `redact` writes `REDACTED`, in both styles.
+- Some shapes are the same in both styles: email addresses, host names (`host-` labels), IPv4 addresses
+  in the documentation ranges, GUIDs and numeric IDs of the same length. A phone written with
+  separators takes the `Id` form.
+
+### Role labels
+
+For a value in a CSV or TSV column, an XLSX column or a JSON key, the label is the header or key as
+written in the input:
+
+- Words are split at `_`, `-`, spaces and camelCase and set in Title Case: `client_scope_code` reads
+  `Client Scope Code`, and `Ledger Ref` stays `Ledger Ref`.
+- At most 24 characters. Whole words are kept while they fit; a single word longer than 24 is cut to 24.
+- **Fallbacks** to the class word: a generic header (`name`, `value`, `id`, `field`, `column` or `col`,
+  in any case); an empty header or one with no letters; a header with non-ASCII characters; a header
+  that is itself a pseudonym or holds a `Word_HHHH` token; a header cell the engine changed, so that its
+  output is not the header as written.
+- Free text, text files, Word documents and transcripts have no column, so they take the class word.
+- **Which label a value gets.** A pseudonym is derived once, by the first request for its entity in
+  sorted order, and that request's label is the one used. A value first met without a label (in free
+  text, say) therefore takes the class word everywhere in the upload, even where a later column with a
+  header names it. Shorter forms sort first: in kit 2 the note's `Quillfeather` is requested before the
+  `Counterparty Label` column's `Quillfeather Holdings`, so that organisation reads `[Org C #24D2]` in
+  the full output. Run on its own, the CSV gets its header labels:
+
+```text
+6162,[Counterparty Label C #24D2],[Client Scope Code AR #FE8B],[Ledger Ref AX #0A3E],[Owner A #BCF6],host-3716.host-e799.example
+```
+
+### Name-safe form
+
+A slot that cannot hold brackets, spaces or `#` takes the name-safe twin of the readable form: the
+label's spaces become `_`, and the brackets and `#` go. `[Org A #5CF4]` has the twin `Org_A_5CF4`.
+Compact pseudonyms already fit these slots, so compact output does not change. The twin is used in:
+
+- sheet names and defined names: the defined name `Brambleworth_Total` is written `Org_A_5CF4_Total`;
+- file and folder names: `reviews/Brambleworth Freight.txt` is written `reviews/Org_A_5CF4.txt`. A
+  pseudonym that would touch a letter or digit of the name is set off with `_`, as above;
+- Office linking IDs, and account names in paths held in Office metadata;
+- URLs: a pseudonym inside a URL token is written as its twin, so `…/Brambleworth%20Freight/q1.pdf`
+  is written `…/Org_A_5CF4%20Freight/q1.pdf`.
+
+`blind reveal` restores both forms (see [How `blind reveal` reverses a blinded file](#how-blind-reveal-reverses-a-blinded-file)).
+
+### Input refusal
+
+Under `readable`, `blind apply` refuses input that already contains a readable pseudonym or its
+name-safe twin: in a file name, a sheet name or cell, a defined name, a Word paragraph or a text line.
+It writes nothing and exits 2. The message names the file and line (or the sheet and cell) and never
+the text itself:
+
+```text
+blind apply: notes.txt:1: this line already holds readable-pseudonym-shaped text; refusing under the readable style (nothing written; the compact style does not refuse)
+nothing was written
+```
+
+The refusal keeps reveal from rewriting author text: a value that already looks like a pseudonym would
+be restored as if blind had written it. `compact` does not refuse.
 
 ## How `blind apply` uses the spec
 
@@ -286,17 +372,17 @@ and not written (exit 1). Transcripts are found by content, not by name (see
 | `treatment: keep` (any class) | Byte-identical, except that a value blinded elsewhere is replaced (see recurring values below). Cells that contain a spec entity or pattern match are left alone and reported as a warning that names `scan` as the fix. |
 | `treatment: scan` (any class) | Kept as written except for what the free-text scanner finds, exactly as in a text file: pattern matches, spec entities, recurring values, people named only in prose and the value after a context keyword. CSV/TSV cells, JSON string values and XLSX text cells alike. Reported as `scanned`. |
 | `treatment: blind`, class `person`/`org`/`host`/`email`/`id`/`location` | Every non-empty cell gets that class's pseudonym. |
-| `treatment: blind` with `unknown`/`vocabulary`, or `value` with any other class | Every non-empty cell gets a `Value_` pseudonym. |
+| `treatment: blind` with `unknown`/`vocabulary`, or `value` with any other class | Every non-empty cell gets a `Value` pseudonym. |
 | `treatment: drop` (any class) | CSV/TSV: the column is removed from the header row down (rows above the header, such as a title, are left whole). JSON/JSONL: each member with that key path is removed with its key and one separating comma, so the document stays valid with its layout; a path of record-ID keys (`.*~`) or the root (`$`) cannot be dropped (an error). XLSX: see the workbook rules below. Reported as `dropped`. Its values still recur: see recurring values below. |
 | `treatment: redact` (any class) | Every non-empty value becomes `REDACTED` (a JSON number becomes the string `"REDACTED"`). Reported as `redacted`. Its values still recur: see recurring values below. |
-| `class: unknown, treatment: value`, or **no rule at all** | Fail closed. First, a column whose header (or a JSON key's last key) names a birth date (`dob`, `d.o.b`, `date of birth`, `birth date`, `birthdate`, `birthday`, `born`, `bday`, in any case, separator or camelCase) is **redacted**, never exempted as a date measure and never pseudonymised into the map: every non-empty cell is written as `REDACTED`, reported as `unknown → redacted (birth-date header, no rule)`, and `blind plan` notes `redact, birth-date header, no rule`. An XLSX number or date cell in it cannot hold text in place and is written as serial `0` (no date); a workbook with a pivot or chart cache is refused, as for any redacted column. A visit or invoice date column is unaffected. Any rule that decides the column (a `keep` on `pet.dob`, a `blind` rule, `drop`, `redact`, `scan`) wins, and `[defaults] columns = "scan"` does not exempt it. The audit counts a CSV/TSV cell in such a column that is not `REDACTED` as a leak. Otherwise, if distinct ratio ≥ 0.5 and (digit ratio ≥ 0.3, or dictionary-word ratio ≤ 0.3, or ≥ 80% of values are Title-Case multi-word), every cell gets a `Value_` pseudonym, reported as `unknown → pseudonymised`; a column whose values are mostly people's names (at least half are two to four Title-Case words, or `Surname, Given`, with a common given name first or a common surname last, and no place, organisation, breed or role word) gets `Person_` pseudonyms instead, reported as `unknown → pseudonymised as people`, so their name parts recur (below). Two kinds of column are exempt: **measures**, where ≥ 80% of values are a date, a time, a decimal or grouped number (`38.6`, `1,250`; with a decimal comma, `136,1`, `4,25`, `1.250,75`, and in a `;`-delimited file also `4,250`), a currency amount (`$120.50`, `40.00 EUR`) or a quantity with a unit (`38.6 lb`, `12%`, `5 mg`), and plain integers are not measures, except that a column where ≥ 80% of values are 10- or 13-digit Unix times in 2000-01-01..2100-01-01 (`1700000000`) counts as dates, and an XLSX numeric cell whose number format is a date or time (a serial such as `46000`) is a date and is never renumbered unless a rule says so; and **small categoricals**, at most 10 distinct values over at least 4, ≥ 75% of values repeating, no codes (digit ratio < 0.3, every value has a letter) and not Title-Case names (`Canine`, `Feline`; `M`, `F`). Otherwise the column is kept (`unknown → kept (low cardinality)`, or `kept (not identifier-like)` for prose, measures and categoricals), but spec entities and patterns are still replaced inside its cells. A rule always wins: give a column a class or `blind` to pseudonymise it anyway. A cell whose whole value is also a whole cell of a `keep` or `scan` column anywhere in the corpus is not pseudonymised: it is scanned as text, and the report counts it. With `[defaults] columns = "scan"` in `blind.toml` ([policy.md](policy.md#defaults)) none of this runs: every such column is scanned, reported as `unknown → scanned`. |
+| `class: unknown, treatment: value`, or **no rule at all** | Fail closed. First, a column whose header (or a JSON key's last key) names a birth date (`dob`, `d.o.b`, `date of birth`, `birth date`, `birthdate`, `birthday`, `born`, `bday`, in any case, separator or camelCase) is **redacted**, never exempted as a date measure and never pseudonymised into the map: every non-empty cell is written as `REDACTED`, reported as `unknown → redacted (birth-date header, no rule)`, and `blind plan` notes `redact, birth-date header, no rule`. An XLSX number or date cell in it cannot hold text in place and is written as serial `0` (no date); a workbook with a pivot or chart cache is refused, as for any redacted column. A visit or invoice date column is unaffected. Any rule that decides the column (a `keep` on `pet.dob`, a `blind` rule, `drop`, `redact`, `scan`) wins, and `[defaults] columns = "scan"` does not exempt it. The audit counts a CSV/TSV cell in such a column that is not `REDACTED` as a leak. Otherwise, if distinct ratio ≥ 0.5 and (digit ratio ≥ 0.3, or dictionary-word ratio ≤ 0.3, or ≥ 80% of values are Title-Case multi-word), every cell gets a `Value` pseudonym, reported as `unknown → pseudonymised`; a column whose values are mostly people's names (at least half are two to four Title-Case words, or `Surname, Given`, with a common given name first or a common surname last, and no place, organisation, breed or role word) gets `Person` pseudonyms instead, reported as `unknown → pseudonymised as people`, so their name parts recur (below). Two kinds of column are exempt: **measures**, where ≥ 80% of values are a date, a time, a decimal or grouped number (`38.6`, `1,250`; with a decimal comma, `136,1`, `4,25`, `1.250,75`, and in a `;`-delimited file also `4,250`), a currency amount (`$120.50`, `40.00 EUR`) or a quantity with a unit (`38.6 lb`, `12%`, `5 mg`), and plain integers are not measures, except that a column where ≥ 80% of values are 10- or 13-digit Unix times in 2000-01-01..2100-01-01 (`1700000000`) counts as dates, and an XLSX numeric cell whose number format is a date or time (a serial such as `46000`) is a date and is never renumbered unless a rule says so; and **small categoricals**, at most 10 distinct values over at least 4, ≥ 75% of values repeating, no codes (digit ratio < 0.3, every value has a letter) and not Title-Case names (`Canine`, `Feline`; `M`, `F`). Otherwise the column is kept (`unknown → kept (low cardinality)`, or `kept (not identifier-like)` for prose, measures and categoricals), but spec entities and patterns are still replaced inside its cells. A rule always wins: give a column a class or `blind` to pseudonymise it anyway. A cell whose whole value is also a whole cell of a `keep` or `scan` column anywhere in the corpus is not pseudonymised: it is scanned as text, and the report counts it. With `[defaults] columns = "scan"` in `blind.toml` ([policy.md](policy.md#defaults)) none of this runs: every such column is scanned, reported as `unknown → scanned`. |
 
 A rule that names a column the file does not have is an error, so a stale spec never quietly stops
 blinding a column. Rows above the header and the header row itself are treated as free text.
 
 **One entity, one pseudonym.** A value gets one pseudonym across classes: a name blinded as a
 transcript speaker (`person`) and pseudonymised again in a `value` column keeps the speaker's
-`Person_` pseudonym rather than getting a `Value_` one too. A value is matched under the other
+`Person` pseudonym rather than getting a `Value` one too. A value is matched under the other
 class's canonical form (`Quill, Avery` finds the person `Avery Quill`), and an earlier map counts.
 The specific classes are issued before `value`, so their shape is the one kept. A `person` and a
 `value` join only when the text is written like a full name (two or more words with letters and no
@@ -355,7 +441,7 @@ has wherever else it is written, and the cell is read as those people when an in
 surname is resolved to one. A cell with no surname to share (`Dana & Lee`) is read as one name, as
 before. Spec entities are not split this way: their parts are the ones the spec lists. A cell
 pseudonymised as `value` that reads as a person's name (`Avery Quill`, `Quill, Avery`; the same test
-as a column of people) has name parts too, which carry that cell's `Value_` pseudonym.
+as a column of people) has name parts too, which carry that cell's `Value` pseudonym.
 
 **Key/value blocks.** A vertical record (`Client | Dana Example`, then `Phone | ...`, `Card | ...`,
 `Email | ...` below) puts labels in one column and values in the next. When a rule pseudonymises a
@@ -370,7 +456,7 @@ label is still pseudonymised. The value beside the column's own header (`Dana Ex
 once, as one span, when only a joiner separates them: spaces, a comma, `+`, `.`, `_`, `-`, or a
 URL-encoded space or comma (`%20`, `%2C`). So `q=Avery+Quill`, `Quill, Avery - schedule`,
 `Quill.Avery` and `Avery%20Quill` each become `Avery Quill`'s pseudonym once
-(`q=Person_A7F3`, `Person_A7F3 - schedule`), and a match may start right after a URL escape. A
+(a pseudonym after `q=`, or one before ` - schedule`), and a match may start right after a URL escape. A
 dotted initial right before or after such a span that is the initial of another word of that
 person's name is taken in too (`Quill A.` is one span). Two different people (`Avery, Bea`), a
 repeated word (`Quill Quill`) and a sentence break (`Avery. Quill`) are not joined.
@@ -395,8 +481,7 @@ shorter forms are resolved to a known person only when the corpus leaves no doub
   initial. Next to `Avery Quill` and `Rex Quill`, `A. Quill` stays a person of its own;
 - a title and one name (`Dr. Quill`, as written in a column, a speaker tag or prose) is the one
   known person with that name, or, when several have it, the one ever written with a title (`Dr. A.
-  Quill`, when the owner `Rex Quill` never is). In prose the title stays as written (`Dr.
-  Person_A7F3`).
+  Quill`, when the owner `Rex Quill` never is). In prose the title stays as written (`Dr.` followed by the person's pseudonym).
 
 Known people are those from columns, speakers, the map and names found in prose (below). Anything
 ambiguous is left as before: the lone name is a shared part with a pseudonym of its own.
@@ -432,7 +517,7 @@ table above applies to each key path's values as it does to a column's cells:
 
 - Strings and numbers are values. A number counts as written, so the string `"9123"` and the number
   `9123` under one key path get the same pseudonym (a numeric ID stays numeric). A number whose
-  pseudonym is not a number (`Person_A7F3`, `Value_2C9E`) is written as a JSON string. `true`,
+  pseudonym is not a number (a `Person` or a `Value` pseudonym, in either style) is written as a JSON string. `true`,
   `false` and `null` are never changed.
 - Keys that are record identifiers are the values of their `.*~` key path and are rewritten like any
   other value, so an ID used as a key and the same ID used as a value get the same pseudonym. If
@@ -507,7 +592,7 @@ rewritten at the XML level, so everything not blinded is copied byte for byte:
   (`w:delText`).
 - Authors and initials on comments and revisions (`w:author`, `w:initials`), people and presence
   IDs, `dc:creator`, `cp:lastModifiedBy`, Manager and Company are replaced as a whole with a
-  `Person_`, `Id_` or `Org_` pseudonym even when the spec does not list them. Other document
+  `Person`, `Id` or `Org` pseudonym even when the spec does not list them. Other document
   properties (core, app, custom), drawing names and alt text, form-field and content-control text,
   document variables, mail-merge strings and external hyperlink targets are free text.
 - Office's own linking IDs are rewritten wherever they are (see **Office structural IDs** below).
@@ -543,7 +628,7 @@ rewritten at the XML level, so everything not blinded is copied byte for byte:
 A `.vtt` or `.srt` file that is none of these is listed and not written (exit 1). A text file or
 DOCX that is not transcript-shaped is blinded as ordinary text or DOCX. In a transcript:
 
-- Every speaker tag or prefix is replaced with that speaker's `Person_` pseudonym, even when the spec
+- Every speaker tag or prefix is replaced with that speaker's `Person` pseudonym, even when the spec
   does not list the speaker: VTT voice tags (`<v Avery Quill>`), caption prefixes (`Avery Quill:`,
   `- Avery:`, `>> Avery:`) and the speaker of a timestamped paragraph. A caption prefix made only of
   dictionary words (`Note:`) is not read as a speaker. A tag equal to a keep-list term or a spec
@@ -567,8 +652,8 @@ replaced, and any tags kept; a file that is not a transcript reports the speaker
 
 **File and folder names.** Every folder name and every file name (without its extension) in the
 output tree is rewritten like free text: enabled patterns, spec entities, and also every cell value
-a column rule replaced, so `reviews/Robin Example.md` is written as `reviews/Person_4C1D.md` when
-`Robin Example` is a blinded `Owner`. Names use the same pseudonyms as the content. Names are
+a column rule replaced, so `reviews/Brambleworth Freight.txt` is written as `reviews/Org_A_5CF4.txt` in the readable style when
+`Brambleworth Freight` is a blinded organisation (the pseudonym `[Org A #5CF4]` in the content). Names use the same pseudonyms as the content. Names are
 also searched piece by piece between underscores (`backup_db01.example.com.txt`).
 Names written as identifiers are read word by word: a name is split at `_`, `-`, `.`, spaces,
 CamelCase changes and letter/digit changes, and a spec person or org name part, or a whole name, is
@@ -576,7 +661,7 @@ matched there in any case across those joins, so `consult_sample.srt`, `SampleTo
 `invoice-lee.sample.pdf` are blinded for the person `Lee Sample`. A lone word that is a dictionary
 word, an honorific or role word, a keep term or a vocabulary form is not replaced in another case
 (`report_value.txt` keeps `value`). A pseudonym that would touch a letter or digit of the name is
-set off with `_` (`SampleTotal` is written `Person_4C1D_Total`), so it stays a whole token for
+set off with `_` so it stays a whole token for
 `blind reveal`. The audit agrees: a match on a word boundary of a name is a leak where the engine
 replaces it, and a candidate (inside a longer word) otherwise. The report lists each renamed file
 (`written as ...`). Two inputs whose blinded names coincide are refused (exit 2, nothing written).
@@ -655,7 +740,7 @@ person, but two kinds are treated differently:
   hex value a same-length hex value derived with HMAC-SHA256 under the corpus salt (same case; an
   8-digit value under `0x80000000` stays under it and non-zero, as Word requires of paragraph ids;
   not in the map, so `blind reveal` does not restore it), and anything else at such a position is
-  replaced whole with an `Id_` pseudonym. The same value gets the same replacement everywhere, so
+  replaced whole with an `Id` pseudonym. The same value gets the same replacement everywhere, so
   references between parts still resolve. The positions:
   - `w:rsid*` attributes (`rsidR`, `rsidRPr`, `rsidRDefault`, `rsidP`, `rsidDel`, `rsidSect`,
     `rsidTr`) and `val` on `w:rsid` and `w:rsidRoot` (settings.xml): edit-session ids;
@@ -734,6 +819,9 @@ the same code as the commands themselves.
   variant comes back as that recorded form, and a number that apply had to write as a JSON string
   stays a string. A pseudonym is matched as a whole token (not beside a letter or digit, not
   inside a longer dotted name; `_` separates tokens, as in blinded file names), longest first.
+  Both forms of a readable pseudonym are restored: the name-safe twin wherever it stands in a name,
+  sheet, defined name or URL. A form comes back as the value the map records, so a sheet named
+  `Org_A_5CF4` is restored as `Brambleworth Freight`, not the shorter `Brambleworth` the input had.
   Text that happens to equal a pseudonym is restored too. Dropped and redacted columns are not in
   the map: they stay as apply left them (absent, or `REDACTED`). Their values recur elsewhere all
   the same, and a recurrence is in the map like any other.
@@ -790,8 +878,8 @@ up to three layers, mechanical, semantic, then model; the report lists the layer
   blinded person's name in the engine's case for a single-word form (capitalised, or an exact short
   acronym) is a `leak`; in another case, a `candidate`; one that is also a dictionary word or a keep
   term is a `candidate` in that case and is not reported otherwise. Text that is a pseudonym or a `vocabulary` form is never a finding,
-  and neither is a pattern match made only of pseudonyms and punctuation (a blinded file name such
-  as `Person_1E95_user_559f@host-f3ce.com.md`). File and directory names are also read piece by
+  and neither is a pattern match made only of pseudonyms and punctuation (a blinded file name whose parts are
+  all pseudonyms and `_`, such as a name-safe twin joined to an email pseudonym). File and directory names are also read piece by
   piece between underscores, as `blind apply` reads them, and a file's or zip member's extension is read on its own
   (`word/_rels/document.xml.rels` is not a host).
 - **OOXML structure.** In the members of an OOXML package (a zip with `[Content_Types].xml`), the

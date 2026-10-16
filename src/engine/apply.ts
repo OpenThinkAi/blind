@@ -1215,7 +1215,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   }
   for (const r of names.requests()) want(r.cls, r.value);
   // Role labels (AGT-1932): a value in a column or under a key is labelled from that header as written in
-  // the output. The first label a value gets wins; it is only read by a readable-style Pseudonymizer.
+  // the output. The first labelled request for an entity wins; it is only read by a readable-style Pseudonymizer.
   const labels = new Map<string, string>();
   const setLabel = (cls: PseudoClass, value: string, header: string | undefined, headerHidden: boolean) => {
     const label = headerHidden || header === undefined || pz.isPseudonym(header) || /[A-Za-z]_[0-9A-Fa-f]{4}/.test(header) ? undefined : roleLabel(header);
@@ -1268,9 +1268,22 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       }
     }
   }
-  for (const req of [...requests].sort(cmp)) {
+  // The entity's label is that of the first LABELLED request in sorted order, whichever spelling sorts
+  // first; the class word only when no request for the entity carries a label.
+  const sortedRequests = [...requests].sort(cmp);
+  const entityLabels = new Map<string, string>();
+  for (const req of sortedRequests) {
+    const label = labels.get(req);
+    if (label === undefined) continue;
     const cut = req.indexOf("\0");
-    pz.pseudonym(req.slice(0, cut) as PseudoClass, req.slice(cut + 1), labels.get(req));
+    const ek = pz.entityKey(req.slice(0, cut) as PseudoClass, req.slice(cut + 1));
+    if (!entityLabels.has(ek)) entityLabels.set(ek, label);
+  }
+  for (const req of sortedRequests) {
+    const cut = req.indexOf("\0");
+    const cls = req.slice(0, cut) as PseudoClass;
+    const value = req.slice(cut + 1);
+    pz.pseudonym(cls, value, labels.get(req) ?? entityLabels.get(pz.entityKey(cls, value)));
   }
   // Office's hex linking IDs, also in sorted order, so a collision is resolved the same way every run.
   const hexIds = new Set<string>();

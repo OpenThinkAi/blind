@@ -524,6 +524,11 @@ export class Pseudonymizer {
     }
   }
 
+  /** The key one entity's spellings share (class and resolved canonical form), for grouping requests. */
+  entityKey(cls: PseudoClass, value: string): string {
+    return `${cls}\0${this.resolve(cls, value).key}`;
+  }
+
   isPseudonym(s: string): boolean {
     return isShapedPseudonym(s) || this.issued.has(guidCore(s) ?? s) || this.issued.has(fromNameSafe(s));
   }

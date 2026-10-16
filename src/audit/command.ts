@@ -268,6 +268,7 @@ export async function runAudit(argv: string[], io: AuditIO): Promise<number> {
         cwd: io.cwd,
         spec,
         keep,
+        style: policy.pseudonyms.style,
         ask: { ...io.model, stderr: (line) => io.err.write(`blind audit: ${line}\n`) },
       });
     }

@@ -98,7 +98,8 @@ documents ------------ engine (deterministic) ---------------+--> blinded docume
   Nothing is applied without a saved spec, and a later plan only sends what the spec does not
   already cover.
 - **Engine** (no model): applies the spec byte for byte. The same value gets the same
-  pseudonym everywhere (`Person_A7F3`, `Org_2C9E`), and so does one person however the name is
+  pseudonym everywhere (`[Person A #BCF6]`, `[Org C #24D2]`; `Person_BCF6` and `Org_24D2` in the
+  compact style, set with `[pseudonyms] style` in `blind.toml`), and so does one person however the name is
   written (`Quill, Avery`, `Avery+Quill`, `Dr. A. Quill` when nothing else fits), while a pet and
   an owner who share a name stay apart. IPs stay IPs and emails stay emails, formulas,
   joins and formatting survive. A column nobody classified that looks like identifiers is
@@ -132,7 +133,8 @@ read (an embedded file, a macro, a custom XML data part with values) is listed a
 
 `blind apply` writes `.blind/map.json` (mode 0600): every pseudonym with the original it stands
 for. With it, `blind reveal ./out` restores the originals into `.blind/revealed/`: file and folder
-names, and the content of CSV, JSON, text, transcript, XLSX and DOCX files. The map, the salt (`.blind/salt`) and the revealed files all
+names, and the content of CSV, JSON, text, transcript, XLSX and DOCX files. Both forms of a readable
+pseudonym (`[Org A #5CF4]` and its name-safe `Org_A_5CF4`) are restored. The map, the salt (`.blind/salt`) and the revealed files all
 contain or unlock the real values: keep them secret and never commit `.blind/`. Applying again
 reuses the map, so earlier pseudonyms do not change. Machines that share a salt produce the same
 pseudonyms for the same values. Every file under `.blind/` that holds values, and how to delete it,

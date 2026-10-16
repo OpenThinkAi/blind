@@ -276,8 +276,8 @@ same blinded output tree. No model is called.
 below are one CSV, blinded under each style with the same salt:
 
 ```text
-readable  6162,[Org C #24D2],[Client Scope Code AR #FE8B],[Ledger Ref AX #0A3E],[Person A #BCF6],host-3716.host-e799.example
-compact   6162,Org_24D2,Value_FE8B,Id_0A3E,Person_BCF6,host-3716.host-e799.example
+readable  5580,[Counterparty Label C #8481],[Client Scope Code AR #A888],[Ledger Ref AX #5763],[Owner A #F884],host-ee89.host-470e.example
+compact   5580,Org_8481,Value_A888,Id_5763,Person_F884,host-ee89.host-470e.example
 ```
 
 ### Readable form
@@ -313,15 +313,16 @@ written in the input:
   that is itself a pseudonym or holds a `Word_HHHH` token; a header cell the engine changed, so that its
   output is not the header as written.
 - Free text, text files, Word documents and transcripts have no column, so they take the class word.
-- **Which label a value gets.** A pseudonym is derived once, by the first request for its entity in
-  sorted order, and that request's label is the one used. A value first met without a label (in free
-  text, say) therefore takes the class word everywhere in the upload, even where a later column with a
-  header names it. Shorter forms sort first: in kit 2 the note's `Quillfeather` is requested before the
-  `Counterparty Label` column's `Quillfeather Holdings`, so that organisation reads `[Org C #24D2]` in
-  the full output. Run on its own, the CSV gets its header labels:
+- **Which label a value gets.** A pseudonym is derived once per entity, and its label is the one of the
+  first *labelled* request for that entity in sorted order, whichever spelling sorts first. A value met
+  only without a label (free text, say) takes the class word. A value that is already issued under
+  one label keeps it in every column and file. In kit 2 the note's `Quillfeather` sorts before the
+  `Counterparty Label` column's `Quillfeather Holdings`; the organisation still reads
+  `[Counterparty Label C #8481]` in the full output (it used to read `[Org C #8481]`), and the CSV on
+  its own gives the same line:
 
 ```text
-6162,[Counterparty Label C #24D2],[Client Scope Code AR #FE8B],[Ledger Ref AX #0A3E],[Owner A #BCF6],host-3716.host-e799.example
+5580,[Counterparty Label C #8481],[Client Scope Code AR #A888],[Ledger Ref AX #5763],[Owner A #F884],host-ee89.host-470e.example
 ```
 
 ### Name-safe form

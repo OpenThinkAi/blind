@@ -295,7 +295,7 @@ style = "readable"
 
 | Key | Values | Default | Meaning |
 |---|---|---|---|
-| `style` | `"readable"` or `"compact"` | `"compact"` when the table is missing | The shape of every blinded name. `readable` writes `[Label LETTERS #HEX4]`, such as `[Org C #24D2]` or `[Person A #BCF6]`, with the role from the column header where there is one. `compact` writes `Org_24D2` or `Person_BCF6`. The grammar, the letters and the role labels are in [spec.md](spec.md#pseudonym-styles). |
+| `style` | `"readable"` or `"compact"` | `"compact"` when the table is missing | The shape of every blinded name. `readable` writes `[Label LETTERS #HEX4]`, such as `[Counterparty Label C #8481]` or `[Owner A #F884]`, with the role from the column header where there is one. `compact` writes `Org_8481` or `Person_F884`. The grammar, the letters and the role labels are in [spec.md](spec.md#pseudonym-styles). |
 
 - `blind init` writes `style = "readable"`. A `blind.toml` without the table (one written before the
   setting existed) is **compact**, so its output does not change.

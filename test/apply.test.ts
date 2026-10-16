@@ -78,7 +78,7 @@ describe("blind apply", () => {
     const off = { ...SPEC, patterns: { ip: false, email: true, host: false, guid: true, mac: false } };
     writeFileSync(join(dir, ".blind", "spec.json"), JSON.stringify(off));
     writeFileSync(join(dir, "in", "sub", "notes.md"), "Reach 192.0.2.10 or db01.corp.example via ops@corp.example.\n");
-    const base = renderPolicy(defaultPolicy());
+    const base = renderPolicy({ ...defaultPolicy(), pseudonyms: { style: "compact" } });
 
     // No [patterns] table: the spec decides (ip and host off, email on).
     writeFileSync(join(dir, "blind.toml"), base.replace(/\[patterns\][\s\S]*$/, ""));
@@ -249,6 +249,7 @@ describe("blind apply", () => {
 
   test("file and folder names are blinded and the report maps them; keep-list hosts stay", async () => {
     const policy = defaultPolicy();
+    policy.pseudonyms = { style: "compact" };
     policy.keep.terms = ["vendor.example.net"];
     writeFileSync(join(dir, "blind.toml"), renderPolicy(policy));
     mkdirSync(join(dir, "in", "db01.example.com"));

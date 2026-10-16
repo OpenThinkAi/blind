@@ -71,6 +71,7 @@ describe("blind run, in process", () => {
     mkdirSync(join(dir, ".blind"), { mode: 0o700 });
     writeFileSync(join(dir, ".blind", "salt"), Buffer.from(Array.from({ length: 32 }, (_, i) => i + 5)), { mode: 0o600 });
     const p = defaultPolicy();
+    p.pseudonyms = { style: "compact" };
     p.models.analyst = { backend: "openai-compatible", url: "http://127.0.0.1:9/v1", model: "fake-analyst", key_env: "" };
     p.models.auditor = { backend: "openai-compatible", url: "http://127.0.0.1:9/v1", model: "fake-auditor", key_env: "" };
     writeFileSync(join(dir, "blind.toml"), renderPolicy(p));

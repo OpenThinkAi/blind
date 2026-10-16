@@ -48,6 +48,7 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 function writePolicy(edit: (p: Policy) => void = () => {}): void {
   const p = defaultPolicy();
+  p.pseudonyms = { style: "compact" };
   p.models.analyst = LOCAL("fake-analyst");
   p.models.auditor = LOCAL("fake-auditor");
   edit(p);
@@ -317,6 +318,7 @@ describe("[models.auditor] unset", () => {
 
   test("the audit reuses the analyst's backend with the auditor's prompt, and the report says so", async () => {
     const p = defaultPolicy();
+    p.pseudonyms = { style: "compact" };
     p.models.analyst = LOCAL("fake-analyst");
     writeFileSync(join(dir, "blind.toml"), renderPolicy(p).replace(/\[models\.auditor\][^[]*/, ""));
     const m = fakeModel(() => '{"candidates": []}');

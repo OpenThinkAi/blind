@@ -290,7 +290,7 @@ export function renderPolicy(p: Policy): string {
     p.images.keep ? "keep = true" : "# keep = false",
     "",
     "# Blinded names: readable is [Client A #7F3A] (role and letters, easy to read); compact is Person_7F3A.",
-    "# The engine supports readable, but the CLI output stays compact until the audit recognises readable names.",
+    "# Without this table the style is compact.",
     "[pseudonyms]",
     `style = ${str(p.pseudonyms.style)}`,
     "",

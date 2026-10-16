@@ -223,7 +223,7 @@ export async function runBench(argv: string[], io: BenchIO): Promise<number> {
 
     // The workspace: blind.toml, a fresh salt, the spec (0600), and the output. mkdtemp makes it 0700.
     ws = mkdtempSync(join(io.tmpRoot ?? tmpdir(), "blind-bench-"));
-    writeFileSync(join(ws, POLICY_FILE), policy ?? renderPolicy(defaultPolicy()), { flag: "wx" });
+    writeFileSync(join(ws, POLICY_FILE), policy ?? renderPolicy({ ...defaultPolicy(), pseudonyms: { style: "compact" } }), { flag: "wx" });
     writeSalt(ws, false);
     if (spec !== undefined) writePrivate(join(ws, BLIND_DIR, SPEC_FILE), spec);
     else {

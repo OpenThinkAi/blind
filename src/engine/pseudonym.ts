@@ -94,6 +94,8 @@ const PREFIXED_RE = /^(?:Person|Org|Host|Id|Value|Loc)_[0-9A-F]{4}$/;
 /** Readable form: `[<Label> <Letters> #<HEX4>]`. Labels are ASCII words, digits, spaces and hyphens. */
 const READABLE_RE = /^\[([A-Za-z0-9][A-Za-z0-9 -]*) ([A-Z]+) #([0-9A-F]{4})\]$/;
 /** The name-safe twin of a readable form: spaces in the label become `_`, brackets and `#` are dropped. */
+const CLASS_LABELS = ["Person", "Org", "Host", "Id", "Value", "Place"];
+const NAME_SAFE_CLASS_RE = new RegExp(`^(?:${CLASS_LABELS.join("|")})_[A-Z]+_[0-9A-F]{4}$`);
 const NAME_SAFE_RE = /^([A-Za-z0-9][A-Za-z0-9 _-]*)_([A-Z]+)_([0-9A-F]{4})$/;
 /**
  * Unanchored scans for input text (AGT-1933): a readable pseudonym anywhere in a line, and its
@@ -102,8 +104,6 @@ const NAME_SAFE_RE = /^([A-Za-z0-9][A-Za-z0-9 _-]*)_([A-Z]+)_([0-9A-F]{4})$/;
  */
 export const READABLE_SHAPE_RE = /\[[A-Za-z0-9][A-Za-z0-9 -]* [A-Z]+ #[0-9A-F]{4}\]/;
 export const NAME_SAFE_SHAPE_RE = /(?<![A-Za-z0-9_])[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*_[A-Z]+_[0-9A-F]{4}(?![A-Za-z0-9_])/;
-const CLASS_LABELS = ["Person", "Org", "Host", "Id", "Value", "Place"];
-const NAME_SAFE_CLASS_RE = new RegExp(`^(?:${CLASS_LABELS.join("|")})_[A-Z]+_[0-9A-F]{4}$`);
 
 /** Readable label per class; a role label (later work) replaces it through the `label` argument. */
 const READABLE_LABEL: Record<PseudoClass, string> = {
@@ -165,9 +165,12 @@ const EMAIL_SHAPE_RE = /^([^@\s]+)@([^@\s]+)$/;
 const HOST_LABEL_RE = /^[a-z0-9_-]+$/;
 const TLD_RE = /^[a-z]{2,63}$/;
 
-/** True for the forms recognisable by shape alone (everything except GUIDs and numeric IDs). */
-function isShapedPseudonym(s: string): boolean {
-  if (PREFIXED_RE.test(s) || READABLE_RE.test(s) || NAME_SAFE_CLASS_RE.test(s) || HOST_RE.test(s) || EMAIL_RE.test(s)) return true;
+/**
+ * True for the forms recognisable by shape alone (everything except GUIDs and numeric IDs); name-safe class-word
+ * shapes count only when `nameSafeShape` is set.
+ */
+function isShapedPseudonym(s: string, nameSafeShape = true): boolean {
+  if (PREFIXED_RE.test(s) || READABLE_RE.test(s) || (nameSafeShape && NAME_SAFE_CLASS_RE.test(s)) || HOST_RE.test(s) || EMAIL_RE.test(s)) return true;
   const ip = DOC_IPV4_RE.exec(s);
   if (!ip) return false;
   const last = Number(ip[1]);
@@ -180,7 +183,9 @@ function isShapedPseudonym(s: string): boolean {
  * the map that issued them.
  */
 export function isPseudonym(s: string, map?: BlindMap): boolean {
-  if (isShapedPseudonym(s)) return true;
+  // With a map, a name-safe class-word shape (`Host_A_1234`) reads as an ordinary identifier: only the
+  // map's entries confirm it. Without one (no map to ask) the shape is all there is.
+  if (isShapedPseudonym(s, map === undefined)) return true;
   if (!map) return false;
   const norm = guidCore(s) ?? s;
   return map.entries.some((e) => e.pseudonym === norm || nameSafe(e.pseudonym) === norm);

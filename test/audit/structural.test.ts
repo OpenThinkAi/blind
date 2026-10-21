@@ -3,11 +3,13 @@ import { type AuditReport, auditTree, blankOoxmlUris, type TreeEntry } from "../
 import { addSemanticLayer } from "../../src/audit/semantic.ts";
 import { xmlBaseView } from "../../src/audit/views.ts";
 import { officeIdAttribute, ooxmlUriAttribute, structuralValue as auditStructural, walkXml } from "../../src/audit/xml.ts";
+import { DEFAULT_SEED, generateKit } from "../../src/bench/synth.ts";
 import { applySpec } from "../../src/engine/apply.ts";
 import type { BlindMap } from "../../src/engine/map.ts";
 import { structuralValue as engineStructural } from "../../src/engine/unrewritten.ts";
 import { structuralShape } from "../../src/formats/structural.ts";
 import type { Spec } from "../../src/schema.ts";
+import { readZip } from "../formats/zipfixture.ts";
 import { docxMembers, xlsxMembers } from "./ooxmlfixture.ts";
 import { type FixtureMember, makeZip } from "./zipfixture.ts";
 
@@ -32,13 +34,22 @@ const auditOf = (path: string, bytes: Uint8Array): AuditReport => {
   const entries: TreeEntry[] = [{ path, kind: "file", bytes }];
   return addSemanticLayer(auditTree(entries, SPEC, EMPTY_MAP), entries, SPEC, EMPTY_MAP, { keep: [] });
 };
-const emailLeaks = (r: AuditReport) => r.files.flatMap((f) => f.findings).filter((f) => f.class === "pattern:email");
+const leaks = (r: AuditReport, cls: string) => r.files.flatMap((f) => f.findings).filter((f) => f.class === cls);
+const emailLeaks = (r: AuditReport) => leaks(r, "pattern:email");
 
 describe("structuralShape", () => {
   test("accepts the values Word and Excel write at structural positions", () => {
     const ok: [string, string, string][] = [
       ["w:document", "xmlns:w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main"],
       ["xml", "xmlns:v", "urn:schemas-microsoft-com:vml"],
+      ["xml", "xmlns:o", "urn:schemas-microsoft-com:office:office"],
+      ["w:document", "xmlns:w", "http://purl.oclc.org/ooxml/wordprocessingml/main"],
+      ["cp:coreProperties", "xmlns:dc", "http://purl.org/dc/elements/1.1/"],
+      ["cp:coreProperties", "xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance"],
+      ["w:document", "xmlns:w14", "http://schemas.microsoft.com/office/word/2010/wordml"],
+      ["w:document", "xmlns:go", "http://customooxmlschemas.google.com/"],
+      ["w:document", "xmlns:W", "http://Schemas.OpenXMLFormats.org/wordprocessingml/2006/main"],
+      ["ext", "uri", "http://schemas.microsoft.com/office/drawing/2010/main"],
       ["Default", "ContentType", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"],
       ["Default", "ContentType", "image/png"],
       ["Relationship", "Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"],
@@ -73,6 +84,18 @@ describe("structuralShape", () => {
       ["w:document", "xmlns:x", "http://jane@corp.example.com/ns"],
       ["w:document", "xmlns:x", "Jane Quill"],
       ["Relationship", "Type", "http://schemas.example.com/x y"],
+      // AGT-2009: a URI is structure only on a host real Office packages use.
+      ["w:document", "xmlns:x", "http://db01.corp.example.com/ns"],
+      ["w:document", "xmlns:x", "https://intranet.corp.example.com"],
+      ["w:document", "xmlns:x", "http://schemas.openxmlformats.org.corp.example.com/ns"],
+      ["w:document", "xmlns:x", "http://evil.schemas.microsoft.com/ns"],
+      ["w:document", "xmlns:x", "http://schemas.microsoft.com:8080/ns"],
+      ["w:document", "xmlns:x", "http://"],
+      ["w:document", "xmlns:x", "urn:corp:db01.corp.example.com"],
+      ["w:document", "xmlns:x", "urn:schemas-microsoft-com"],
+      ["w:document", "xmlns:x", "urn:schemas-microsoft-com:db01.corp.example.com"],
+      ["Relationship", "Type", "http://db01.corp.example.com/relationships/x"],
+      ["ext", "uri", "http://db01.corp.example.com/ext"],
       ["Default", "ContentType", "jane@corp.example.com"],
       ["worksheet", "mc:Ignorable", "db01.corp.example.com"],
       ["ext", "uri", "Avery Quill"],
@@ -120,6 +143,31 @@ describe("the engine and the audit exempt exactly the same values", () => {
   });
 });
 
+describe("every structural position in the bench's generated Office files keeps its exemption", () => {
+  test("kit v1 and kit v2: engine and audit agree, and every namespace, relationship type and uri is exempt", () => {
+    let office = 0;
+    for (const version of [1, 2] as const) {
+      for (const f of generateKit(DEFAULT_SEED, { version }).files) {
+        if (!/\.(docx|xlsx)$/i.test(f.path) || f.bytes === undefined) continue;
+        office++;
+        for (const e of readZip(f.bytes)) {
+          if (!/\.(xml|rels|vml)$/i.test(e.name)) continue;
+          const text = xmlBaseView(Buffer.from(e.text, "utf8")).text;
+          walkXml(text, {
+            attribute(element, attr, start, end) {
+              const value = text.slice(start, end);
+              const engine = engineStructural(e.name, element, attr, value);
+              expect([f.path, e.name, element, attr, engine]).toEqual([f.path, e.name, element, attr, auditStructural(e.name, element, attr, value)]);
+              if (ooxmlUriAttribute(e.name, element, attr) || officeIdAttribute(e.name, element, attr) === "template") expect([f.path, e.name, attr, value, engine]).toEqual([f.path, e.name, attr, value, true]);
+            },
+          });
+        }
+      }
+    }
+    expect(office).toBeGreaterThan(1);
+  });
+});
+
 describe("a value that does not fit its structural position is refused by apply and reported by the audit", () => {
   const cases: [string, string, string, FixtureMember[]][] = [
     ["an email in a worksheet row's spans", "book.xlsx", "xl/worksheets/sheet1.xml <row> attribute spans", edit(xlsxMembers({ body: "open" }), SHEET, (x) => x.replace('<row r="1">', '<row r="1" spans="jane@corp.example.com">'))],
@@ -138,6 +186,21 @@ describe("a value that does not fit its structural position is refused by apply 
       expect(emailLeaks(auditOf(path, bytes))).toHaveLength(1);
     });
   }
+
+  test("a namespace on a custom host (AGT-2009)", () => {
+    const path = "memo.docx";
+    const bytes = makeZip(edit(docxMembers({ body: "open" }), "word/document.xml", (x) => x.replace("<w:document ", '<w:document xmlns:x="http://db01.corp.example.com/ns" ')));
+    const r = applySpec([{ path, bytes }], SPEC, { salt: SALT });
+    expect(r.outputs).toEqual([]);
+    expect(r.skipped).toHaveLength(1);
+    expect(r.skipped[0]?.reason).toContain("appears where blind does not rewrite it (word/document.xml <w:document> attribute xmlns:x)");
+    expect(r.skipped[0]?.reason).not.toContain("db01");
+    expect(leaks(auditOf(path, bytes), "pattern:host")).toHaveLength(1);
+    // A relationship type on a custom host is refused and read the same way.
+    const rels = makeZip(edit(docxMembers({ body: "open" }), "_rels/.rels", (x) => x.replace("</Relationships>", '<Relationship Id="rIdX" Type="http://db01.corp.example.com/rel" Target="docProps/app.xml"/></Relationships>')));
+    expect(applySpec([{ path, bytes: rels }], SPEC, { salt: SALT }).skipped).toHaveLength(1);
+    expect(leaks(auditOf(path, rels), "pattern:host")).toHaveLength(1);
+  });
 
   test("the same packages with well-shaped values are written, and the audit blanks those values", () => {
     for (const [path, members] of [["book.xlsx", edit(xlsxMembers({ body: "open" }), SHEET, (x) => x.replace('<row r="1">', '<row r="1" spans="1:1">'))], ["memo.docx", docxMembers({ body: "open" })]] as const) {

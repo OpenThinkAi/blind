@@ -10,7 +10,8 @@
 //                 other). Each file's name goes too. Binary content is not sent and is listed.
 //   profile-only  the output's profile and the policy, exactly profilePayload(), with every
 //                 path, sheet name, header and key tokenised (tokeniseProfile) and file tokens
-//                 mapped back here. No values: no samples and no other document text (AGT-1832).
+//                 mapped back here. No values: no samples and no other document text (AGT-1832),
+//                 and no keep list (AGT-1996): withoutExplained drops kept terms from the reply here.
 //   none          nothing: the layer does not run.
 //
 // The reply is a schema-checked list of candidates, each a quote and a reason from a fixed
@@ -428,7 +429,8 @@ async function auditProfile(entries: readonly TreeEntry[], policy: Policy, opts:
       "auditor",
       opts.style === "readable" ? AUDITOR_SYSTEM_READABLE : AUDITOR_SYSTEM,
       {
-        task: "The data block holds the policy and a profile of the documents (file names, sheet names, headers and keys as tokens, and statistics; no values). Find everything in it that tells you who they are about. Give each finding's file as the profile names it.",
+        task: "The data block holds the policy and a profile of the documents (file names, sheet names, headers and keys as tokens, and statistics; no values). Find everything in it that tells you who they are about. Give each finding's file as the profile names it. " +
+          "data.policy.keep is empty: the owner's keep terms are not sent, and blind leaves them out of your findings itself.",
         data: profilePayload(tokens.profile, policy),
       },
       PROFILE_REPLY_SCHEMA,

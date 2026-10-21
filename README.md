@@ -45,7 +45,8 @@ Your documents are never sent to a model. These are the only things that are:
   column headers, statistics, and a few short sample values (under `profile-only`: statistics
   only, with every name as a token). `blind profile` prints exactly that, so you can read it
   before anything is sent. The policy is the classes, description, examples and keep list from
-  `blind.toml`.
+  `blind.toml` (under `profile-only` the keep list stays on your machine: blind applies it to the
+  reply itself).
 - **The blinded output, for the model audit, and only on your machine.** Under `local-only`, the
   auditor model reads the already-blinded output (never the originals) in short lines. Under
   `profile-only` it gets only a profile of the output, like the analyst, which is a coarse check.
@@ -56,7 +57,7 @@ and never falls back to a less private mode:
 | Mode | Models | Sent |
 |---|---|---|
 | `local-only` (default) | Only a server on this machine (`127.0.0.1`, `::1`, `localhost`). `claude -p` and the hosted Anthropic API are refused. | The profile with up to 5 sample values per column (`[profile] samples`), and your policy. |
-| `profile-only` | Any model over https, including `claude -p` and the Anthropic API. | The model never sees a value. Exactly the profile's statistics and the policy: no sample values (`[profile] samples` above 0 is refused), no document outlines, sentences or speaker names. Every file, folder and sheet name, every column header and every JSON key goes as an opaque token (`file_3`, `sheet_1`, `col_2`, `["key_1"]`); blind maps the reply back locally. A call carrying anything else is refused before it is sent. |
+| `profile-only` | Any model over https, including `claude -p` and the Anthropic API. | The model never sees a value. Exactly the profile's statistics and the policy: no sample values (`[profile] samples` above 0 is refused), no document outlines, sentences or speaker names, and no keep terms (blind applies them locally). Every file, folder and sheet name, every column header and every JSON key goes as an opaque token (`file_3`, `sheet_1`, `col_2`, `["key_1"]`); blind maps the reply back locally. A call carrying anything else is refused before it is sent. |
 | `none` | No model is called. The planner uses built-in detectors only and the audit has no model layer. | Nothing. |
 
 Two limits hold in every mode. **Nothing over 120 characters is sent:** sample values are cut to

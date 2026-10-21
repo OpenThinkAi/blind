@@ -10,7 +10,7 @@ import { isPersonColumn } from "../engine/prose.ts";
 import { type AskOptions, ask } from "../model.ts";
 import type { Policy } from "../policy.ts";
 import { restoreSpec, tokeniseProfile } from "../profile/tokens.ts";
-import { type ColumnRule, type EntityClassName, type Location, type PatternName, patternOn, type Profile, type Question, type Spec, type ValueStats } from "../schema.ts";
+import { type ColumnRule, type Entities, type EntityClassName, type Location, type PatternName, patternOn, type Profile, type Question, type Spec, type ValueStats } from "../schema.ts";
 import { type SchemaIssue, validateSpec } from "../validate.ts";
 import specSchema from "../../schema/spec.schema.json" with { type: "json" };
 import { heuristicPatterns, heuristicRule, profileLocations } from "./heuristic.ts";
@@ -118,6 +118,31 @@ export function keepPatterns(spec: Spec, policy: Pick<Policy, "sensitive"> & Par
   return { spec: { ...spec, patterns: { ...spec.patterns, ...Object.fromEntries(restored.map((n) => [n, true])) } }, restored };
 }
 
+const foldTerm = (s: string): string => s.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+
+/**
+ * Removes `[keep] terms` from the analyst's sensitive entities: an entity whose canonical form is a
+ * keep term is dropped, and an alias or part that is one is taken out (compared case-folded, runs
+ * of spaces as one). Vocabulary entities are left alone (they keep a term already). Under
+ * profile-only the analyst is never sent the keep list (keepSent in model.ts, AGT-1996), so this
+ * is where "do not list keep terms" is applied; elsewhere it backs up the instruction.
+ */
+export function dropKeptEntities(spec: Spec, keep: readonly string[]): Spec {
+  const kept = new Set(keep.map(foldTerm).filter((t) => t !== ""));
+  if (kept.size === 0) return spec;
+  const entities: Entities = {};
+  for (const [cls, list] of Object.entries(spec.entities) as [keyof Entities, Entities[keyof Entities]][]) {
+    if (list === undefined) continue;
+    entities[cls] =
+      cls === "vocabulary"
+        ? list
+        : list
+            .filter((e) => !kept.has(foldTerm(e.canonical)))
+            .map((e) => ({ ...e, aliases: e.aliases.filter((a) => !kept.has(foldTerm(a))), parts: e.parts.filter((p) => !kept.has(foldTerm(p))) }));
+  }
+  return { ...spec, entities };
+}
+
 /** The rules a model reply must meet beyond the schema. Returns every problem found. */
 export function checkProposal(spec: Spec, profile: Profile): SchemaIssue[] {
   const result = validateSpec(spec);
@@ -207,6 +232,8 @@ export async function proposeSpec(
     }
     proposal = restored.spec;
   }
+  // Keep terms are applied here, on the mapped-back reply, not by trusting the model with them.
+  proposal = dropKeptEntities(proposal, policy.keep.terms);
   const issues = checkProposal(proposal, known);
   if (issues.length > 0) {
     throw new AnalystError(`the analyst's spec was rejected:\n${issues.map((i) => `  ${i.path}: ${i.message}`).join("\n")}`);

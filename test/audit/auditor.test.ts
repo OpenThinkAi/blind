@@ -359,6 +359,28 @@ describe("profile-only: the auditor is sent the output's profile, not its text",
     expect(r.err).toContain("auditor · openai-compatible · fake-auditor · profile-only · samples 0 ·");
   });
 
+  test("the keep list is not sent, and a candidate quoting a keep term is still dropped locally (AGT-1996)", async () => {
+    const KEEP = ["lighthouse keeper", "Rowan Pike", "10.2.0.0/16", "vendor.example.net"];
+    writePolicy((p) => {
+      p.privacy.mode = "profile-only";
+      p.profile = { samples: 0, samplesExplicit: false };
+      p.models.auditor = { ...LOCAL("fake-auditor"), url: "https://auditor.example.com/v1" };
+      p.keep.terms = KEEP;
+    });
+    const m = fakeModel((c) => {
+      const file = c.data.profile?.files[0]?.path ?? "";
+      return JSON.stringify({ candidates: [{ file, quote: "Lighthouse  Keeper", reason: "context" }, { file, quote: "pier", reason: "location" }] });
+    });
+    const r = await audit(m, "out", "--json");
+    const c = m.calls[0] as Call;
+    expect((c.data.policy as { keep: string[] }).keep).toEqual([]);
+    for (const term of KEEP) expect(JSON.stringify(c)).not.toContain(term);
+    const model = (r.report?.files ?? []).flatMap((f) => f.findings).filter((f) => f.source === "model");
+    // "pier" is reported; the keep term is dropped here, after the reply is mapped back.
+    expect(model).toHaveLength(1);
+    expect(model[0]).toMatchObject({ file: "notes.txt", class: "model:location" });
+  });
+
   test("a reply naming a file that was not sent is rejected", async () => {
     writePolicy((p) => {
       p.privacy.mode = "profile-only";

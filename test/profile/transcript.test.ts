@@ -77,7 +77,7 @@ describe("profiling transcripts", () => {
     expect(skipped).toEqual([
       { path: "fake.vtt", reason: "not a WebVTT transcript (no cue timing found)" },
     ]);
-    const shown = renderProfile(profile, skipped, []);
+    const shown = renderProfile(profile, skipped, [], true);
     expect(shown).toContain('"standup.vtt"  vtt');
     expect(shown).toContain('speakers: "Avery Quill", "Teagan Marlow"');
   });

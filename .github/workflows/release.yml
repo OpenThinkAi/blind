@@ -1,27 +1,25 @@
 name: release
 
-# Publishes @openthink/blind to npm. Two triggers:
-#   - workflow_dispatch: run it by hand from the Actions tab. This is the one that always works, because
-#     .stamp/mirror.yml mirrors main only, so a version tag pushed to the stamp origin never reaches GitHub.
-#   - push of a `v*` tag: fires if tags are ever mirrored (uncomment `tags:` in .stamp/mirror.yml).
-#   A dispatch publishes only when run on main: the publish job's `if:` skips it on any other branch, so a build
-#   that never passed the stamp gate on main cannot reach npm with a provenance attestation. Tag runs are unchanged.
+# Publishes @openthink/blind to npm. One trigger: workflow_dispatch, run by hand from the Actions tab on main.
+# There is no tag trigger: .stamp/mirror.yml mirrors main only, so tags never reach GitHub and main is the only
+# release ref. A dispatch publishes only when run on main: the publish job's `if:` skips it on any other branch,
+# so a build that never passed the stamp gate on main cannot reach npm with a provenance attestation.
 # It deliberately does NOT run on every push to main: merging this file must
 # not publish, and the first publish waits on the npm Trusted Publisher being configured for this repo and
 # this workflow filename (npm package -> Settings -> Trusted Publishers).
 #
-# Auth is OIDC Trusted Publishing, no NPM_TOKEN; --provenance attaches an SLSA attestation. Whichever trigger
-# fires, the publish is skipped when package.json's version is already on npm, so re-runs are safe.
+# Auth is OIDC Trusted Publishing, no NPM_TOKEN; --provenance attaches an SLSA attestation. The publish is
+# skipped when package.json's version is already on npm, so re-runs are safe.
 #
 # The `if:` below is only this file's own rule: a release.yml edited on another branch could drop it. What the
-# registry enforces is the `npm-release` environment: GitHub lets only main and v* tags deploy to it, and npm's
-# Trusted Publisher names it, so a token minted outside it is refused (RELEASING.md, one-time setup). The publish
-# job also checks that the commit it publishes is on main, so a v* tag on an unreviewed commit cannot publish.
+# registry enforces is the `npm-release` environment: GitHub lets only main deploy to it, and npm's Trusted
+# Publisher names it, so a token minted outside it is refused (RELEASING.md, one-time setup). The publish job
+# also checks that the commit it publishes is on main.
+#
+# Node is pinned to an exact release so the npm that runs the publish is reviewed, not whatever 24.x is newest.
 
 on:
   workflow_dispatch:
-  push:
-    tags: ["v*"]
 
 permissions:
   contents: read
@@ -41,7 +39,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24"
+          node-version: "24.22.1"
       # Bun is the runtime and test runner; installed from npm at a pinned version rather than a third-party action.
       - run: npm install -g bun@1.3.13
       - run: bun install --frozen-lockfile
@@ -53,7 +51,7 @@ jobs:
   publish:
     needs: check
     # workflow_dispatch can be run on any branch; only main is stamp-reviewed, so only main publishes.
-    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: npm-release
@@ -67,7 +65,7 @@ jobs:
           # Full history and branches, for the on-main check below.
           fetch-depth: 0
 
-      # Only stamp-merged commits publish: the commit must be on main (a tag run checks the tagged commit).
+      # Only stamp-merged commits publish: the commit must be on main.
       - name: commit is on main
         run: |
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
@@ -76,7 +74,7 @@ jobs:
           fi
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24"
+          node-version: "24.22.1"
           registry-url: "https://registry.npmjs.org"
 
       # package.json values are file content: pass them through env, never ${{ }} into the script.
@@ -104,18 +102,6 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "target: $NAME@$VERSION (dist-tag: $DIST_TAG)"
 
-      # On a tag run, the tag must name the version being published.
-      - name: tag matches version
-        if: github.ref_type == 'tag'
-        env:
-          TAG: ${{ github.ref_name }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          if [ "$TAG" != "v$VERSION" ]; then
-            echo "tag $TAG does not match package.json version $VERSION" >&2
-            exit 1
-          fi
-
       - name: check npm registry
         id: check
         env:
@@ -130,7 +116,7 @@ jobs:
             echo "$NAME@$VERSION not on npm, will publish."
           fi
 
-      # npm 11.5.1+ is needed for OIDC auth on the registry PUT. Node 24 bundles npm 11, so publish with that
+      # npm 11.5.1+ is needed for OIDC auth on the registry PUT. The pinned Node bundles npm 11, so publish with that
       # bundled npm (no runtime fetch: this job holds id-token). Fail rather than publish with an older npm.
       - name: npm supports trusted publishing
         run: |

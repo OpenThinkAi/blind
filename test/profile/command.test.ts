@@ -59,7 +59,7 @@ async function profile(...args: string[]): Promise<Run> {
   let errText = "";
   output.on("data", (d) => (out += d));
   err.on("data", (d) => (errText += d));
-  const code = await runProfile(args, { output, err }, dir);
+  const code = await runProfile([...args, "--show-values"], { output, err }, dir);
   return { code, out, err: errText };
 }
 

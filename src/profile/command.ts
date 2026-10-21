@@ -4,6 +4,7 @@ import { closeSync, existsSync, mkdirSync, openSync, renameSync, rmSync, writeSy
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { BLIND_DIR } from "../init.ts";
+import { isTerminal, shownValue } from "../mask.ts";
 import { defaultPolicy, loadPolicy, POLICY_FILE, PolicyError } from "../policy.ts";
 import type { Location, Profile, ValueStats } from "../schema.ts";
 import { validateProfile } from "../validate.ts";
@@ -17,7 +18,7 @@ export interface ProfileIO {
 }
 
 const PROFILE_HELP = [
-  "Usage: blind profile <inputs...> [--samples N] [--json]",
+  "Usage: blind profile <inputs...> [--samples N] [--json] [--show-values]",
   "",
   "Profiles CSV, TSV, JSON, JSONL, XLSX, plain text, Markdown and log files, VTT and SRT transcripts",
   "and DOCX files (directories are walked) and writes .blind/profile.json (mode",
@@ -25,12 +26,17 @@ const PROFILE_HELP = [
   "transcripts list their speakers.",
   "The profile is the only thing a model ever sees; this command prints it so you can check exactly",
   "what would leave the machine. Samples are cut to 120 characters.",
+  "Values from the documents (samples, headers, key paths, sheet names, outlines, speakers) are",
+  "printed masked, the first two characters, ***, the length (Qu***12), so a CI log keeps no real",
+  "names. They are shown whole when the output is a terminal or with --show-values. File paths are",
+  "always shown, and --json prints the profile as written, unmasked.",
   "Run it in the directory that holds blind.toml.",
   "",
   "Options:",
-  "  --samples N  Sample values per column or document (default: [profile] samples in blind.toml; 0 = none)",
-  "  --json       Print the profile JSON instead of the table",
-  "  -h, --help   Show this help",
+  "  --samples N    Sample values per column or document (default: [profile] samples in blind.toml; 0 = none)",
+  "  --json         Print the profile JSON (unmasked) instead of the table",
+  "  --show-values  Print values whole instead of masked, even when the output is not a terminal",
+  "  -h, --help     Show this help",
   "",
   "Exit status: 0 every file was profiled; 1 an error, or some files were not profiled (listed); 2 usage.",
   "",
@@ -68,20 +74,27 @@ function table(rows: string[][]): string[] {
   return rows.map((r) => `  ${r.map((cell, c) => (c === r.length - 1 ? cell : cell.padEnd(widths[c] ?? 0))).join("  ")}`.trimEnd());
 }
 
-const statCells = (s: ValueStats): string[] => [
+/** How a value from a document is printed: JSON-quoted when shown, else masked. */
+type Shown = (s: string) => string;
+
+const statCells = (s: ValueStats, v: Shown): string[] => [
   String(s.count),
   fixed(s.distinctRatio),
   fixed(s.digitRatio),
   fixed(s.dictionaryRatio),
   s.meanLength.toFixed(1),
   detectors(s),
-  s.samples.map(q).join(", "),
+  s.samples.map(v).join(", "),
 ];
 
-const where = (l: Location): string => `${l.file}${l.sheet === undefined ? "" : ` sheet ${q(l.sheet)}`} ${q(l.header ?? l.jsonPath ?? "")}`;
+const where = (l: Location, v: Shown): string => `${l.file}${l.sheet === undefined ? "" : ` sheet ${v(l.sheet)}`} ${v(l.header ?? l.jsonPath ?? "")}`;
 
-/** The human-readable profile. Every document-derived string is printed JSON-quoted, as data. */
-export function renderProfile(p: Profile, skipped: readonly Skipped[], notes: readonly string[]): string {
+/**
+ * The human-readable profile. Every document-derived string is printed JSON-quoted, as data, when
+ * `show` (an interactive reviewer, or --show-values), else masked. File paths are always shown.
+ */
+export function renderProfile(p: Profile, skipped: readonly Skipped[], notes: readonly string[], show = false): string {
+  const v: Shown = (s) => shownValue(s, show);
   const out: string[] = [`profile: ${p.files.length} file(s), up to ${p.sampleCount} sample(s) each`, ""];
   const formats = new Map(p.files.map((f) => [f.path, f]));
   const head = (file: string) => {
@@ -89,11 +102,11 @@ export function renderProfile(p: Profile, skipped: readonly Skipped[], notes: re
     return `${q(file)}  ${f?.format ?? "?"}  ${f?.size ?? 0} bytes`;
   };
   for (const t of p.tables) {
-    out.push(`${head(t.file)}${t.sheet === undefined ? "" : `  sheet ${q(t.sheet)}`}  header row ${t.headerRow}${t.overflowRows === undefined ? "" : `  ${t.overflowRows} row(s) wider than the header (extra cells counted in the last column)`}`);
+    out.push(`${head(t.file)}${t.sheet === undefined ? "" : `  sheet ${v(t.sheet)}`}  header row ${t.headerRow}${t.overflowRows === undefined ? "" : `  ${t.overflowRows} row(s) wider than the header (extra cells counted in the last column)`}`);
     out.push(
       ...table([
         ["column", "count", "distinct", "digits", "words", "length", "detectors", "samples"],
-        ...t.columns.map((c) => [q(c.header), ...statCells(c.stats)]),
+        ...t.columns.map((c) => [v(c.header), ...statCells(c.stats, v)]),
       ]),
       "",
     );
@@ -110,28 +123,28 @@ export function renderProfile(p: Profile, skipped: readonly Skipped[], notes: re
     out.push(
       ...table([
         ["key path", "count", "distinct", "digits", "words", "length", "detectors", "samples"],
-        ...group.map((j) => [q(j.path), ...statCells(j.stats)]),
+        ...group.map((j) => [v(j.path), ...statCells(j.stats, v)]),
       ]),
       "",
     );
   }
   for (const d of p.documents) {
     out.push(head(d.file));
-    out.push(`  outline: ${d.outline.length === 0 ? "-" : d.outline.map(q).join(", ")}`);
+    out.push(`  outline: ${d.outline.length === 0 ? "-" : d.outline.map(v).join(", ")}`);
     out.push(`  samples: ${d.sampleSentences.length === 0 ? "-" : ""}`.trimEnd());
-    for (const s of d.sampleSentences) out.push(`    ${q(s)}`);
+    for (const s of d.sampleSentences) out.push(`    ${v(s)}`);
     out.push("");
   }
   for (const t of p.transcripts) {
     out.push(`${head(t.file)}  transcript`);
-    out.push(`  speakers: ${t.speakers.length === 0 ? "-" : t.speakers.map(q).join(", ")}`);
+    out.push(`  speakers: ${t.speakers.length === 0 ? "-" : t.speakers.map(v).join(", ")}`);
     out.push(`  samples: ${t.sampleLines.length === 0 ? "-" : ""}`.trimEnd());
-    for (const s of t.sampleLines) out.push(`    ${q(s)}`);
+    for (const s of t.sampleLines) out.push(`    ${v(s)}`);
     out.push("");
   }
   if (p.cooccurrence.length > 0) {
     out.push("co-occurrence (columns sharing over half their distinct values):");
-    for (const c of p.cooccurrence) out.push(`  ${where(c.a)}  <->  ${where(c.b)}  ${c.shared} shared`);
+    for (const c of p.cooccurrence) out.push(`  ${where(c.a, v)}  <->  ${where(c.b, v)}  ${c.shared} shared`);
     out.push("");
   }
   for (const n of notes) out.push(`note: ${n}`);
@@ -151,6 +164,7 @@ export async function runProfile(argv: string[], io: ProfileIO, cwd = process.cw
       options: {
         samples: { type: "string" },
         json: { type: "boolean", default: false },
+        "show-values": { type: "boolean", default: false },
         help: { type: "boolean", short: "h", default: false },
       },
     });
@@ -191,7 +205,7 @@ export async function runProfile(argv: string[], io: ProfileIO, cwd = process.cw
       for (const s of skipped) io.err.write(`blind profile: not profiled: ${q(s.path)}: ${s.reason}\n`);
       io.err.write(`blind profile: wrote ${written} (mode 0600)\n`);
     } else {
-      io.output.write(renderProfile(profile, skipped, notes));
+      io.output.write(renderProfile(profile, skipped, notes, values["show-values"] || isTerminal(io.output)));
       const seen = policy.privacy.mode === "profile-only" ? "A model would see these statistics, with every name above sent as a token, and no value." : "This is everything a model would see.";
       io.output.write(`\nwrote ${written} (mode 0600). ${seen}\n`);
     }

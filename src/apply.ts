@@ -11,7 +11,7 @@ import { type BlindMap, MapError, readMap, writeMap } from "./engine/map.ts";
 import { NameError } from "./engine/names.ts";
 import { MIN_SALT_BYTES, PseudonymError } from "./engine/pseudonym.ts";
 import { BLIND_DIR, SALT_FILE } from "./init.ts";
-import { isTerminal, shownValue } from "./mask.ts";
+import { isTerminal, maskQuoted, shownValue } from "./mask.ts";
 import { loadPolicyIfAny, POLICY_FILE, PolicyError, withPolicyPatterns } from "./policy.ts";
 import type { Spec } from "./schema.ts";
 import { parseSpec, SchemaError } from "./validate.ts";
@@ -286,6 +286,8 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
     return 2;
   }
 
+  // Headers and sheet names can be values: the report masks them, and so does a refusal that names one.
+  const show = values["show-values"] || io.showValues === true || isTerminal(io.out);
   try {
     // blind.toml's [patterns] switches win over the spec's. The keep list's domains keep vendor host
     // names as written. Without a policy nothing is kept and the spec's patterns stand.
@@ -363,7 +365,7 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
       return 2;
     }
 
-    io.out.write(renderReport(result, values["show-values"] || io.showValues === true || isTerminal(io.out)));
+    io.out.write(renderReport(result, show));
     // Files already in <out> that this apply did not write, where an input's earlier blinded name would be.
     const outRel = toPosix(relative(io.cwd, outDir)) || ".";
     for (const s of staleOutputs(outDir, result.files, readPreviousOutputs(io.cwd, outRel))) {
@@ -385,7 +387,9 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
     return 0;
   } catch (e) {
     if (e instanceof Refusal || e instanceof PolicyError || e instanceof SchemaError || e instanceof ApplyError || e instanceof MapError || e instanceof PseudonymError || e instanceof NameError) {
-      io.err.write(`blind apply: ${e.message}\nnothing was written\n`);
+      // An ApplyError quotes the spec rule's header, key path or sheet name, which may be a value.
+      const message = e instanceof ApplyError ? maskQuoted(e.message, show) : e.message;
+      io.err.write(`blind apply: ${message}\nnothing was written\n`);
       return 2;
     }
     throw e;

@@ -240,9 +240,13 @@ same blinded output tree. No model is called.
   header, key path or sheet a spec rule names, a spec field's rejected value or unknown key, a map
   key, and the worksheet name or token a skipped file's reason quotes)
   as `blind audit` does: the first two characters, `***`, the length (`Qu***12`), so a CI log keeps
-  no real names. They print whole on a terminal, or with `--show-values` (on `profile`, `plan`,
-  `run` and `apply`). File paths are not values and always print. `profile --json` and
-  `plan --json` are data for tools and keep the originals.
+  no real names. A saved spec that fails validation is reported the same way by `plan` and `audit`
+  as by `apply` (its rejected values and unknown keys masked, the schema's own choices as they
+  are), `audit` masks a map key its map refusal quotes, and `profile` and `plan` mask the worksheet
+  name or token a "not profiled" reason quotes. They print whole on a terminal, or with
+  `--show-values` (on `profile`, `plan`, `run` and `apply`; `audit` has no such option). File
+  paths are not values and always print. `profile --json` and `plan --json` are data for tools and
+  keep the originals on stdout; their stderr is masked by the same rules.
 - **`--accept-leaks`** decides the leaks without asking: every candidate with a `leak` finding (a
   spec entity, a map value or an enabled pattern match that survives, all from the mechanical
   layer) is accepted at its suggested class, or `id` when it suggests none (a map value a column
@@ -801,8 +805,9 @@ the same code as the commands themselves.
 - **The run record.** `.blind/run.json` (mode 0600) lists each input and the path it was written
   under, for every input not written the reason, and the final audit's status per output file
   (`clean`, `candidates` or `leak`), with the rounds run and the exit status. It holds paths and
-  statuses, no values, but the input paths are real: it stays in `.blind/` with the map, not in
-  `<out>`.
+  statuses, no values: a reason that quotes a worksheet name or a token of the file has it masked
+  (`Qu***12`), always, whatever the terminal or `--show-values`. The input paths are real: it
+  stays in `.blind/` with the map, not in `<out>`.
 - **`--accept-leaks`** closes the loop with no human and no model. While the audit finds a leak,
   its report goes to `blind plan --from-audit --accept-leaks` (see [above](#feeding-the-audit-back-into-the-spec)),
   and apply and audit run again (into a new staging directory) with the same map. At most 3 rounds in all; it stops

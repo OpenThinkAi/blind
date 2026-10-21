@@ -3,8 +3,10 @@ import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFi
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
+import { maskValue } from "../src/mask.ts";
 import { type RunManifest } from "../src/runmanifest.ts";
 import { runRun } from "../src/run.ts";
+import { buildWorkbook } from "./formats/xlsxfixture.ts";
 
 // AGT-1837: every `blind run` round writes into a fresh staging directory beside -o and only the
 // final round's tree reaches -o, so a file an earlier round wrote under a name the later round
@@ -140,6 +142,23 @@ describe("blind run stages every round", () => {
     expect(png?.output).toBeNull();
     expect(png?.reason).toBeTruthy();
     expect(existsSync(join(dir, "out", "photo.png"))).toBe(false);
+  });
+
+  test("a not-written input's reason in the manifest has the worksheet name it quotes masked, even with --show-values", async () => {
+    // Sheet 2 ("Avery Quill") loses its relationship, so apply cannot read the workbook.
+    const rels =
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      [1, 3].map((n) => `<Relationship Id="rId${n}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${n}.xml"/>`).join("") +
+      '<Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/></Relationships>';
+    writeFileSync(join(dir, "input", "book.xlsx"), buildWorkbook({ extra: [{ name: "xl/_rels/workbook.xml.rels", data: rels }] }));
+    const r = await run(["input", "-o", "out", "--yes", "--no-model", "--show-values"]);
+    expect(r.code).toBeGreaterThanOrEqual(1);
+    const text = readFileSync(join(dir, ".blind", "run.json"), "utf8");
+    const book = (JSON.parse(text) as RunManifest).inputs.find((i) => i.input === "book.xlsx");
+    expect(book?.output).toBeNull();
+    expect(book?.reason).toContain("cannot read the workbook");
+    expect(book?.reason).toContain(`sheet ${maskValue("Avery Quill")} has no relationship`);
+    expect(text).not.toContain("Avery");
   });
 
   test("plain apply warns when a file it did not write sits where an input's unblinded name was", () => {

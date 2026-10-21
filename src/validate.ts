@@ -43,15 +43,25 @@ export class SchemaError extends Error {
    */
   masked(showValues: boolean): string {
     if (showValues) return this.message;
-    const lines = this.issues.map((i) => {
+    return `${this.source}: invalid ${this.kind}\n${issueLines(this.issues, false)}\nSee docs/spec.md for every field.`;
+  }
+}
+
+/**
+ * The issues as indented `path: message` lines, with the document's strings masked unless
+ * `showValues`, by SchemaError.masked's rules. For a report that prints issues without a SchemaError.
+ */
+export function issueLines(issues: readonly SchemaIssue[], showValues: boolean): string {
+  return issues
+    .map((i) => {
+      if (showValues) return `  ${i.path}: ${i.message}`;
       let message = i.message;
       for (const v of i.values ?? []) {
         for (const quoted of [show(v), got(v)]) message = message.split(quoted).join(maskValue(v));
       }
       return `  ${maskPathKeys(i.path)}: ${message}`;
-    });
-    return `${this.source}: invalid ${this.kind}\n${lines.join("\n")}\nSee docs/spec.md for every field.`;
-  }
+    })
+    .join("\n");
 }
 
 export type Schema = { readonly [keyword: string]: unknown };

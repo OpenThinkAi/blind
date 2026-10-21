@@ -4,10 +4,10 @@ import { closeSync, existsSync, mkdirSync, openSync, renameSync, rmSync, writeSy
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { BLIND_DIR } from "../init.ts";
-import { isTerminal, shownValue } from "../mask.ts";
+import { isTerminal, maskQuoted, shownValue } from "../mask.ts";
 import { defaultPolicy, loadPolicy, POLICY_FILE, PolicyError } from "../policy.ts";
 import type { Location, Profile, ValueStats } from "../schema.ts";
-import { validateProfile } from "../validate.ts";
+import { issueLines, validateProfile } from "../validate.ts";
 import { buildProfile, forPrivacyMode, InputError, type Skipped } from "./profile.ts";
 
 export const PROFILE_FILE = "profile.json";
@@ -150,7 +150,8 @@ export function renderProfile(p: Profile, skipped: readonly Skipped[], notes: re
   for (const n of notes) out.push(`note: ${n}`);
   if (skipped.length > 0) {
     out.push(`not profiled (${skipped.length}); a model would see nothing about these:`);
-    for (const s of skipped) out.push(`  ${q(s.path)}: ${s.reason}`);
+    // A reason can quote a worksheet name from the file; it is masked like the values above.
+    for (const s of skipped) out.push(`  ${q(s.path)}: ${maskQuoted(s.reason, show)}`);
   }
   return `${out.join("\n").trimEnd()}\n`;
 }
@@ -186,6 +187,7 @@ export async function runProfile(argv: string[], io: ProfileIO, cwd = process.cw
     return 2;
   }
 
+  const show = values["show-values"] || isTerminal(io.output);
   try {
     // --samples works without blind.toml; then the mode is the default (local-only).
     const policy = values.samples !== undefined && !existsSync(join(cwd, POLICY_FILE)) ? defaultPolicy() : loadPolicy(cwd);
@@ -194,18 +196,18 @@ export async function runProfile(argv: string[], io: ProfileIO, cwd = process.cw
     const check = validateProfile(profile);
     if (!check.ok) {
       // A bug, not a user error: refuse to write a profile that breaks the schema.
-      const issues = check.issues.map((i) => `  ${i.path}: ${i.message}`).join("\n");
-      io.err.write(`blind profile: internal error, the profile failed validation; nothing written\n${issues}\n`);
+      // An issue can quote a header or a sample; masked by the same rules as the report.
+      io.err.write(`blind profile: internal error, the profile failed validation; nothing written\n${issueLines(check.issues, show)}\n`);
       return 1;
     }
     const written = writeProfile(cwd, profile);
     if (values.json) {
       io.output.write(`${JSON.stringify(profile, null, 2)}\n`);
       for (const n of notes) io.err.write(`blind profile: note: ${n}\n`);
-      for (const s of skipped) io.err.write(`blind profile: not profiled: ${q(s.path)}: ${s.reason}\n`);
+      for (const s of skipped) io.err.write(`blind profile: not profiled: ${q(s.path)}: ${maskQuoted(s.reason, show)}\n`);
       io.err.write(`blind profile: wrote ${written} (mode 0600)\n`);
     } else {
-      io.output.write(renderProfile(profile, skipped, notes, values["show-values"] || isTerminal(io.output)));
+      io.output.write(renderProfile(profile, skipped, notes, show));
       const seen = policy.privacy.mode === "profile-only" ? "A model would see these statistics, with every name above sent as a token, and no value." : "This is everything a model would see.";
       io.output.write(`\nwrote ${written} (mode 0600). ${seen}\n`);
     }

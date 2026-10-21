@@ -806,8 +806,8 @@ the same code as the commands themselves.
   under, for every input not written the reason, and the final audit's status per output file
   (`clean`, `candidates` or `leak`), with the rounds run and the exit status. It holds paths and
   statuses, no values: a reason that quotes a worksheet name or a token of the file has it masked
-  (`Qu***12`), always, whatever the terminal or `--show-values`. The input paths are real: it stays in `.blind/` with the map, not in
-  `<out>`.
+  (`Qu***12`), always, whatever the terminal or `--show-values`. The input paths are real: it
+  stays in `.blind/` with the map, not in `<out>`.
 - **`--accept-leaks`** closes the loop with no human and no model. While the audit finds a leak,
   its report goes to `blind plan --from-audit --accept-leaks` (see [above](#feeding-the-audit-back-into-the-spec)),
   and apply and audit run again (into a new staging directory) with the same map. At most 3 rounds in all; it stops

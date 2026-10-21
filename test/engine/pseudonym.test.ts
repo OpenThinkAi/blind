@@ -98,12 +98,14 @@ describe("determinism", () => {
   // (src/engine/words.ts), which the profiler imports.
   const SHARED = [
     "node:crypto", "node:fs", "../schema.ts", "../profile/table.ts", "../formats/ooxml.ts", "../formats/xlsx.ts",
-    "../formats/officeids.ts", "../formats/paths.ts",
+    "../formats/officeids.ts", "../formats/paths.ts", "../formats/structural.ts",
   ];
   const SHARED_IMPORTS: Record<string, string[]> = {
     "../formats/ooxml.ts": ["node:zlib"],
     "../formats/xlsx.ts": ["./ooxml.ts", "./officeids.ts", "./paths.ts"],
     "../formats/paths.ts": [],
+    // The value shapes of structural attributes, shared with the audit so both exempt the same values (AGT-1999).
+    "../formats/structural.ts": [],
     "../formats/officeids.ts": ["./ooxml.ts"],
     "../profile/table.ts": ["../schema.ts", "./stats.ts", "../engine/csv.ts"],
     // The column shapes and the host rule are the engine's own, so profile, heuristic and engine agree (AGT-1846).

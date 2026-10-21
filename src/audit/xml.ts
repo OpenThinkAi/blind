@@ -6,6 +6,8 @@
 // src/formats/ooxml.ts and src/formats/officeids.ts: the audit does not read the output the way the engine
 // wrote it. No model, no clock, no randomness.
 
+import { structuralShape } from "../formats/structural.ts";
+
 export const localName = (qname: string): string => qname.slice(qname.indexOf(":") + 1);
 
 /** A member read as XML: by its extension, or by an XML declaration at the start. */
@@ -133,9 +135,10 @@ const URI_ELEMENTS = new Set(["ext", "compatSetting", "graphicData", "schemaRef"
  * - worksheet addressing attributes (`r`, `spans`, `ref`, `s`, `t`, `ht` ...) in `xl/worksheets/*.xml`:
  *   row and cell references and sizes, never text.
  *
- * Exemption is by position only, never by value: the same URI anywhere else (text, another
- * attribute, an external relationship's Target) is read as usual. Both audit layers skip these
- * positions; the semantic layer skips more (see semantic.ts).
+ * This matches the position only; the layers exempt it through structuralValue, which also needs
+ * the value to have that position's shape. The same URI anywhere else (text, another attribute, an
+ * external relationship's Target) is read as usual. Both audit layers skip these positions; the
+ * semantic layer skips more (see semantic.ts).
  */
 export function ooxmlUriAttribute(member: string, element: string, attr: string): boolean {
   if (attr === "xmlns" || attr.startsWith("xmlns:")) return true;
@@ -146,6 +149,18 @@ export function ooxmlUriAttribute(member: string, element: string, attr: string)
   if (localName(attr) === "uri") return URI_ELEMENTS.has(el);
   if (attr === "fmtid") return el === "property" && member === CUSTOM_PROPERTIES_PART;
   return WORKSHEET_PART.test(member) && WORKSHEET_STRUCTURE.has(localName(attr)) && (!attr.includes(":") || attr === "x14ac:dyDescent");
+}
+
+/**
+ * True when an attribute is format structure the audit does not read: an ooxmlUriAttribute position
+ * or an officeIdAttribute "template" position whose value has the shape that position holds
+ * (structuralShape, src/formats/structural.ts, the same check the engine's refusal scan makes, so
+ * the two agree). Anything else at those positions (`<row spans="jane@corp.com">`,
+ * `xmlns:x="mailto:jane@corp.com"`) is read like any attribute. `value` is the raw attribute text:
+ * an entity reference never fits a shape (`&` is in none), so an escaped value is read, never skipped.
+ */
+export function structuralValue(member: string, element: string, attr: string, value: string): boolean {
+  return (ooxmlUriAttribute(member, element, attr) || officeIdAttribute(member, element, attr) === "template") && structuralShape(element, attr, value);
 }
 
 /** What an Office structural ID position holds; see officeIdAttribute. */
@@ -174,7 +189,8 @@ const LINKING_ID_ATTRIBUTES = new Map<string, ReadonlySet<string>>([
  * document text. Matched by position (member, element and attribute), never by value.
  *
  * `template`: the same in every file made from the same template. The audit does not read them
- * (both layers skip them, as they skip ooxmlUriAttribute's positions):
+ * when they have the expected shape (both layers skip them through structuralValue, as they skip
+ * ooxmlUriAttribute's positions):
  * - `id` and `vid` on `thm15:themeFamily` in a theme part (`word/theme/theme1.xml`,
  *   `xl/theme/theme1.xml`): the theme's family GUID and variant GUID;
  * - `val` on `w:tmpl` (numbering.xml): a list template's code.

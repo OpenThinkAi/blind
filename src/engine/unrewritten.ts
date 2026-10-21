@@ -4,6 +4,7 @@
 // element, never the value. Shared by the XLSX and DOCX handlers.
 
 import { localName, type RewriteRules, rewriteOoxml } from "../formats/ooxml.ts";
+import { structuralShape } from "../formats/structural.ts";
 import type { PatternName, Patterns } from "../schema.ts";
 import { findPatternSpans, type Span } from "./text.ts";
 
@@ -42,8 +43,9 @@ const WORKSHEET_PART = /^xl\/(worksheets|chartsheets|dialogsheets|macrosheets)\/
 /**
  * Attribute positions that hold OOXML format structure, never document text: namespace
  * declarations, content-type and relationship-type URIs, extension URIs, a property set's format
- * id, and the fixed template ids. Matched by position, never by value. These mirror the positions
- * the audit exempts (src/audit/xml.ts), kept apart because the engine imports no audit code.
+ * id, and the fixed template ids. Matched by position; structuralValue adds the value's shape.
+ * These mirror the positions the audit exempts (src/audit/xml.ts), kept apart because the engine
+ * imports no audit code.
  */
 export function structuralAttribute(member: string, element: string, attr: string): boolean {
   if (attr === "xmlns" || attr.startsWith("xmlns:")) return true;
@@ -61,14 +63,24 @@ export function structuralAttribute(member: string, element: string, attr: strin
 }
 
 /**
+ * True when an attribute is format structure: a structural position (structuralAttribute) whose
+ * value has the shape that position holds (structuralShape, shared with the audit). A structural
+ * position holding anything else (`<row spans="jane@corp.com">`) is scanned like any other.
+ */
+export function structuralValue(member: string, element: string, attr: string, value: string): boolean {
+  return structuralAttribute(member, element, attr) && structuralShape(element, attr, value);
+}
+
+/**
  * A reason the package must not be written, or null. Walks every XML member offering only what
- * `rewrites(member)` does not rewrite (and that is not format structure) to `scan`.
+ * `rewrites(member)` does not rewrite (and that is not format structure, structuralValue) to `scan`.
  */
 export function refuseUnrewritten(bytes: Uint8Array, rewrites: (member: string) => RewriteRules, scan: (text: string) => Span[]): string | null {
   const hits: string[] = [];
   rewriteOoxml(
     bytes,
     (value, ctx) => {
+      if (ctx.attribute !== undefined && structuralValue(ctx.member, ctx.element.name, ctx.attribute, value)) return value;
       if (hits.length < 5 && scan(value).length > 0) {
         const where = `${ctx.member} <${ctx.element.name}>${ctx.attribute === undefined ? " text" : ` attribute ${ctx.attribute}`}`;
         if (!hits.includes(where)) hits.push(where);
@@ -79,7 +91,7 @@ export function refuseUnrewritten(bytes: Uint8Array, rewrites: (member: string) 
       const r = rewrites(member);
       return {
         text: () => false,
-        attribute: (el, a, parents) => !r.attribute(el, a, parents) && !structuralAttribute(member, el.name, a),
+        attribute: (el, a, parents) => !r.attribute(el, a, parents),
         runs: (el, parents) => !r.text(el, parents),
       };
     },

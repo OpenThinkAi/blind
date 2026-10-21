@@ -16,7 +16,9 @@
 //     data must be exactly profilePayload(profile, policy), a schema-valid profile and the policy,
 //     nothing else; the profile carries no samples (sampleCount 0, no sample values, sentences or
 //     lines), no document outlines and no speaker labels, and every file path, sheet name, header
-//     and JSON key segment is a token. The mode is printed before every call, even when quiet.
+//     and JSON key segment is a token. The policy's keep list is not sent (keep terms are real
+//     names, hosts and addresses by design); callers apply it locally to the reply (AGT-1996).
+//     The mode is printed before every call, even when quiet.
 //   - the caller's data is quoted as JSON inside a <data> block, and any string in it
 //     longer than MAX_DATA_STRING characters is refused, not truncated: a long string
 //     there means document text is about to leave the machine.
@@ -230,6 +232,7 @@ export interface PolicyView {
   /** The policy's description, split at spaces into pieces of at most MAX_DATA_STRING characters. */
   description: string[];
   examples: string[];
+  /** `[keep] terms`, or empty under profile-only, where they are never sent (keepSent). */
   keep: string[];
 }
 
@@ -277,17 +280,28 @@ export function splitText(text: string, max = MAX_DATA_STRING): string[] {
 }
 
 /** Builds the only data a profile-only call may carry. Strings over the limit are refused later by ask(), not cut. */
-export function profilePayload(profile: Profile, policy: Pick<Policy, "sensitive" | "keep">): ProfilePayload {
+export function profilePayload(profile: Profile, policy: PolicyInput): ProfilePayload {
   return { profile, policy: policyView(policy) };
 }
 
+/** What policyView reads: the privacy mode decides whether the keep list goes. */
+export type PolicyInput = Pick<Policy, "sensitive" | "keep" | "privacy">;
+
+/**
+ * Whether `[keep] terms` may be sent. Not under profile-only (AGT-1996): keep terms are real
+ * document content by design (a person's name, an internal host, an IP range), and that mode's
+ * promise is that a model never sees a value. Callers drop kept terms from the reply locally
+ * instead (dropKeptEntities in the analyst, withoutExplained in the auditor).
+ */
+export const keepSent = (policy: Pick<Policy, "privacy">): boolean => policy.privacy.mode !== "profile-only";
+
 /** The policy as a model sees it, in every payload that carries it. */
-export function policyView(policy: Pick<Policy, "sensitive" | "keep">): PolicyView {
+export function policyView(policy: PolicyInput): PolicyView {
   return {
     classes: [...policy.sensitive.classes],
     description: splitText(policy.sensitive.description),
     examples: [...policy.sensitive.examples],
-    keep: [...policy.keep.terms],
+    keep: keepSent(policy) ? [...policy.keep.terms] : [],
   };
 }
 
@@ -309,6 +323,8 @@ export function assertProfilePayload(data: unknown): asserts data is ProfilePayl
   if (!checked.ok) refuse(`but the profile is not valid: ${checked.issues.map((i) => `${i.path}: ${i.message}`).join("; ")}`);
   const issues = validateSchema(POLICY_VIEW_SCHEMA, policy);
   if (issues.length > 0) refuse(`but the policy is not valid: ${issues.map((i) => `${i.path}: ${i.message}`).join("; ")}`);
+  // Keep terms are real values (names, hosts, IP ranges); they are applied locally, never sent.
+  if ((policy as PolicyView).keep.length > 0) refuse("but $.policy.keep is not empty: keep terms are applied on this machine and never sent under profile-only");
   // Values and other document text: samples, sample sentences and sample lines (whatever
   // sampleCount says), document outlines and transcript speaker labels. forPrivacyMode in
   // src/profile/profile.ts empties all of them; anything left here is refused, never trimmed.

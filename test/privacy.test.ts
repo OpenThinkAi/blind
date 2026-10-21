@@ -140,7 +140,7 @@ describe("profile-only", () => {
     expect(sentData(bodies[0] ?? "")).toEqual(payload());
   });
 
-  test("the policy view carries the classes, description, examples and keep list", () => {
+  test("the policy view carries the classes, description, examples and (outside profile-only) the keep list", () => {
     const p = defaultPolicy();
     p.keep.terms = ["Widget"];
     const view = profilePayload(FIXTURE, p).policy;
@@ -150,6 +150,22 @@ describe("profile-only", () => {
     expect(view.description.join("")).toBe(p.sensitive.description);
     expect(p.sensitive.description.length).toBeGreaterThan(MAX_DATA_STRING);
     for (const piece of view.description) expect([...piece].length).toBeLessThanOrEqual(MAX_DATA_STRING);
+  });
+
+  test("under profile-only the policy view carries no keep term, and ask() sends none (AGT-1996)", async () => {
+    const p = policyWith("profile-only", REMOTE);
+    p.keep.terms = ["Avery Quill", "10.2.0.0/16", "build-07.corp.example.net"];
+    expect(profilePayload(PROFILE_ONLY, p).policy.keep).toEqual([]);
+    const bodies: string[] = [];
+    await ask("analyst", "s", { task: "t", data: profilePayload(PROFILE_ONLY, p) }, SCHEMA, { policy: p, fetch: recorder([], bodies), stderr: () => {} });
+    for (const term of p.keep.terms) expect(bodies[0]).not.toContain(term);
+  });
+
+  test("a profile-only payload that carries keep terms is refused before anything is sent (AGT-1996)", async () => {
+    const p = policyWith("profile-only", REMOTE);
+    const leaky = { ...payload(), policy: { ...payload().policy, keep: ["Avery Quill"] } };
+    const why = await refusal(ask("analyst", "s", { task: "t", data: leaky }, SCHEMA, { policy: p, fetch: noFetch, spawn: noSpawn }));
+    expect(why).toContain("$.policy.keep is not empty");
   });
 
   const bad: Array<[string, () => unknown, string]> = [

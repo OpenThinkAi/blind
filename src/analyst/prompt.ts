@@ -4,7 +4,7 @@
 // in it is over 120 characters, and requires as the exact data shape under profile-only.
 // No profile string is ever concatenated into the instructions.
 
-import { type Prompt, profilePayload } from "../model.ts";
+import { type PolicyInput, type Prompt, profilePayload } from "../model.ts";
 import type { Policy } from "../policy.ts";
 import type { Profile } from "../schema.ts";
 
@@ -29,7 +29,8 @@ const CLASS_TEXT: Record<string, string> = {
 const VALUE_FREE =
   "9. This profile carries no values: every file, sheet, header and key is an opaque token (file_1, sheet_1, col_1, key_1) and there are " +
   "no samples. Classify each column and key from its statistics (count, distinctRatio, digitRatio, dictionaryRatio, meanLength, " +
-  "detectorRates) and the policy alone; when they cannot decide, use \"unknown\" with \"value\" and ask. List no entities: you cannot see any.";
+  "detectorRates) and the policy alone; when they cannot decide, use \"unknown\" with \"value\" and ask. List no entities: you cannot see any. " +
+  "data.policy.keep is empty here: the owner's keep terms are not sent, and blind applies them itself.";
 
 /** The analyst's instructions. The class list is marked sensitive or not from the policy. */
 export function systemPrompt(policy: Pick<Policy, "sensitive" | "privacy">): string {
@@ -78,7 +79,7 @@ export function systemPrompt(policy: Pick<Policy, "sensitive" | "privacy">): str
 }
 
 /** The analyst's request: a short instruction, and the profile and policy as quoted data. */
-export function analystPrompt(profile: Profile, policy: Pick<Policy, "sensitive" | "keep">): Prompt {
+export function analystPrompt(profile: Profile, policy: PolicyInput): Prompt {
   return {
     task:
       "Propose the spec for the corpus whose profile is in the data block, under the policy given there: classify every column and JSON key, list the " +

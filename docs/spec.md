@@ -963,7 +963,8 @@ up to three layers, mechanical, semantic, then model; the report lists the layer
     cut into lines of at most 120 characters (at whitespace where possible) and sent in chunks of at
     most 8 kB, each with the policy. Binary content is not sent and is listed under "not sent".
   - `profile-only`: only the profile of the output tree (`blind profile <out>`, with every sample,
-    outline and speaker list left out and every name tokenised) and the policy, in one call. It
+    outline and speaker list left out and every name tokenised) and the policy without its keep
+    list (see [Privacy modes](#privacy-modes)), in one call. It
     carries no value, so the model has nothing to quote: this layer adds little in that mode.
   The reply is `{"candidates": [{"line" | "file", "quote", "reason"}]}`: the line index sent (or
   the file token), the quoted text (at most 120 characters), and a reason from `person`, `org`,
@@ -1205,8 +1206,8 @@ or backend.
 
 | Mode | Model calls | What is sent |
 |---|---|---|
-| `local-only` (default) | Loopback endpoints only (127.0.0.0/8, `::1`, `localhost`). `claude-cli`, the hosted Anthropic API and any other host are refused with "privacy.mode is local-only". | The caller's data, every string at most 120 characters. |
-| `profile-only` | Remote endpoints allowed, over https (a loopback server may still use http). | Exactly the profile and the policy (classes, description split into pieces of at most 120 characters, examples, keep list), with no value in the profile and every name a token (below). Anything else is refused. |
+| `local-only` (default) | Loopback endpoints only (127.0.0.0/8, `::1`, `localhost`). `claude-cli`, the hosted Anthropic API and any other host are refused with "privacy.mode is local-only". | The caller's data, every string at most 120 characters. The policy part is the classes, the description in pieces, the `examples` and the `[keep] terms`. |
+| `profile-only` | Remote endpoints allowed, over https (a loopback server may still use http). | Exactly the profile and the policy, with no value in the profile and every name a token (below). The policy part is the sensitive classes, the description split into pieces of at most 120 characters, and the `examples`, as you wrote them; `keep` goes as an empty list. Anything else (a non-empty `keep` included) is refused. |
 | `none` | None. `blind plan` uses the heuristic analyst; `blind audit` runs its mechanical and semantic layers only. | Nothing. |
 
 `blind audit`'s model layer sends, under `local-only`, the blinded output's text as lines of at
@@ -1228,6 +1229,14 @@ line or a name. So:
 - A `profile-only` call whose profile has a `sampleCount` above 0, or any sample, sample sentence,
   sample line, outline entry or speaker (for example a profile built under `local-only`), is
   refused before anything is sent. Under `local-only` all of these are kept and sent as before.
+- `[keep] terms` are not sent (AGT-1996). They are real values by design (a person's name found
+  in prose, a kept speaker tag, an IP address or range, a vendor domain), so the policy goes with
+  an empty `keep` list, and a payload whose `keep` is not empty is refused. Keep terms still work
+  exactly as in the other modes, applied on this machine after the reply is mapped back: a header
+  equal to one is kept by `blind plan` ahead of the analyst, an analyst entity whose canonical
+  form is one is dropped (and an alias or part equal to one is taken out), and a model audit
+  candidate quoting one is dropped. The `description` and `examples` are sent as written: write
+  them with invented values, never real ones.
 
 **Names under `profile-only`.** File and folder names, sheet names, headers and JSON keys are
 document text too ("Avery Quill review.md", a sheet named after a client, an object keyed by

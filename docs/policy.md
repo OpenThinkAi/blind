@@ -104,8 +104,11 @@ What a keep term does:
   whatever the `ip` pattern says. Only the audit reads these terms; the engine matches IPs by
   the `ip` pattern (the spec's, or [`[patterns]`](#patterns) here).
 - **Audit.** The audit does not report a keep term, a Title-Case phrase made of keep terms, or a
-  host under a kept domain, and the model auditor is told to leave them.
-- **Models.** The analyst and auditor are sent the list so they do not propose or report them.
+  host under a kept domain, and a model audit candidate equal to a keep term is dropped.
+- **Models.** Under `local-only` the analyst and auditor are sent the list so they do not propose
+  or report them. Under `profile-only` the list is never sent, since keep terms are real values;
+  blind applies it to the reply on this machine instead (an analyst entity or a model audit
+  candidate equal to a keep term is dropped), so a keep term works the same in both modes.
 - **Columns.** A table column, or a JSON key, whose header (key name) equals a keep term, ignoring
   case and runs of spaces, is kept: `blind plan` writes it into the spec as `vocabulary`/`keep`
   with `source: "policy"`, as a [`[[columns]]`](#columns) rule would. A `[[columns]]` rule that
@@ -363,8 +366,8 @@ speaker names that `local-only` also sends and `profile-only` leaves out.
 
 | Mode | Models | What is sent |
 |---|---|---|
-| `local-only` | Only a loopback server: `127.0.0.1` (the whole `127.0.0.0/8`), `::1` or `localhost`. `claude-cli`, the hosted Anthropic API and any other host are refused. | Analyst: the profile and the policy. Auditor: the blinded output's text in lines of at most 120 characters, in chunks of at most 8 kB, and the policy. |
-| `profile-only` | Remote servers over https, and `claude-cli`. A loopback server may use http. | Exactly the profile's statistics and the policy, nothing else; anything else is refused. No value: no samples, sample sentences or lines, document outlines or speaker names. Every file, folder and sheet name, header and JSON key as an opaque token. Auditor: the profile of the output tree, the same way. |
+| `local-only` | Only a loopback server: `127.0.0.1` (the whole `127.0.0.0/8`), `::1` or `localhost`. `claude-cli`, the hosted Anthropic API and any other host are refused. | Analyst: the profile and the policy (classes, description, examples and keep terms). Auditor: the blinded output's text in lines of at most 120 characters, in chunks of at most 8 kB, and the policy. |
+| `profile-only` | Remote servers over https, and `claude-cli`. A loopback server may use http. | Exactly the profile's statistics and the policy's classes, description and examples, nothing else; anything else is refused. No value: no samples, sample sentences or lines, document outlines or speaker names, and no keep terms (they are applied on this machine instead). Every file, folder and sheet name, header and JSON key as an opaque token. Auditor: the profile of the output tree, the same way. |
 | `none` | No model. `blind plan` uses the built-in detectors; `blind audit` runs its rule-based layers only. | Nothing. |
 
 Every check runs before anything is sent. A refused call exits 2 and names the mode, except under
@@ -379,7 +382,8 @@ over the limit in the data refuses the call; it is never cut. blind cuts samples
 and similar excerpts to 120 characters when it builds the profile, and splits `description` into
 pieces of at most 120 characters. The things you write cannot be cut for you: a `keep` term or an
 `examples` entry over 120 characters makes `blind plan` stop with
-`refusing to send: the string at $.policy.keep[0] is 130 characters`. Shorten it.
+`refusing to send: the string at $.policy.keep[0] is 130 characters`. Shorten it. (Under
+`profile-only` keep terms are not sent, so only `examples` are checked.)
 
 Each call prints a line to stderr first: `role · backend · model · mode · [samples k ·] N bytes
 sent`. `--quiet` hides it, except under `profile-only`.

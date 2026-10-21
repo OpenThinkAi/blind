@@ -580,6 +580,50 @@ describe("the analyst's reply is rejected whole when it does not fit the profile
   });
 });
 
+describe("profile-only keep terms (AGT-1996)", () => {
+  // Real-looking values a user is told to put in [keep] terms: a name, a speaker, an IP range, a vendor domain, a header.
+  const KEEP = ["Avery Quill", "EW", "10.2.0.0/16", "vendor.example.net", "Vendor"];
+  const keepPolicy = (mode: "profile-only" | "local-only") =>
+    writePolicy((p) => {
+      p.privacy.mode = mode;
+      p.profile.samples = defaultSamples(mode);
+      if (mode === "profile-only") p.models.analyst.url = "https://analyst.example.com/v1";
+      p.keep.terms = KEEP;
+    });
+  const reply = () => ({
+    ...proposal(),
+    entities: {
+      person: [{ canonical: "Avery Quill", aliases: ["A. Quill"], parts: ["Avery", "Quill"] }],
+      org: [{ canonical: "Example Widgets", aliases: ["EW"], parts: [] }],
+    },
+  });
+
+  test("profile-only sends no keep term, and the plan still honours every one locally", async () => {
+    keepPolicy("profile-only");
+    const r = await plan(["in"], fakeFetch(reply));
+    expect(r.code).toBe(0);
+    expect(sent).toHaveLength(1);
+    const data = dataOf(sent[0]?.body as { messages: { content: string }[] }) as unknown as { policy: { keep: string[] } };
+    expect(data.policy.keep).toEqual([]);
+    const body = JSON.stringify(sent.map((x) => x.body));
+    for (const term of ["Avery Quill", "10.2.0.0/16", "vendor.example.net", '"EW"', '"Vendor"']) expect(body).not.toContain(term);
+    const spec = savedSpec();
+    // A header equal to a keep term is kept by blind.toml, ahead of the analyst's org rule.
+    expect(rule(spec, "Vendor")).toMatchObject({ class: "vocabulary", treatment: "keep", source: "policy" });
+    // Entities naming a keep term are dropped, and kept aliases taken out, after the reply is mapped back.
+    expect(spec.entities.person ?? []).toEqual([]);
+    expect(spec.entities.org).toEqual([{ canonical: "Example Widgets", aliases: [], parts: [] }]);
+  });
+
+  test("local-only still sends the keep list, and applies it to the reply the same way", async () => {
+    keepPolicy("local-only");
+    expect((await plan(["in"], fakeFetch(reply))).code).toBe(0);
+    const data = dataOf(sent[0]?.body as { messages: { content: string }[] }) as unknown as { policy: { keep: string[] } };
+    expect(data.policy.keep).toEqual(KEEP);
+    expect(savedSpec().entities.person ?? []).toEqual([]);
+  });
+});
+
 describe("profile-only tokens (AGT-1782)", () => {
   // Invented names in a folder name, a file name, JSON keys and the first row of a headerless CSV.
   // None is in the policy or the prompt, so any hit in a request body is a leak.

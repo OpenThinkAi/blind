@@ -6,6 +6,7 @@
 // (keep/vocabulary), is dropped and reported; so is a pattern it turns off (restored). Columns the analyst left out get the
 // heuristic rule, and a column with an open question stays `unknown` until it is answered.
 
+import { fold } from "../audit/views.ts";
 import { isPersonColumn } from "../engine/prose.ts";
 import { type AskOptions, ask } from "../model.ts";
 import type { Policy } from "../policy.ts";
@@ -118,17 +119,15 @@ export function keepPatterns(spec: Spec, policy: Pick<Policy, "sensitive"> & Par
   return { spec: { ...spec, patterns: { ...spec.patterns, ...Object.fromEntries(restored.map((n) => [n, true])) } }, restored };
 }
 
-const foldTerm = (s: string): string => s.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
-
 /**
  * Removes `[keep] terms` from the analyst's sensitive entities: an entity whose canonical form is a
- * keep term is dropped, and an alias or part that is one is taken out (compared case-folded, runs
- * of spaces as one). Vocabulary entities are left alone (they keep a term already). Under
- * profile-only the analyst is never sent the keep list (keepSent in model.ts, AGT-1996), so this
- * is where "do not list keep terms" is applied; elsewhere it backs up the instruction.
+ * keep term is dropped, and an alias or part that is one is taken out (compared with the audit's
+ * fold, as the auditor's withoutExplained compares its candidates). Vocabulary entities are left
+ * alone (they keep a term already). Under profile-only the analyst is never sent the keep list (keepSent in model.ts,
+ * AGT-1996), so this is where "do not list keep terms" is applied; elsewhere it backs up the instruction.
  */
 export function dropKeptEntities(spec: Spec, keep: readonly string[]): Spec {
-  const kept = new Set(keep.map(foldTerm).filter((t) => t !== ""));
+  const kept = new Set(keep.map(fold).filter((t) => t !== ""));
   if (kept.size === 0) return spec;
   const entities: Entities = {};
   for (const [cls, list] of Object.entries(spec.entities) as [keyof Entities, Entities[keyof Entities]][]) {
@@ -137,8 +136,8 @@ export function dropKeptEntities(spec: Spec, keep: readonly string[]): Spec {
       cls === "vocabulary"
         ? list
         : list
-            .filter((e) => !kept.has(foldTerm(e.canonical)))
-            .map((e) => ({ ...e, aliases: e.aliases.filter((a) => !kept.has(foldTerm(a))), parts: e.parts.filter((p) => !kept.has(foldTerm(p))) }));
+            .filter((e) => !kept.has(fold(e.canonical)))
+            .map((e) => ({ ...e, aliases: e.aliases.filter((a) => !kept.has(fold(a))), parts: e.parts.filter((p) => !kept.has(fold(p))) }));
   }
   return { ...spec, entities };
 }

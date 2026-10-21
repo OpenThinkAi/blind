@@ -1,7 +1,8 @@
 // The record `blind run` leaves of what it did: which input became which output, which inputs were
 // not written and why, and the final audit's verdict per output file. It lives under .blind/ (mode
 // 0600), not in the output tree: it pairs each input's real path with its blinded one, and the
-// audit and anything shipped from <out> must not see it. It holds paths and statuses, never values.
+// audit and anything shipped from <out> must not see it. It holds paths and statuses, never values:
+// a not-written input's reason has the strings it quotes masked (src/run.ts).
 
 import { closeSync, lstatSync, openSync, readFileSync, renameSync, rmSync, writeSync } from "node:fs";
 import { join } from "node:path";
@@ -16,7 +17,7 @@ export interface ManifestInput {
   input: string;
   /** Where it was written under <out>, "/"-separated; null when it was not written. */
   output: string | null;
-  /** Why an input was not written. */
+  /** Why an input was not written, with every string it quotes (a worksheet name, a token) masked. */
   reason?: string;
   /** The final audit's status for the output file; null when not written or when the audit did not run. */
   audit: FileAuditStatus | null;

@@ -3,9 +3,11 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writ
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
-import { renderDiff, renderSpec } from "../src/analyst/plan.ts";
+import { renderDiff, renderSpec, runPlan } from "../src/analyst/plan.ts";
 import { runApply } from "../src/apply.ts";
+import { runAudit } from "../src/audit/command.ts";
 import { maskQuoted, maskValue, shownValue } from "../src/mask.ts";
+import { defaultPolicy, renderPolicy } from "../src/policy.ts";
 import { runProfile } from "../src/profile/command.ts";
 import { type RunManifest, writeRunManifest } from "../src/runmanifest.ts";
 import type { Spec } from "../src/schema.ts";
@@ -284,5 +286,121 @@ describe("blind apply refusals beyond the spec mismatch", () => {
     expect(r.err).toContain(`sheet ${maskValue("Avery Quill")} has no relationship`);
     expect((await apply(["in", "-o", "out2", "--show-values"])).err).toContain('sheet "Avery Quill" has no relationship');
     expect((await apply(["in", "-o", "out3"], true)).err).toContain('sheet "Avery Quill" has no relationship');
+  });
+});
+
+// AGT-2012: `blind plan` and `blind audit` mask a spec that fails validation by apply's rules
+// (SchemaError.masked: the spec's strings masked, the schema's own choices readable), and
+// `blind profile` and `blind plan` mask the worksheet name a not-profiled file's reason quotes.
+// Whole under --show-values (where the command has it) or when the output is a terminal.
+describe("spec validation errors and skipped reasons beyond apply", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "blind-masking-agt2012-"));
+    mkdirSync(join(dir, ".blind"), { mode: 0o700 });
+    writeFileSync(join(dir, ".blind", "salt"), Buffer.from(Array.from({ length: 32 }, (_, i) => i + 3)), { mode: 0o600 });
+    writeFileSync(join(dir, "blind.toml"), renderPolicy(defaultPolicy()));
+    mkdirSync(join(dir, "in"));
+    writeFileSync(join(dir, "in", "staff.csv"), "Owner\nRobin Example\n");
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const writeBadSpec = () =>
+    writeFileSync(join(dir, ".blind", "spec.json"), JSON.stringify({ ...SPEC, columns: [{ ...SPEC.columns[0], treatment: "Avery Quill" }] }));
+
+  async function call(fn: (argv: string[], io: { out: PassThrough; err: PassThrough; cwd: string }) => Promise<number>, argv: string[], isTTY = false) {
+    const out = Object.assign(new PassThrough(), isTTY ? { isTTY: true } : {});
+    const err = new PassThrough();
+    let o = "";
+    let e = "";
+    out.on("data", (d) => (o += d));
+    err.on("data", (d) => (e += d));
+    const code = await fn(argv, { out, err, cwd: dir });
+    return { code, out: o, err: e };
+  }
+  const plan = (argv: string[], isTTY = false) => call(runPlan as never, argv, isTTY);
+  const audit = (argv: string[], isTTY = false) => call(runAudit as never, argv, isTTY);
+
+  /** A workbook whose sheet 2 ("Avery Quill") has lost its relationship, so it cannot be read. */
+  function brokenWorkbook(path: string): void {
+    const rels =
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      [1, 3].map((n) => `<Relationship Id="rId${n}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${n}.xml"/>`).join("") +
+      '<Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/></Relationships>';
+    writeFileSync(path, buildWorkbook({ extra: [{ name: "xl/_rels/workbook.xml.rels", data: rels }] }));
+  }
+
+  test("plan: a saved spec value that fails validation is masked; the schema's choices are not", async () => {
+    writeBadSpec();
+    const r = await plan(["in", "--no-model"]);
+    expect(r.code).toBe(2);
+    expect(r.err).not.toContain("Avery");
+    expect(r.err).toContain("$.columns[0].treatment: must be one of ");
+    expect(r.err).toContain('"blind"');
+    expect(r.err).toContain(`got ${maskValue("Avery Quill")}`);
+    expect(r.err).toContain("no spec was written");
+    expect((await plan(["in", "--no-model", "--show-values"])).err).toContain('got "Avery Quill"');
+    expect((await plan(["in", "--no-model"], true)).err).toContain('got "Avery Quill"');
+  });
+
+  test("plan: a not-profiled file's reason masks the worksheet name it quotes", async () => {
+    brokenWorkbook(join(dir, "in", "book.xlsx"));
+    const r = await plan(["in", "--no-model"]);
+    expect(r.err).toContain("not profiled:");
+    expect(r.err).toContain("book.xlsx");
+    expect(r.err).not.toContain("Avery");
+    expect(r.err).toContain(`sheet ${maskValue("Avery Quill")} has no relationship`);
+    expect((await plan(["in", "--no-model", "--force", "--show-values"])).err).toContain('sheet "Avery Quill" has no relationship');
+  });
+
+  test("audit: a saved spec value that fails validation is masked unless the output is a terminal", async () => {
+    writeBadSpec();
+    mkdirSync(join(dir, "out"));
+    const r = await audit(["out", "--no-model"]);
+    expect(r.code).toBe(3);
+    expect(r.err).not.toContain("Avery");
+    expect(r.err).toContain('"blind"');
+    expect(r.err).toContain(`got ${maskValue("Avery Quill")}`);
+    expect(r.err).toContain("nothing was audited");
+    expect((await audit(["out", "--no-model"], true)).err).toContain('got "Avery Quill"');
+  });
+
+  test("audit: an unknown spec key that is a value is masked in the issue's path, and a map key in the map error", async () => {
+    writeFileSync(join(dir, ".blind", "spec.json"), JSON.stringify({ ...SPEC, columns: [{ ...SPEC.columns[0], "Avery Quill": "x" }] }));
+    mkdirSync(join(dir, "out"));
+    const r = await audit(["out", "--no-model"]);
+    expect(r.err).not.toContain("Avery");
+    expect(r.err).toContain(`$.columns[0][${maskValue("Avery Quill")}]: unknown field`);
+
+    writeFileSync(join(dir, ".blind", "spec.json"), JSON.stringify(SPEC));
+    writeFileSync(join(dir, ".blind", "map.json"), JSON.stringify({ version: 1, entries: [], "Robin Example": 1 }), { mode: 0o600 });
+    const m = await audit(["out", "--no-model"]);
+    expect(m.code).toBe(3);
+    expect(m.err).not.toContain("Robin");
+    expect(m.err).toContain(`unknown field ${maskValue("Robin Example")}`);
+    expect((await audit(["out", "--no-model"], true)).err).toContain('unknown field "Robin Example"');
+  });
+
+  test("profile: a not-profiled file's reason masks the worksheet name, in the table and under --json", async () => {
+    brokenWorkbook(join(dir, "in", "book.xlsx"));
+    async function profile(argv: string[], isTTY = false) {
+      const output = Object.assign(new PassThrough(), isTTY ? { isTTY: true } : {});
+      const err = new PassThrough();
+      let o = "";
+      let e = "";
+      output.on("data", (d) => (o += d));
+      err.on("data", (d) => (e += d));
+      const code = await runProfile(argv, { output, err }, dir);
+      return { code, all: o + e };
+    }
+    for (const argv of [["in"], ["in", "--json"]]) {
+      const r = await profile(argv);
+      expect(r.code).toBe(1);
+      expect(r.all).toContain("book.xlsx");
+      expect(r.all).toContain(`sheet ${maskValue("Avery Quill")} has no relationship`);
+      expect(r.all).not.toContain("Avery Quill");
+    }
+    expect((await profile(["in", "--show-values"])).all).toContain('sheet "Avery Quill" has no relationship');
+    expect((await profile(["in"], true)).all).toContain('sheet "Avery Quill" has no relationship');
   });
 });

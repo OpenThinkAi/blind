@@ -296,6 +296,14 @@ export function renderDiff(diff: PlanDiff, show = false): string {
   return `${out.join("\n")}\n`;
 }
 
+/**
+ * A refusal's text for stderr: a SchemaError masks the strings it quotes from the spec (as apply
+ * does, leaving the schema's own choices readable); anything else has every quoted string masked.
+ */
+function refusalText(e: Error, show: boolean): string {
+  return e instanceof SchemaError ? e.masked(show) : maskQuoted(e.message, show);
+}
+
 /** Guards our own output: a spec that fails validation is a bug and is never saved. */
 function checked(spec: Spec): Spec {
   const result = validateSpec(spec);
@@ -366,7 +374,7 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
       return await fromAudit(values["from-audit"], values.out, { ...values, acceptLeaks: values["accept-leaks"], show }, io);
     } catch (e) {
       if (e instanceof Refusal || e instanceof FromAuditError || e instanceof SchemaError || e instanceof MapError || e instanceof AnalystError) {
-        io.err.write(`blind plan: ${maskQuoted(e.message, show)}\nno spec was written\n`);
+        io.err.write(`blind plan: ${refusalText(e, show)}\nno spec was written\n`);
         return 2;
       }
       throw e;
@@ -492,7 +500,7 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
       for (const n of [...notes, ...remarks]) io.out.write(n.startsWith("warning: ") ? `${n}\n` : `note: ${n}\n`);
       io.out.write(`\nwrote ${written} (mode 0600). Nothing is changed until you run \`blind apply\`.\n`);
     }
-    for (const s of skipped) io.err.write(`blind plan: not profiled: ${q(s.path)}: ${s.reason}\n`);
+    for (const s of skipped) io.err.write(`blind plan: not profiled: ${q(s.path)}: ${maskQuoted(s.reason, show)}\n`);
     if (skipped.length > 0) {
       io.err.write(`blind plan: ${skipped.length} file(s) not profiled, so the spec says nothing about them\n`);
       return 1;
@@ -501,7 +509,7 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
   } catch (e) {
     // ModelError covers ModelRefusal: a call the privacy mode, endpoint or key setting refused before sending.
     if (e instanceof Refusal || e instanceof PolicyError || e instanceof InputError || e instanceof SchemaError || e instanceof ModelError || e instanceof AnalystError) {
-      io.err.write(`blind plan: ${maskQuoted(e.message, show)}\nno spec was written\n`);
+      io.err.write(`blind plan: ${refusalText(e, show)}\nno spec was written\n`);
       return 2;
     }
     throw e;

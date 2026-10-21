@@ -270,7 +270,9 @@ async function chain(argv: string[], io: RunIO): Promise<number> {
       audit: report === undefined ? null : { status: report.status, leaks: report.summary.leaks, candidates: report.summary.candidates },
       inputs: [
         ...files.map((f): ManifestInput => ({ input: f.path, output: f.outputPath, audit: fileStatus(report, statusOf.get(f.outputPath)) })),
-        ...applied.notWritten.map((n): ManifestInput => ({ input: n.path, output: null, reason: n.reason, audit: null })),
+        // The reason can quote a worksheet name or a token of the file; run.json holds no values, so it is
+        // always masked, whatever the terminal or --show-values.
+        ...applied.notWritten.map((n): ManifestInput => ({ input: n.path, output: null, reason: maskQuoted(n.reason, false), audit: null })),
       ],
     };
     writeRunManifest(io.cwd, manifest);

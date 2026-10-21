@@ -11,6 +11,7 @@ import { parseArgs } from "node:util";
 import { MAP_FILE, SPEC_FILE } from "../apply.ts";
 import { type BlindMap, MapError, readMap } from "../engine/map.ts";
 import { BLIND_DIR } from "../init.ts";
+import { isTerminal, maskQuoted } from "../mask.ts";
 import { type AskOptions, ModelRefusal, modelsEnabled } from "../model.ts";
 import { loadPolicy, type Policy, POLICY_FILE, PolicyError, withPolicyPatterns } from "../policy.ts";
 import type { Spec } from "../schema.ts";
@@ -58,6 +59,8 @@ const AUDIT_HELP = [
   "only that these checks found nothing they look for; it is not a guarantee that nothing",
   "identifying remains.",
   "Values in the report are masked: first characters, ***, length. Paths are printed as on disk.",
+  "A refusal that quotes a value from the spec or the map masks it the same way, unless the output is",
+  "a terminal.",
   "",
   "Options:",
   "      --map <path>  The map apply wrote (default .blind/map.json)",
@@ -278,7 +281,11 @@ export async function runAudit(argv: string[], io: AuditIO): Promise<number> {
     // A refused model call is "could not run" (3), never 2: 2 means a leak was found.
     if (e instanceof Refusal || e instanceof PolicyError || e instanceof SchemaError || e instanceof MapError || e instanceof ModelRefusal) {
       const hint = e instanceof ModelRefusal ? "; --no-model runs the mechanical and semantic layers without a model" : "";
-      io.err.write(`blind audit: ${e.message}\nnothing was audited${hint}\n`);
+      // A SchemaError masks the strings it quotes from the spec, and a MapError quotes a map key, which
+      // may be values: masked as apply masks them, whole only when the output is a terminal.
+      const show = isTerminal(io.out);
+      const message = e instanceof SchemaError ? e.masked(show) : e instanceof MapError ? maskQuoted(e.message, show) : e.message;
+      io.err.write(`blind audit: ${message}\nnothing was audited${hint}\n`);
       return EXIT_NOT_RUN;
     }
     // Anything else is a bug; exit 3 rather than let the runtime's exit 1 read as "candidates".

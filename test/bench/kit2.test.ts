@@ -264,12 +264,19 @@ describe("blind bench on kit v2", () => {
 // of it could come out all digits and equal a real 4-digit ID elsewhere in the corpus, which then
 // reads as that ID left in the output. The Pseudonymizer now rejects GUID candidates whose groups
 // equal an avoided value, as it does for numeric IDs (AGT-1785).
+// The corpus is the transcript plus a text file of the kit's 4-digit IDs, not the whole kit: the IDs
+// reach the avoid set the same way, and 200 applies of the whole kit took ~3 s, which ran past the
+// 5 s test timeout on a loaded machine (AGT-2010).
 test("GUID pseudonyms never reproduce a real 4-digit ID of the corpus as one of their groups", () => {
   const v1 = generateKit(DEFAULT_SEED);
   const ids = new Set(v1.oracle.values.filter((v) => v.class === "id" && /^\d{4}$/.test(v.value)).map((v) => v.value));
+  expect(ids.size).toBeGreaterThan(0);
   const hex = (n: number, i: number) => createHash("sha256").update(`cue ${i}`).digest("hex").slice(0, n);
   const vtt = `WEBVTT\n\n${Array.from({ length: 60 }, (_, i) => `${hex(8, i)}-${hex(4, i + 100)}-4${hex(3, i + 200)}-8${hex(3, i + 300)}-${hex(12, i + 400)}/${i + 10}-0\n00:00:${String(i % 60).padStart(2, "0")}.000 --> 00:00:${String(i % 60).padStart(2, "0")}.500\n<v Marisol Penhallow>Next item.</v>`).join("\n\n")}\n`;
-  const inputs = [...v1.files.map((f) => ({ path: f.path, bytes: kitFileBytes(f) })), { path: CALL_VTT, bytes: new TextEncoder().encode(vtt) }];
+  const inputs = [
+    { path: "ids.txt", bytes: new TextEncoder().encode(`${[...ids].join("\n")}\n`) },
+    { path: CALL_VTT, bytes: new TextEncoder().encode(vtt) },
+  ];
   const collisions: number[] = [];
   for (let salt = 0; salt < 200; salt++) {
     const r = applySpec(inputs, v1.spec, { salt: Uint8Array.from({ length: 32 }, (_, i) => (salt * 31 + i) & 0xff) });

@@ -234,12 +234,13 @@ same blinded output tree. No model is called.
 | `--reject c1` | a `vocabulary` entity with `source: "human"`, so the mechanical and semantic layers do not raise it again |
 | neither | nothing; the next audit raises it again |
 
-- **Values are masked in the output.** `plan`, `run` and `apply` print a value from a document
-  (candidates, entity names, sheet names, column headers, question text, the values in a
-  `--accept-leaks` listing) as `blind audit` does: the first two characters, `***`, the length
-  (`Qu***12`), so a CI log keeps no real names. They print whole on a terminal, or with
-  `--show-values` (on `plan`, `run` and `apply`). File paths are not values and always print.
-  `plan --json` is data for tools and keeps the originals.
+- **Values are masked in the output.** `profile`, `plan`, `run` and `apply` print a value from a
+  document (samples, candidates, entity names, sheet names, column headers and key paths, question
+  text, the values in a `--accept-leaks` listing, and the header or sheet an `apply` refusal names)
+  as `blind audit` does: the first two characters, `***`, the length (`Qu***12`), so a CI log keeps
+  no real names. They print whole on a terminal, or with `--show-values` (on `profile`, `plan`,
+  `run` and `apply`). File paths are not values and always print. `profile --json` and
+  `plan --json` are data for tools and keep the originals.
 - **`--accept-leaks`** decides the leaks without asking: every candidate with a `leak` finding (a
   spec entity, a map value or an enabled pattern match that survives, all from the mechanical
   layer) is accepted at its suggested class, or `id` when it suggests none (a map value a column
@@ -1153,7 +1154,8 @@ Pairs of locations that share values, which suggests they hold the same kind of 
 the sample count and the privacy mode) reads CSV (`.csv`), TSV (`.tsv`, `.tab`; the delimiter is sniffed from the first line like CSV, and tab wins a tie, so a pipe-delimited `x.tab` splits on `|`), JSON (`.json`), JSONL
 (`.jsonl`, `.ndjson`), XLSX workbooks (`.xlsx`), plain text (`.txt`, `.text`), Markdown (`.md`, `.markdown`), logs (`.log`),
 WebVTT (`.vtt`) and SRT (`.srt`) transcripts, and DOCX (`.docx`) files, writes `.blind/profile.json` (mode
-0600) and prints it as a table; `--json` prints the JSON instead. `k` is `[profile] samples` in
+0600) and prints it as a table, with values masked unless the output is a terminal or
+`--show-values` is given; `--json` prints the JSON, unmasked, instead. `k` is `[profile] samples` in
 `blind.toml`, or `--samples N`. When `samples` is unset, `k` follows `[privacy] mode`: 5 under
 `local-only` and `none`, 0 (headers and statistics only) under `profile-only`, where `blind.toml`
 may not set it above 0 and any samples a `--samples N` run collects are left out (below).

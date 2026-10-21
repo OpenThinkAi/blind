@@ -3,7 +3,7 @@
 // 0600), not in the output tree: it pairs each input's real path with its blinded one, and the
 // audit and anything shipped from <out> must not see it. It holds paths and statuses, never values.
 
-import { chmodSync, lstatSync, readFileSync, writeFileSync } from "node:fs";
+import { closeSync, lstatSync, openSync, readFileSync, renameSync, rmSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { BLIND_DIR } from "./init.ts";
 
@@ -35,10 +35,21 @@ export interface RunManifest {
   inputs: ManifestInput[];
 }
 
+/**
+ * Writes run.json through a fresh 0600 temp file and a rename, so the real paths are never written
+ * into an existing run.json with looser permissions, and a reader never sees a partial file.
+ */
 export function writeRunManifest(cwd: string, m: RunManifest): string {
   const path = join(cwd, BLIND_DIR, RUN_FILE);
-  writeFileSync(path, `${JSON.stringify(m, null, 2)}\n`, { mode: 0o600 });
-  chmodSync(path, 0o600);
+  const tmp = `${path}.tmp`;
+  rmSync(tmp, { force: true });
+  const fd = openSync(tmp, "wx", 0o600);
+  try {
+    writeSync(fd, `${JSON.stringify(m, null, 2)}\n`);
+  } finally {
+    closeSync(fd);
+  }
+  renameSync(tmp, path);
   return path;
 }
 

@@ -109,7 +109,7 @@ describe("JSON profiling", () => {
     let o = "";
     output.on("data", (d) => (o += d));
     err.on("data", () => {});
-    expect(await runProfile(["t.json", "empty.json", "--samples", "2"], { output, err }, dir)).toBe(0);
+    expect(await runProfile(["t.json", "empty.json", "--samples", "2", "--show-values"], { output, err }, dir)).toBe(0);
     expect(o).toContain('"t.json"  json');
     expect(o).toMatch(/key path\s+count/);
     expect(o).toMatch(/"\$\.owners\.\*~"\s+2 .* "u-1001", "u-1002"/);

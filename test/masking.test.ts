@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { renderDiff, renderSpec } from "../src/analyst/plan.ts";
 import { runApply } from "../src/apply.ts";
 import { maskQuoted, maskValue, shownValue } from "../src/mask.ts";
+import { runProfile } from "../src/profile/command.ts";
+import { type RunManifest, writeRunManifest } from "../src/runmanifest.ts";
 import type { Spec } from "../src/schema.ts";
 import { buildWorkbook } from "./formats/xlsxfixture.ts";
 
@@ -105,5 +107,89 @@ describe("blind apply report", () => {
   test("--help documents --show-values", async () => {
     const r = await apply("--help");
     expect(r.out).toContain("--show-values");
+  });
+});
+
+// AGT-2000: `blind profile` and apply's refusals mask document values when the output is not a
+// terminal, as plan, apply and audit reports do. Synthetic data only.
+describe("blind profile output", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "blind-masking-profile-"));
+    writeFileSync(join(dir, "staff.csv"), "Owner,Region Code\nAvery Quill,N1\nRobin Example,N2\n");
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  async function profile(argv: string[], isTTY = false) {
+    const output = Object.assign(new PassThrough(), isTTY ? { isTTY: true } : {});
+    let o = "";
+    output.on("data", (d) => (o += d));
+    const code = await runProfile(argv, { output, err: new PassThrough() }, dir);
+    return { code, out: o };
+  }
+
+  test("samples and headers are masked when not a terminal; the file path is not", async () => {
+    const r = await profile(["staff.csv", "--samples", "2"]);
+    expect(r.code).toBe(0);
+    for (const v of ["Avery", "Robin", "Owner", "Region Code"]) expect(r.out).not.toContain(v);
+    expect(r.out).toContain(maskValue("Avery Quill"));
+    expect(r.out).toContain(maskValue("Region Code"));
+    expect(r.out).toContain('"staff.csv"');
+  });
+
+  test("--show-values or a terminal shows the originals; --json stays unmasked", async () => {
+    expect((await profile(["staff.csv", "--samples", "2", "--show-values"])).out).toContain('"Avery Quill"');
+    expect((await profile(["staff.csv", "--samples", "2"], true)).out).toContain('"Avery Quill"');
+    expect((await profile(["staff.csv", "--samples", "2", "--json"])).out).toContain("Avery Quill");
+  });
+});
+
+describe("blind apply refusal", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "blind-masking-refusal-"));
+    mkdirSync(join(dir, ".blind"), { mode: 0o700 });
+    writeFileSync(join(dir, ".blind", "salt"), Buffer.from(Array.from({ length: 32 }, (_, i) => i + 3)), { mode: 0o600 });
+    // The spec names a header that is really a value.
+    const spec = { ...SPEC, columns: [{ ...SPEC.columns[0], header: "Avery Quill" }] };
+    writeFileSync(join(dir, ".blind", "spec.json"), JSON.stringify(spec));
+    mkdirSync(join(dir, "in"));
+    writeFileSync(join(dir, "in", "staff.csv"), "Owner\nRobin Example\n");
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  async function apply(...argv: string[]) {
+    const err = new PassThrough();
+    let e = "";
+    err.on("data", (d) => (e += d));
+    const code = await runApply(argv, { out: new PassThrough(), err, cwd: dir });
+    return { code, err: e };
+  }
+
+  test("the header a rule names is masked on stderr unless --show-values", async () => {
+    const r = await apply("in", "-o", "out");
+    expect(r.code).toBe(2);
+    expect(r.err).not.toContain("Avery");
+    expect(r.err).toContain(`column ${maskValue("Avery Quill")}, which is not in the header row`);
+    expect(r.err).toContain("staff.csv");
+    expect((await apply("in", "-o", "out", "--show-values")).err).toContain('"Avery Quill"');
+  });
+});
+
+describe("run manifest", () => {
+  test("replaces an existing run.json with a fresh 0600 file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "blind-masking-manifest-"));
+    try {
+      mkdirSync(join(dir, ".blind"), { mode: 0o700 });
+      const path = join(dir, ".blind", "run.json");
+      writeFileSync(path, "{}\n");
+      chmodSync(path, 0o644);
+      const m: RunManifest = { version: 1, out: "out", rounds: 1, exit: 0, audit: null, inputs: [{ input: "a.txt", output: "a.txt", audit: null }] };
+      expect(writeRunManifest(dir, m)).toBe(path);
+      expect(statSync(path).mode & 0o777).toBe(0o600);
+      expect(JSON.parse(readFileSync(path, "utf8"))).toEqual(m);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

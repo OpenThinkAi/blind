@@ -54,7 +54,7 @@ import {
   type TreeEntry,
 } from "./mechanical.ts";
 import { fold, stringView, unescapeView, type View, viewsOf, xmlBaseView } from "./views.ts";
-import { localName, looksLikeXml, officeDisplayName, officeIdAttribute, ooxmlUriAttribute, walkXml } from "./xml.ts";
+import { localName, looksLikeXml, officeDisplayName, officeIdAttribute, structuralValue, walkXml } from "./xml.ts";
 import { looksLikeZip, readZip, type ZipBudget, ZipError, zipBudget } from "./zip.ts";
 
 /** Distinct candidates listed per file; the rest are counted in one extra finding. */
@@ -101,7 +101,6 @@ const STRUCTURAL_HOSTS = new Set(["schemas.openxmlformats.org", "schemas.microso
 /** XML attributes that carry format structure only, by local name. */
 const STRUCTURAL_ATTRIBUTES = new Set([
   "space", // xml:space
-  "Ignorable",
   "ProcessContent",
   "PreserveAttributes",
   "MustUnderstand",
@@ -114,7 +113,6 @@ const STRUCTURAL_ATTRIBUTES = new Set([
   "panose",
   "pitchFamily",
   "charset",
-  "ContentType",
   "Extension",
   "PartName",
   "rgb",
@@ -128,14 +126,14 @@ const STRUCTURAL_ATTRIBUTES = new Set([
 const STRUCTURAL_ELEMENTS = new Set(["color", "srgbClr", "sysClr", "fgColor", "bgColor", "shd", "highlight", "tabColor"]);
 
 /**
- * Every position the mechanical layer skips (ooxmlUriAttribute: namespace, content-type and
- * relationship-type URIs; officeIdAttribute "template": fixed template IDs), and more: this layer
+ * Every value the mechanical layer skips (structuralValue: namespace, content-type and
+ * relationship-type URIs and fixed template IDs, each only with its expected shape), and more: this layer
  * also skips Office's linking IDs (officeIdAttribute "linking", which the engine replaces), ids,
  * fonts and colours, which are identifier-shaped but never identifying, and the display names of
  * Office themes, schemes and styles (officeDisplayName).
  */
-function structuralAttribute(member: string, element: string, attr: string): boolean {
-  if (ooxmlUriAttribute(member, element, attr) || officeIdAttribute(member, element, attr) !== null) return true;
+function structuralAttribute(member: string, element: string, attr: string, value: string): boolean {
+  if (structuralValue(member, element, attr, value) || officeIdAttribute(member, element, attr) === "linking") return true;
   if (officeDisplayName(member, element, attr)) return true;
   const el = localName(element);
   const at = localName(attr);
@@ -545,7 +543,7 @@ export function xmlViews(v: View, member = ""): View[] {
     },
     cdata: runText,
     attribute(element, attr, start, end) {
-      if (!structuralAttribute(member, element, attr) && end > start) emitAttr(t.slice(start, end), start);
+      if (end > start && !structuralAttribute(member, element, attr, t.slice(start, end))) emitAttr(t.slice(start, end), start);
     },
     tag(name) {
       if (BREAK_ELEMENTS.has(localName(name))) joinable = false;

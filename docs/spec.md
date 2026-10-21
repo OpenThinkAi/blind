@@ -725,7 +725,9 @@ is an error). The column table above applies to every cell, with these workbook 
   these parts, so it refuses rather than rewrites. Namespace, content-type and relationship-type
   URIs, Office's template IDs and worksheet addressing attributes (a row's or cell's `r`, `spans`, `ref`,
   `s`, `t`, `ht` and the like, which are references and sizes, never text) are format structure and are
-  not scanned. One found there stops the
+  not scanned, as long as the value has the shape its position holds (see **OOXML structure** under
+  `blind audit`: a URI without `@`, a GUID or hex code, a cell reference, a number); any other value
+  there (`<row r="1" spans="jane@corp.example.com">`) is scanned like the rest. One found there stops the
   workbook (listed and not written, exit 1), naming the part and element but never the value. So
   does a member that cannot be parsed, a cell without a reference, and a zip that is not a workbook.
   Members that are not XML are copied unread and listed in the report when they are images, fonts
@@ -890,10 +892,17 @@ up to three layers, mechanical, semantic, then model; the report lists the layer
   `Type` on `Relationship` in a `.rels` member, `mc:Ignorable` prefix lists, and `uri` on `ext`,
   `compatSetting`, `graphicData` and `schemaRef`, `fmtid` on `property` in `docProps/custom.xml`, and the
   template IDs listed under **Office structural IDs** above (`id` and `vid` on `thm15:themeFamily`
-  in a theme part, `val` on `w:tmpl`). The exemption is by position in the parsed XML, never by
-  value: `schemas.openxmlformats.org`, or a theme's GUID, in document text or any other attribute
-  is still reported, and so is an external relationship's `Target`. The semantic layer skips the
-  same positions. Office's linking IDs are NOT exempt from the mechanical layer: `blind apply`
+  in a theme part, `val` on `w:tmpl`), and the worksheet addressing attributes the engine leaves as
+  written (`r`, `spans`, `ref`, `sqref`, `s`, `t`, `ht`, `width` and the like). A position is exempt
+  only when its value also has the shape it holds, checked by the same function `blind apply`
+  uses, so the two agree: an `http`, `https` or `urn` URI with no `@` (or a GUID, for `uri`), a MIME
+  type for `ContentType`, XML prefixes for `mc:Ignorable`, a GUID for `fmtid` and the theme ids, a
+  hex code for `w:tmpl`, cell references, rows and spans for `r`, `ref`, `sqref`, `spans`,
+  `topLeftCell` and `activeCell`, a cell or formula type for `t`, and a number or boolean for the
+  rest. Any other value there (`<row r="1" spans="jane@corp.example.com">`,
+  `xmlns:x="mailto:jane@corp.example.com"`) is read like any attribute. `schemas.openxmlformats.org`,
+  or a theme's GUID, in document text or any other attribute is still reported, and so is an
+  external relationship's `Target`. The semantic layer skips the same values. Office's linking IDs are NOT exempt from the mechanical layer: `blind apply`
   replaces the GUID-shaped ones with pseudonyms in the map, so one left in place is not a pseudonym
   and is a `pattern:guid` leak, and an original put back is a map leak. The hex-shaped ones match
   no mechanical pattern; the semantic layer skips every linking position (its hex finder would

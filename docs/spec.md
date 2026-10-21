@@ -1046,9 +1046,13 @@ All eight top-level fields are required; the arrays may be empty.
 **Privacy limits.** Every string taken from document content (`header`, `sheet`, `samples`,
 `outline`, `sampleSentences`, `speakers`, `sampleLines`, and `header`/`sheet` in a co-occurrence
 location) is at most **120 characters** (counted as Unicode code points). The profiler truncates
-before writing; the validator rejects anything longer. `samples`, `sampleSentences` and
-`sampleLines` each hold at most `sampleCount` items. The profile has no field for raw document
-text, and co-occurrence pairs carry counts, not the shared values.
+before writing; the validator rejects anything longer. File paths and JSON key paths (`path`,
+every `file`, `jsonPath`) are document text too and also at most 120 characters, but they are
+never cut: the profiler leaves a file with a longer path or key path out of the profile and lists
+it under "not profiled". `samples`, `sampleSentences` and `sampleLines` each hold at most
+`sampleCount` items, and every list of excerpts (`outline` and `speakers` too) at most **100**.
+The profile has no field for raw document text, and co-occurrence pairs carry counts, not the
+shared values.
 
 ### `version`
 
@@ -1056,8 +1060,9 @@ Always `1`.
 
 ### `sampleCount`
 
-Integer, 0 or more. `k`, the most sample values any one column, key, document or transcript carries.
-`0` means statistics and headers only. Example: `5`.
+Integer, 0 to 100. `k`, the most sample values any one column, key, document or transcript carries.
+`0` means statistics and headers only. A larger `[profile] samples` or `--samples N` is capped at
+100, with a note. Example: `5`.
 
 ### `files`
 
@@ -1065,7 +1070,7 @@ Every input file. Each entry:
 
 | Field | Type | Meaning |
 |---|---|---|
-| `path` | string, non-empty, unique | Path relative to the input root. Example: `"staff.csv"`. Every `file` elsewhere in the profile must be one of these. |
+| `path` | string, 1 to 120 characters, unique | Path relative to the input root. Example: `"staff.csv"`. Every `file` elsewhere in the profile must be one of these. |
 | `format` | `csv` \| `tsv` \| `json` \| `jsonl` \| `xlsx` \| `docx` \| `text` \| `markdown` \| `log` \| `vtt` \| `srt` | The file's container format. `vtt` and `srt` are decided by content, so a `.txt` file holding WebVTT is `vtt`. A transcript-shaped DOCX or text file keeps `docx` or `text` here and also appears under `transcripts`; a DOCX that is not transcript-shaped appears under `documents`. |
 | `size` | integer, 0 or more | Size in bytes. Example: `2048`. |
 
@@ -1075,7 +1080,7 @@ One entry per table (a CSV/TSV file or a worksheet).
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `file` | string, non-empty | yes | The file the table is in. |
+| `file` | string, 1 to 120 characters | yes | The file the table is in. |
 | `sheet` | string, at most 120 characters | no | Worksheet name, for workbooks. |
 | `headerRow` | integer, 1 or more | yes | 1-based row number of the header row. |
 | `overflowRows` | integer, 1 or more | no | CSV/TSV only: data rows wider than the header (a stray delimiter). Their extra cells are counted in the last column. Absent when 0. |
@@ -1087,8 +1092,8 @@ One entry per JSON or JSONL key path, in the order first seen in the file.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `file` | string, non-empty | The file. |
-| `path` | string, non-empty | The key path. Example: `"$.items[*].ref_code"`. |
+| `file` | string, 1 to 120 characters | The file. |
+| `path` | string, 1 to 120 characters | The key path. Example: `"$.items[*].ref_code"`. |
 | `stats` | stats | Statistics over the values at that path. |
 
 #### Key paths
@@ -1126,8 +1131,8 @@ One entry per prose document (text, Markdown, logs, DOCX).
 
 | Field | Type | Meaning |
 |---|---|---|
-| `file` | string, non-empty | The file. |
-| `outline` | array of strings, each at most 120 characters | Headings, in order. Empty under `profile-only` (see [Privacy modes](#privacy-modes)). |
+| `file` | string, 1 to 120 characters | The file. |
+| `outline` | array of at most 50 strings, each at most 120 characters | Headings, in order. Empty under `profile-only` (see [Privacy modes](#privacy-modes)). |
 | `sampleSentences` | array of strings, each at most 120 characters, at most `sampleCount` items | Example sentences. |
 
 ### `transcripts`
@@ -1136,7 +1141,7 @@ One entry per transcript (VTT, SRT, or a DOCX or text file detected as transcrip
 
 | Field | Type | Meaning |
 |---|---|---|
-| `file` | string, non-empty | The file. |
+| `file` | string, 1 to 120 characters | The file. |
 | `speakers` | array of strings, each at most 120 characters | Speaker names as written, in order of first appearance, at most 100 (a note says when more were left out). Empty under `profile-only`. The heuristic analyst proposes each as a `person` entity, with its name parts. |
 | `sampleLines` | array of strings, each at most 120 characters, at most `sampleCount` items | Example turns, `Speaker: text`, spread evenly through the transcript. |
 
@@ -1146,7 +1151,7 @@ Pairs of locations that share values, which suggests they hold the same kind of 
 
 | Field | Type | Meaning |
 |---|---|---|
-| `a`, `b` | location | Each `{ file, sheet?, header }` for a table column or `{ file, jsonPath }` for a JSON key; exactly one of `header` and `jsonPath`. |
+| `a`, `b` | location | Each `{ file, sheet?, header }` for a table column or `{ file, jsonPath }` for a JSON key; exactly one of `header` and `jsonPath`. `file` and `jsonPath` are at most 120 characters, like every other path. |
 | `shared` | integer, 1 or more | Number of distinct values present in both. Example: `7`. |
 
 ### How `blind profile` builds it

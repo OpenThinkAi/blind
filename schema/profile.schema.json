@@ -2,13 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://openthink.dev/blind/profile.schema.json",
   "title": "blind corpus profile",
-  "description": "Statistics and short excerpts describing a corpus. The only thing a model ever sees. Every document-derived excerpt is at most 120 characters. See docs/spec.md.",
+  "description": "Statistics and short excerpts describing a corpus. The only thing a model ever sees. Every document-derived string (excerpt, file path, JSON key path) is at most 120 characters, and every list of excerpts has at most 100 entries. See docs/spec.md.",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "sampleCount", "files", "tables", "jsonKeys", "documents", "transcripts", "cooccurrence"],
   "properties": {
     "version": { "const": 1 },
-    "sampleCount": { "type": "integer", "minimum": 0 },
+    "sampleCount": { "type": "integer", "minimum": 0, "maximum": 100 },
     "files": {
       "type": "array",
       "items": {
@@ -16,7 +16,7 @@
         "additionalProperties": false,
         "required": ["path", "format", "size"],
         "properties": {
-          "path": { "$ref": "#/$defs/nonEmpty" },
+          "path": { "$ref": "#/$defs/path" },
           "format": {
             "enum": ["csv", "tsv", "json", "jsonl", "xlsx", "docx", "text", "markdown", "log", "vtt", "srt"]
           },
@@ -31,7 +31,7 @@
         "additionalProperties": false,
         "required": ["file", "headerRow", "columns"],
         "properties": {
-          "file": { "$ref": "#/$defs/nonEmpty" },
+          "file": { "$ref": "#/$defs/path" },
           "sheet": { "$ref": "#/$defs/excerpt" },
           "headerRow": { "type": "integer", "minimum": 1 },
           "overflowRows": { "type": "integer", "minimum": 1 },
@@ -57,8 +57,8 @@
         "additionalProperties": false,
         "required": ["file", "path", "stats"],
         "properties": {
-          "file": { "$ref": "#/$defs/nonEmpty" },
-          "path": { "$ref": "#/$defs/nonEmpty" },
+          "file": { "$ref": "#/$defs/path" },
+          "path": { "$ref": "#/$defs/path" },
           "stats": { "$ref": "#/$defs/stats" }
         }
       }
@@ -70,7 +70,7 @@
         "additionalProperties": false,
         "required": ["file", "outline", "sampleSentences"],
         "properties": {
-          "file": { "$ref": "#/$defs/nonEmpty" },
+          "file": { "$ref": "#/$defs/path" },
           "outline": { "$ref": "#/$defs/excerpts" },
           "sampleSentences": { "$ref": "#/$defs/excerpts" },
           "patternHits": { "$ref": "#/$defs/patternHits" }
@@ -84,7 +84,7 @@
         "additionalProperties": false,
         "required": ["file", "speakers", "sampleLines"],
         "properties": {
-          "file": { "$ref": "#/$defs/nonEmpty" },
+          "file": { "$ref": "#/$defs/path" },
           "speakers": { "$ref": "#/$defs/excerpts" },
           "sampleLines": { "$ref": "#/$defs/excerpts" },
           "patternHits": { "$ref": "#/$defs/patternHits" }
@@ -106,9 +106,9 @@
     }
   },
   "$defs": {
-    "nonEmpty": { "type": "string", "minLength": 1 },
+    "path": { "type": "string", "minLength": 1, "maxLength": 120 },
     "excerpt": { "type": "string", "maxLength": 120 },
-    "excerpts": { "type": "array", "items": { "$ref": "#/$defs/excerpt" } },
+    "excerpts": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/excerpt" } },
     "patternHits": {
       "type": "object",
       "additionalProperties": false,
@@ -159,10 +159,10 @@
       "required": ["file"],
       "oneOf": [{ "required": ["header"] }, { "required": ["jsonPath"] }],
       "properties": {
-        "file": { "$ref": "#/$defs/nonEmpty" },
+        "file": { "$ref": "#/$defs/path" },
         "sheet": { "$ref": "#/$defs/excerpt" },
         "header": { "$ref": "#/$defs/excerpt" },
-        "jsonPath": { "$ref": "#/$defs/nonEmpty" }
+        "jsonPath": { "$ref": "#/$defs/path" }
       }
     }
   }

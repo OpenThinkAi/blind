@@ -347,7 +347,7 @@ gets 10 minutes per call; a timeout is a failure, never an empty answer.
 
 | Key | Type | Required | Meaning |
 |---|---|---|---|
-| `samples` | whole number, 0 or more | no | Sample values the profile carries for each column, key, document and transcript. `0` means headers and statistics only. Must be `0` (or unset) under `profile-only`. |
+| `samples` | whole number, 0 or more | no | Sample values the profile carries for each column, key, document and transcript, at most 100 (a larger number is capped at 100, with a note). `0` means headers and statistics only. Must be `0` (or unset) under `profile-only`. |
 
 Unset, `samples` follows the privacy mode: **5** under `local-only` and `none`, **0** under
 `profile-only`, where the profile goes to a remote model. Under `local-only` and `none` setting it

@@ -95,6 +95,20 @@ describe("JSON profiling", () => {
     expect(skipped).toEqual([{ path: "deep.json", reason: "a key path is 133 characters, over the 120-character limit" }]);
   });
 
+  test("a sample count over the limit is capped, with a note, so the profile stays schema-valid (AGT-1997)", () => {
+    put("many.json", JSON.stringify({ ids: Array.from({ length: 300 }, (_, i) => `r${i}`) }));
+    put("long.txt", Array.from({ length: 300 }, (_, i) => `Sentence number ${i} here.`).join("\n"));
+    put(`${"d".repeat(60)}/${"f".repeat(60)}.json`, "{}");
+    const { profile, notes, skipped } = buildProfile(["."], 500, dir);
+    expect(profile.sampleCount).toBe(100);
+    expect(profile.jsonKeys[0]?.stats.samples).toHaveLength(100);
+    expect(profile.documents[0]?.sampleSentences).toHaveLength(100);
+    expect(notes).toContain("samples 500 is over the limit of 100; 100 per column, key, document and transcript are taken");
+    // A path over 120 characters is left out, never cut, so every path in the profile fits the schema.
+    expect(skipped.map((x) => x.reason)).toContain("path is 126 characters, over the 120-character limit");
+    expect(validateProfile(profile).ok).toBe(true);
+  });
+
   test("the same corpus gives byte-identical profiles", () => {
     put("t.json", JSON.stringify(TICKETS));
     expect(JSON.stringify(buildProfile(["t.json"], 5, dir).profile)).toBe(JSON.stringify(buildProfile(["t.json"], 5, dir).profile));

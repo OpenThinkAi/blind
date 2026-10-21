@@ -7,7 +7,7 @@ import { POLICY_FILE, type PrivacyMode } from "../policy.ts";
 import { decode, EncodingError } from "../engine/encoding.ts";
 import { DocxError, docxParagraphs, planDocx } from "../engine/docx.ts";
 import { type Entry, planTranscript, shapeParagraphs, speakersOf } from "../engine/transcript.ts";
-import { type Cooccurrence, type Location, MAX_EXCERPT, type Profile, type ProfileDocument, type ProfileFile, type ProfileJsonKey, type ProfileTable, type ProfileTranscript, type ValueStats } from "../schema.ts";
+import { type Cooccurrence, type Location, MAX_EXCERPT, MAX_SAMPLES, type Profile, type ProfileDocument, type ProfileFile, type ProfileJsonKey, type ProfileTable, type ProfileTranscript, type ValueStats } from "../schema.ts";
 import { profileJson, scanJsonFile } from "./json.ts";
 import { distinct, excerpt, pick } from "./stats.ts";
 import { ParseError, parseTable, profileTable } from "./table.ts";
@@ -169,13 +169,17 @@ function cooccurrence(cols: readonly ValueColumn[]): Cooccurrence[] {
 
 /**
  * Profiles CSV, TSV, JSON, JSONL, plain text, Markdown and log files, VTT and SRT transcripts and
- * DOCX files (a transcript-shaped one as a transcript, any other as a document) under `inputs` (resolved against `cwd`), carrying at most `k` samples
- * per column, document or transcript. Files in formats this profiler cannot read,
+ * DOCX files (a transcript-shaped one as a transcript, any other as a document) under `inputs` (resolved against `cwd`), carrying at most `asked`
+ * samples (capped at MAX_SAMPLES) per column, document or transcript. Files in formats this profiler cannot read,
  * and files that fail to decode or parse, are left out of the profile and listed in `skipped`.
  */
-export function buildProfile(inputs: readonly string[], k: number, cwd: string): ProfileResult {
+export function buildProfile(inputs: readonly string[], asked: number, cwd: string): ProfileResult {
   const skipped: Skipped[] = [];
   const notes: string[] = [];
+  // The schema bounds every list of excerpts (MAX_SAMPLES), so a profile can never carry a whole
+  // document as many short excerpts; a larger sample count is capped here, and a note says so.
+  const k = Math.min(asked, MAX_SAMPLES);
+  if (asked > k) notes.push(`samples ${asked} is over the limit of ${MAX_SAMPLES}; ${MAX_SAMPLES} per column, key, document and transcript are taken`);
   const files: ProfileFile[] = [];
   const tables: TableColumns[] = [];
   const documents: ProfileDocument[] = [];

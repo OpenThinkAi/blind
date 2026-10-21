@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import profileSchema from "../schema/profile.schema.json" with { type: "json" };
 import specSchema from "../schema/spec.schema.json" with { type: "json" };
-import { MAX_EXCERPT, type Profile, type Spec } from "../src/schema.ts";
+import { MAX_SPEAKERS } from "../src/profile/profile.ts";
+import { MAX_OUTLINE } from "../src/profile/text.ts";
+import { MAX_EXCERPT, MAX_SAMPLES, type Profile, type Spec } from "../src/schema.ts";
 import { parseProfile, parseSpec, SchemaError, validateProfile, validateSpec } from "../src/validate.ts";
 import profileFixture from "./fixtures/profile.valid.json" with { type: "json" };
 import specFixture from "./fixtures/spec.valid.json" with { type: "json" };
@@ -162,6 +164,19 @@ describe("profile", () => {
     ["document file not listed", (d) => (d.documents[0].file = "other.md"), "$.documents[0].file", /is not listed/],
     ["cooccurrence file not listed", (d) => (d.cooccurrence[0].b.file = "other.json"), "$.cooccurrence[0].b.file", /is not listed/],
     ["cooccurrence values carried", (d) => (d.cooccurrence[0].values = ["Avery Quill"]), "$.cooccurrence[0].values", /unknown field/],
+    // AGT-1997: paths are document text too, and no list of excerpts is unbounded.
+    ["sampleCount over the limit", (d) => (d.sampleCount = MAX_SAMPLES + 1), "$.sampleCount", /must be <= 100/],
+    ["file path too long", (d) => (d.files[0].path = long), "$.files[0].path", /at most 120 characters, got 121/],
+    ["table file too long", (d) => (d.tables[0].file = long), "$.tables[0].file", /at most 120 characters/],
+    ["json key file too long", (d) => (d.jsonKeys[0].file = long), "$.jsonKeys[0].file", /at most 120 characters/],
+    ["json key path too long", (d) => (d.jsonKeys[0].path = `$.${"k".repeat(MAX_EXCERPT)}`), "$.jsonKeys[0].path", /at most 120 characters/],
+    ["document file too long", (d) => (d.documents[0].file = long), "$.documents[0].file", /at most 120 characters/],
+    ["transcript file too long", (d) => (d.transcripts[0].file = long), "$.transcripts[0].file", /at most 120 characters/],
+    ["cooccurrence jsonPath too long", (d) => (d.cooccurrence[0].b.jsonPath = `$.${"k".repeat(MAX_EXCERPT)}`), "$.cooccurrence[0].b.jsonPath", /at most 120 characters/],
+    ["cooccurrence file too long", (d) => (d.cooccurrence[0].a.file = long), "$.cooccurrence[0].a.file", /at most 120 characters/],
+    ["outline over 100 entries", (d) => (d.documents[0].outline = Array.from({ length: MAX_SAMPLES + 1 }, (_, i) => `Heading ${i}`)), "$.documents[0].outline", /at most 100 items, got 101/],
+    ["speakers over 100 entries", (d) => (d.transcripts[0].speakers = Array.from({ length: MAX_SAMPLES + 1 }, (_, i) => `Speaker ${i}`)), "$.transcripts[0].speakers", /at most 100 items/],
+    ["column samples over 100 entries", (d) => (d.tables[0].columns[0].stats.samples = Array.from({ length: MAX_SAMPLES + 1 }, (_, i) => `v${i}`)), "$.tables[0].columns[0].stats.samples", /at most 100 items/],
   ];
 
   for (const [name, edit, path, message] of cases) {
@@ -224,6 +239,14 @@ describe("schema files", () => {
 
   test("profile excerpt limit matches MAX_EXCERPT", () => {
     expect(profileSchema.$defs.excerpt.maxLength).toBe(MAX_EXCERPT);
+    expect(profileSchema.$defs.path.maxLength).toBe(MAX_EXCERPT);
+  });
+
+  test("profile list limits match MAX_SAMPLES, and the profiler's own caps fit inside them", () => {
+    expect(profileSchema.$defs.excerpts.maxItems).toBe(MAX_SAMPLES);
+    expect(profileSchema.properties.sampleCount.maximum).toBe(MAX_SAMPLES);
+    expect(MAX_SPEAKERS).toBeLessThanOrEqual(MAX_SAMPLES);
+    expect(MAX_OUTLINE).toBeLessThanOrEqual(MAX_SAMPLES);
   });
 });
 

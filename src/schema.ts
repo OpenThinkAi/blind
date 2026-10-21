@@ -164,3 +164,9 @@ export interface Profile {
 
 /** The longest document-derived excerpt a profile may carry (characters, i.e. code points). */
 export const MAX_EXCERPT = 120;
+
+/**
+ * The most entries any list of excerpts in a profile may carry (samples, sample sentences and lines,
+ * outline, speakers), and so the largest `sampleCount`. buildProfile caps `k` at it.
+ */
+export const MAX_SAMPLES = 100;

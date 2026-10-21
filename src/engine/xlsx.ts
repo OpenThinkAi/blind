@@ -235,7 +235,7 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
         }
         if (removes && isFilled(text) && c.type !== "s" && c.type !== "str" && c.type !== "inlineStr") {
           // Only text can be emptied or overwritten in place; a number, date or boolean would need its cell retyped.
-          refusal ??= `worksheet ${JSON.stringify(sheet.name)} cell ${c.ref} is not text, so its ${action.kind === "drop" ? "dropped" : "redacted"} column cannot be cleared in place; blind it (treatment "blind") instead`;
+          refusal ??= `worksheet ${JSON.stringify(sheet.name)} cell ${c.ref} is not text, so its ${action.kind === "drop" ? "dropped" : "redacted"} column cannot be cleared in place; blind it (treatment = blind) instead`;
           return;
         }
         if (!isFilled(text) || c.type === "b" || c.type === "e" || c.type === "d") return;

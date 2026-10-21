@@ -50,7 +50,8 @@ const APPLY_HELP = [
   "",
   "The report names sheets, column headers and JSON keys from the documents masked, as `blind audit`",
   "does: the first two characters, ***, the length (Qu***12). They are shown whole when the output is a",
-  "terminal or with --show-values. File paths are always shown.",
+  "terminal or with --show-values. File paths are always shown. A refusal that quotes one of them, or",
+  "a value from the spec or the map, masks it the same way.",
   "",
   "Options:",
   "  -o, --out <dir>       Output directory (must not overlap an input)",
@@ -376,7 +377,8 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
     for (const i of collected.ignored) io.out.write(`ignored ${oneLine(i.path)}: ${oneLine(i.reason)}\n`);
     const skipped = [...collected.skipped, ...result.skipped];
     io.onResult?.(result, skipped);
-    for (const s of skipped) io.err.write(`blind apply: ${oneLine(s.path)}: ${oneLine(s.reason)}\n`);
+    // A file's refusal can quote a worksheet name or a token of the file; those are masked like the report's.
+    for (const s of skipped) io.err.write(`blind apply: ${oneLine(s.path)}: ${oneLine(maskQuoted(s.reason, show))}\n`);
     io.out.write(
       `wrote ${result.outputs.length} file${result.outputs.length === 1 ? "" : "s"} to ${toPosix(relative(io.cwd, outDir)) || "."}; map: ${toPosix(relative(io.cwd, mapPath))} (mode 0600; keep it secret)\n`,
     );
@@ -387,8 +389,10 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
     return 0;
   } catch (e) {
     if (e instanceof Refusal || e instanceof PolicyError || e instanceof SchemaError || e instanceof ApplyError || e instanceof MapError || e instanceof PseudonymError || e instanceof NameError) {
-      // An ApplyError quotes the spec rule's header, key path or sheet name, which may be a value.
-      const message = e instanceof ApplyError ? maskQuoted(e.message, show) : e.message;
+      // An ApplyError quotes the spec rule's header, key path or sheet name, and a MapError a map
+      // key, which may be values; a SchemaError masks the strings it quotes from the spec. A
+      // Refusal, PolicyError, PseudonymError or NameError names paths and settings, never a value.
+      const message = e instanceof ApplyError || e instanceof MapError ? maskQuoted(e.message, show) : e instanceof SchemaError ? e.masked(show) : e.message;
       io.err.write(`blind apply: ${message}\nnothing was written\n`);
       return 2;
     }

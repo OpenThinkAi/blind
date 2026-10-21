@@ -137,12 +137,12 @@ describe("parseMap", () => {
 
   test("rejects a non-object top level", () => reject([], /expected an object/));
   test("rejects a wrong version", () => reject({ version: 2, entries: [] }, /version must be 1/));
-  test("rejects unknown top-level fields", () => reject({ version: 1, entries: [], salt: "x" }, /unknown field 'salt'/));
+  test("rejects unknown top-level fields", () => reject({ version: 1, entries: [], salt: "x" }, /unknown field "salt"/));
   test("rejects non-array entries", () => reject({ version: 1, entries: {} }, /entries must be an array/));
 
   test("rejects unknown entry fields", () => {
     const map = good();
-    reject({ ...map, entries: [{ ...map.entries[0], extra: 1 }] }, /entries\[0\]: unknown field 'extra'/);
+    reject({ ...map, entries: [{ ...map.entries[0], extra: 1 }] }, /entries\[0\]: unknown field "extra"/);
   });
 
   test("rejects a wrong field type", () => {

@@ -193,3 +193,96 @@ describe("run manifest", () => {
     }
   });
 });
+
+// AGT-2008: every other apply refusal that can quote a document-derived string masks it the same
+// way as the AGT-2000 header refusal: a spec that fails validation, a map that fails to parse, and
+// a file apply skips. Synthetic data only.
+describe("blind apply refusals beyond the spec mismatch", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "blind-masking-refusals-"));
+    mkdirSync(join(dir, ".blind"), { mode: 0o700 });
+    writeFileSync(join(dir, ".blind", "salt"), Buffer.from(Array.from({ length: 32 }, (_, i) => i + 3)), { mode: 0o600 });
+    writeFileSync(join(dir, ".blind", "spec.json"), JSON.stringify(SPEC));
+    mkdirSync(join(dir, "in"));
+    writeFileSync(join(dir, "in", "staff.csv"), "Owner\nRobin Example\n");
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  async function apply(argv: string[], isTTY = false) {
+    const out = Object.assign(new PassThrough(), isTTY ? { isTTY: true } : {});
+    const err = new PassThrough();
+    let e = "";
+    err.on("data", (d) => (e += d));
+    const code = await runApply(argv, { out, err, cwd: dir });
+    return { code, err: e };
+  }
+  const writeSpec = (spec: unknown) => writeFileSync(join(dir, ".blind", "spec.json"), typeof spec === "string" ? spec : JSON.stringify(spec));
+
+  test("a spec value that fails validation is masked; the schema's own choices are not", async () => {
+    writeSpec({ ...SPEC, columns: [{ ...SPEC.columns[0], treatment: "Avery Quill" }] });
+    const r = await apply(["in", "-o", "out"]);
+    expect(r.code).toBe(2);
+    expect(r.err).not.toContain("Avery");
+    expect(r.err).toContain(`$.columns[0].treatment: must be one of `);
+    expect(r.err).toContain('"blind"');
+    expect(r.err).toContain(`got ${maskValue("Avery Quill")}`);
+    expect(r.err).toContain("nothing was written");
+    expect((await apply(["in", "-o", "out", "--show-values"])).err).toContain('got "Avery Quill"');
+    expect((await apply(["in", "-o", "out"], true)).err).toContain('got "Avery Quill"');
+  });
+
+  test("an unknown spec key that is a value is masked in the issue's path", async () => {
+    writeSpec({ ...SPEC, columns: [{ ...SPEC.columns[0], "Avery Quill": "x" }] });
+    const r = await apply(["in", "-o", "out"]);
+    expect(r.code).toBe(2);
+    expect(r.err).not.toContain("Avery");
+    expect(r.err).toContain(`$.columns[0][${maskValue("Avery Quill")}]: unknown field`);
+    expect((await apply(["in", "-o", "out", "--show-values"])).err).toContain('$.columns[0]["Avery Quill"]: unknown field');
+  });
+
+  test("a long unknown key, which the path cuts short, is masked with its full length", async () => {
+    const key = "Avery Quill of the North Ridge Office";
+    writeSpec({ ...SPEC, columns: [{ ...SPEC.columns[0], [key]: "x" }] });
+    const r = await apply(["in", "-o", "out"]);
+    expect(r.err).not.toContain("Avery");
+    expect(r.err).toContain(`$.columns[0][Av***${[...key].length}]: unknown field`);
+  });
+
+  test("the token a spec JSON parse error quotes is masked", async () => {
+    writeSpec('{"version": Avery}');
+    const r = await apply(["in", "-o", "out"]);
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("not valid JSON");
+    expect(r.err).not.toContain("Avery");
+    expect(r.err).toContain(maskValue("Avery"));
+    expect((await apply(["in", "-o", "out", "--show-values"])).err).toContain('"Avery"');
+  });
+
+  test("a map key that is a value is masked in the map error", async () => {
+    writeFileSync(join(dir, ".blind", "map.json"), JSON.stringify({ version: 1, entries: [], "Avery Quill": 1 }), { mode: 0o600 });
+    const r = await apply(["in", "-o", "out"]);
+    expect(r.code).toBe(2);
+    expect(r.err).not.toContain("Avery");
+    expect(r.err).toContain(`unknown field ${maskValue("Avery Quill")}`);
+    expect(r.err).toContain("map.json");
+    expect((await apply(["in", "-o", "out", "--show-values"])).err).toContain('unknown field "Avery Quill"');
+  });
+
+  test("a skipped file's reason masks the worksheet name it quotes; the path is not masked", async () => {
+    writeSpec({ ...SPEC, columns: [] });
+    // Sheet 2 ("Avery Quill") loses its relationship, so the workbook cannot be read.
+    const rels =
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      [1, 3].map((n) => `<Relationship Id="rId${n}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${n}.xml"/>`).join("") +
+      '<Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/></Relationships>';
+    writeFileSync(join(dir, "in", "book.xlsx"), buildWorkbook({ extra: [{ name: "xl/_rels/workbook.xml.rels", data: rels }] }));
+    const r = await apply(["in", "-o", "out"]);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("blind apply: book.xlsx: cannot read the workbook");
+    expect(r.err).not.toContain("Avery");
+    expect(r.err).toContain(`sheet ${maskValue("Avery Quill")} has no relationship`);
+    expect((await apply(["in", "-o", "out2", "--show-values"])).err).toContain('sheet "Avery Quill" has no relationship');
+    expect((await apply(["in", "-o", "out3"], true)).err).toContain('sheet "Avery Quill" has no relationship');
+  });
+});

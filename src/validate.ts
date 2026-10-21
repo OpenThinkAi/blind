@@ -8,12 +8,19 @@
 
 import profileSchema from "../schema/profile.schema.json" with { type: "json" };
 import specSchema from "../schema/spec.schema.json" with { type: "json" };
+import { maskValue } from "./mask.ts";
 import type { Profile, Spec } from "./schema.ts";
 
 export interface SchemaIssue {
   /** Where the problem is, e.g. `$.columns[2].class`. */
   path: string;
   message: string;
+  /**
+   * Strings from the checked document that `message` quotes (with `got` or `show`), which may be
+   * values. Every issue that quotes a document string must list it here, or SchemaError.masked
+   * prints it whole.
+   */
+  values?: string[];
 }
 
 export type Validation<T> = { ok: true; value: T } | { ok: false; issues: SchemaIssue[] };
@@ -27,6 +34,23 @@ export class SchemaError extends Error {
     const lines = issues.map((i) => `  ${i.path}: ${i.message}`);
     super(`${source}: invalid ${kind}\n${lines.join("\n")}\nSee docs/spec.md for every field.`);
     this.name = "SchemaError";
+  }
+
+  /**
+   * The message with the document's strings masked unless `showValues`: the values an issue quotes and
+   * the object keys a path names in brackets (a key that is a header or a name). Schema constants
+   * ("must be one of ...") and file paths print as they are.
+   */
+  masked(showValues: boolean): string {
+    if (showValues) return this.message;
+    const lines = this.issues.map((i) => {
+      let message = i.message;
+      for (const v of i.values ?? []) {
+        for (const quoted of [show(v), got(v)]) message = message.split(quoted).join(maskValue(v));
+      }
+      return `  ${maskPathKeys(i.path)}: ${message}`;
+    });
+    return `${this.source}: invalid ${this.kind}\n${lines.join("\n")}\nSee docs/spec.md for every field.`;
   }
 }
 
@@ -77,6 +101,21 @@ function got(v: unknown): string {
   return typeOf(v);
 }
 
+/** The strings among `vs`, for SchemaIssue.values. */
+function strings(...vs: unknown[]): { values?: string[] } {
+  const values = vs.filter((v): v is string => typeof v === "string");
+  return values.length > 0 ? { values } : {};
+}
+
+/** `path` with each bracketed key (keyPath's `["..."]`, possibly cut short by got) masked. */
+function maskPathKeys(path: string): string {
+  return path.replace(/\[("(?:[^"\\]|\\.)*")(?:… \((\d+) characters\))?\]/g, (_m, quoted: string, total?: string) => {
+    const key = JSON.parse(quoted) as string;
+    if (total === undefined) return `[${maskValue(key)}]`;
+    return `[${maskValue(key).replace(/\d+$/, total)}]`;
+  });
+}
+
 function resolve(root: Schema, schema: Schema): Schema {
   const ref = schema.$ref;
   if (ref === undefined) return schema;
@@ -102,11 +141,11 @@ function check(root: Schema, node: Schema, value: unknown, path: string, out: Sc
   }
 
   if (own(node, "const") && value !== node.const) {
-    out.push({ path, message: `must be ${show(node.const)}, got ${got(value)}` });
+    out.push({ path, message: `must be ${show(node.const)}, got ${got(value)}`, ...strings(value) });
     return;
   }
   if (Array.isArray(node.enum) && !node.enum.includes(value)) {
-    out.push({ path, message: `must be one of ${node.enum.map(show).join(", ")}, got ${got(value)}` });
+    out.push({ path, message: `must be one of ${node.enum.map(show).join(", ")}, got ${got(value)}`, ...strings(value) });
     return;
   }
   if (node.type !== undefined) {
@@ -148,7 +187,7 @@ function check(root: Schema, node: Schema, value: unknown, path: string, out: Sc
       const seen = new Set<string>();
       value.forEach((item, i) => {
         const key = show(item);
-        if (seen.has(key)) out.push({ path: `${path}[${i}]`, message: `duplicate item ${got(item)}` });
+        if (seen.has(key)) out.push({ path: `${path}[${i}]`, message: `duplicate item ${got(item)}`, ...strings(item) });
         seen.add(key);
       });
     }
@@ -233,10 +272,10 @@ export function validateSpec(value: unknown): Validation<Spec> {
   const ids = new Map<string, number>();
   spec.questions.forEach((q, i) => {
     const first = ids.get(q.id);
-    if (first !== undefined) issues.push({ path: `$.questions[${i}].id`, message: `duplicate id ${got(q.id)} (also $.questions[${first}])` });
+    if (first !== undefined) issues.push({ path: `$.questions[${i}].id`, message: `duplicate id ${got(q.id)} (also $.questions[${first}])`, ...strings(q.id) });
     else ids.set(q.id, i);
     if (q.answer !== null && !q.options.includes(q.answer)) {
-      issues.push({ path: `$.questions[${i}].answer`, message: `must be null or one of ${q.options.map(show).join(", ")}, got ${got(q.answer)}` });
+      issues.push({ path: `$.questions[${i}].answer`, message: `must be null or one of ${q.options.map(show).join(", ")}, got ${got(q.answer)}`, ...strings(q.answer, ...q.options) });
     }
   });
 
@@ -285,7 +324,16 @@ function parse<T>(kind: "spec" | "profile", text: string, source: string, valida
   try {
     data = JSON.parse(text);
   } catch (err) {
-    throw new SchemaError(kind, source, [{ path: "$", message: `not valid JSON (${(err as Error).message})` }]);
+    const message = (err as Error).message;
+    // The parser quotes the token it stopped at, which may be document text.
+    const quoted = [...message.matchAll(/"(?:[^"\\]|\\.)*"/g)].flatMap((m) => {
+      try {
+        return [JSON.parse(m[0]) as string];
+      } catch {
+        return [];
+      }
+    });
+    throw new SchemaError(kind, source, [{ path: "$", message: `not valid JSON (${message})`, ...strings(...quoted) }]);
   }
   const result = validate(data);
   if (!result.ok) throw new SchemaError(kind, source, result.issues);

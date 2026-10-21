@@ -96,7 +96,7 @@ const ILLEGAL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]|[\uD800-\uDBFF](
 function decodeEntities(raw: string): string {
   return raw.replace(ENTITY, (m, hex: string | undefined, dec: string | undefined, named: string | undefined) => {
     if (named !== undefined) return NAMED[named]!;
-    if (hex === undefined && dec === undefined) throw new XmlError(`bare "&" or unknown entity near "${m}"`);
+    if (hex === undefined && dec === undefined) throw new XmlError(`bare & or unknown entity near ${JSON.stringify(m)}`);
     const cp = hex !== undefined ? parseInt(hex, 16) : parseInt(dec!, 10);
     if (!(cp === 0x9 || cp === 0xa || cp === 0xd || (cp >= 0x20 && cp <= 0xd7ff) || (cp >= 0xe000 && cp <= 0xfffd) || (cp >= 0x10000 && cp <= 0x10ffff))) {
       throw new XmlError(`character reference to an invalid code point: ${m}`);
@@ -112,7 +112,7 @@ function decodeText(raw: string): string {
 
 /** Attribute value: line ends normalised, then literal whitespace becomes a space; character references survive. */
 function decodeAttr(raw: string): string {
-  if (raw.includes("<")) throw new XmlError(`"<" inside an attribute value`);
+  if (raw.includes("<")) throw new XmlError("< inside an attribute value");
   return decodeEntities(raw.replace(/\r\n?/g, "\n").replace(/[\t\n]/g, " "));
 }
 
@@ -268,7 +268,7 @@ export function rewriteXml(xml: string, rewrite: XmlRewrite, rules: RewriteRules
     // Start tag.
     NAME.lastIndex = i + 1;
     const name = NAME.exec(xml)?.[0];
-    if (name === undefined) fail(i, `bad "<"`);
+    if (name === undefined) fail(i, "bad <");
     if (rootClosed) fail(i, "second root element");
     sawRoot = true;
     let p = i + 1 + name!.length;

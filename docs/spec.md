@@ -236,7 +236,9 @@ same blinded output tree. No model is called.
 
 - **Values are masked in the output.** `profile`, `plan`, `run` and `apply` print a value from a
   document (samples, candidates, entity names, sheet names, column headers and key paths, question
-  text, the values in a `--accept-leaks` listing, and the header or sheet an `apply` refusal names)
+  text, the values in a `--accept-leaks` listing, and the strings an `apply` refusal quotes: the
+  header, key path or sheet a spec rule names, a spec field's rejected value or unknown key, a map
+  key, and the worksheet name or token a skipped file's reason quotes)
   as `blind audit` does: the first two characters, `***`, the length (`Qu***12`), so a CI log keeps
   no real names. They print whole on a terminal, or with `--show-values` (on `profile`, `plan`,
   `run` and `apply`). File paths are not values and always print. `profile --json` and

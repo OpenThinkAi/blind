@@ -15,7 +15,11 @@ export interface SchemaIssue {
   /** Where the problem is, e.g. `$.columns[2].class`. */
   path: string;
   message: string;
-  /** Strings from the checked document that `message` quotes (with `got`), which may be values. */
+  /**
+   * Strings from the checked document that `message` quotes (with `got` or `show`), which may be
+   * values. Every issue that quotes a document string must list it here, or SchemaError.masked
+   * prints it whole.
+   */
   values?: string[];
 }
 
@@ -105,13 +109,8 @@ function strings(...vs: unknown[]): { values?: string[] } {
 
 /** `path` with each bracketed key (keyPath's `["..."]`, possibly cut short by got) masked. */
 function maskPathKeys(path: string): string {
-  return path.replace(/\[("(?:[^"\\]|\\.)*")(?:… \((\d+) characters\))?\]/g, (m, quoted: string, total?: string) => {
-    let key: string;
-    try {
-      key = JSON.parse(quoted) as string;
-    } catch {
-      return "[***]";
-    }
+  return path.replace(/\[("(?:[^"\\]|\\.)*")(?:… \((\d+) characters\))?\]/g, (_m, quoted: string, total?: string) => {
+    const key = JSON.parse(quoted) as string;
     if (total === undefined) return `[${maskValue(key)}]`;
     return `[${maskValue(key).replace(/\d+$/, total)}]`;
   });

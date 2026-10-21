@@ -241,6 +241,14 @@ describe("blind apply refusals beyond the spec mismatch", () => {
     expect((await apply(["in", "-o", "out", "--show-values"])).err).toContain('$.columns[0]["Avery Quill"]: unknown field');
   });
 
+  test("a long unknown key, which the path cuts short, is masked with its full length", async () => {
+    const key = "Avery Quill of the North Ridge Office";
+    writeSpec({ ...SPEC, columns: [{ ...SPEC.columns[0], [key]: "x" }] });
+    const r = await apply(["in", "-o", "out"]);
+    expect(r.err).not.toContain("Avery");
+    expect(r.err).toContain(`$.columns[0][Av***${[...key].length}]: unknown field`);
+  });
+
   test("the token a spec JSON parse error quotes is masked", async () => {
     writeSpec('{"version": Avery}');
     const r = await apply(["in", "-o", "out"]);

@@ -93,6 +93,7 @@ describe("structuralShape", () => {
       ["w:document", "xmlns:x", "http://"],
       ["w:document", "xmlns:x", "urn:corp:db01.corp.example.com"],
       ["w:document", "xmlns:x", "urn:schemas-microsoft-com"],
+      ["w:document", "xmlns:x", "urn:schemas-microsoft-com:db01.corp.example.com"],
       ["Relationship", "Type", "http://db01.corp.example.com/relationships/x"],
       ["ext", "uri", "http://db01.corp.example.com/ext"],
       ["Default", "ContentType", "jane@corp.example.com"],

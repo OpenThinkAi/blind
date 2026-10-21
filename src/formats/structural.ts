@@ -24,14 +24,14 @@ const URI = /^(?:https?:\/\/|urn:)[A-Za-z0-9._~:/?#[\]!$'()*+,;=%-]*$/;
  * (`http://db01.corp.example.com/ns`) is not structure: it is scanned and audited like any value.
  */
 const NAMESPACE_HOSTS = new Set(["schemas.openxmlformats.org", "purl.oclc.org", "schemas.microsoft.com", "www.w3.org", "purl.org", "customooxmlschemas.google.com"]);
-/** The urn namespaces Office writes (VML and its Office, Word, Excel and PowerPoint extensions). */
-const OFFICE_URN = /^urn:schemas-microsoft-com:[A-Za-z0-9.:-]+$/;
+/** The urn namespaces Office writes (VML and its Office, Word, Excel and PowerPoint extensions): colon-separated words, no dots, so no host fits. */
+const OFFICE_URN = /^urn:schemas-microsoft-com(?::[A-Za-z0-9-]+)+$/;
 
 /** A URI Office writes at a namespace, relationship-type or extension position: an allowlisted http(s) host or an Office urn. */
 function officeUri(value: string): boolean {
   if (!URI.test(value)) return false;
   if (value.startsWith("urn:")) return OFFICE_URN.test(value);
-  const host = value.slice(value.indexOf("://") + 3).split(/[/?#]/, 1)[0] as string;
+  const host = value.slice(value.indexOf("://") + 3).split(/[/?#]/, 1)[0] ?? "";
   return NAMESPACE_HOSTS.has(host.toLowerCase());
 }
 /** A GUID, with or without braces. */

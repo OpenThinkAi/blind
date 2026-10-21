@@ -66,7 +66,7 @@ export function parseMap(text: string, source = "map.json"): BlindMap {
   }
   const top = raw as Record<string, unknown>;
   for (const k of Object.keys(top)) {
-    if (k !== "version" && k !== "entries") throw new MapError(`${source}: unknown field '${k}'`);
+    if (k !== "version" && k !== "entries") throw new MapError(`${source}: unknown field ${JSON.stringify(k)}`);
   }
   if (top.version !== MAP_VERSION) {
     throw new MapError(`${source}: version must be ${MAP_VERSION}`);
@@ -82,7 +82,7 @@ export function parseMap(text: string, source = "map.json"): BlindMap {
     }
     const rec = item as Record<string, unknown>;
     for (const k of Object.keys(rec)) {
-      if (!(ENTRY_FIELDS as readonly string[]).includes(k)) throw new MapError(`${at}: unknown field '${k}'`);
+      if (!(ENTRY_FIELDS as readonly string[]).includes(k)) throw new MapError(`${at}: unknown field ${JSON.stringify(k)}`);
     }
     for (const k of ENTRY_FIELDS) {
       if (typeof rec[k] !== "string") throw new MapError(`${at}.${k}: expected a string`);

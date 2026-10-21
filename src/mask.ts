@@ -26,7 +26,8 @@ export function isTerminal(stream: NodeJS.WritableStream): boolean {
 /**
  * `text` with every JSON-quoted string in it masked. The explanations a report prints around a
  * value ("it would change the saved person entity "Avery Quill"") quote it with JSON.stringify; this
- * is the one place they are masked when the originals are not shown.
+ * is the one place they are masked when the originals are not shown. Every quoted string is taken
+ * for a value, so a message that goes through this quotes nothing else (no `"<"` or `"blind"`).
  */
 export function maskQuoted(text: string, show: boolean): string {
   if (show) return text;

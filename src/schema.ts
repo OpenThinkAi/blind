@@ -131,7 +131,7 @@ export interface ProfileJsonKey {
 }
 
 /** Patterns counted in free text: the detectors a document or transcript can hit (AGT-1856). */
-export type HitPattern = "ip" | "email" | "host" | "guid" | "mac" | "phone" | "address";
+export type HitPattern = "ip" | "email" | "host" | "guid" | "mac" | "phone" | "address" | "card" | "secret";
 /** Values found in one document or transcript, per pattern. Only patterns with a hit appear; absent means none. */
 export type PatternHits = Partial<Record<HitPattern, number>>;
 

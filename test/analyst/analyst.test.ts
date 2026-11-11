@@ -208,6 +208,9 @@ describe("checkProposal", () => {
     expect(checkProposal(with_("blind", "secret"), profile)).toEqual([
       { path: "$.columns[0].class", message: 'a "secret" column under "blind" is redacted; only blind.toml or a human may redact a column (ask a question instead)' },
     ]);
-    expect(checkProposal(with_("keep", "secret"), profile)).toEqual([]);
+    // Nor keep one: that would publish every credential in clear (AGT-2452).
+    expect(checkProposal(with_("keep", "secret"), profile)).toEqual([
+      { path: "$.columns[0].treatment", message: 'a "secret" column must not be kept; only blind.toml or a human may keep a credential column (ask a question instead)' },
+    ]);
   });
 });

@@ -119,7 +119,9 @@
         "guid": { "type": "integer", "minimum": 1 },
         "mac": { "type": "integer", "minimum": 1 },
         "phone": { "type": "integer", "minimum": 1 },
-        "address": { "type": "integer", "minimum": 1 }
+        "address": { "type": "integer", "minimum": 1 },
+        "card": { "type": "integer", "minimum": 1 },
+        "secret": { "type": "integer", "minimum": 1 }
       }
     },
     "ratio": { "type": "number", "minimum": 0, "maximum": 1 },

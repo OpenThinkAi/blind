@@ -58,9 +58,9 @@ function parse(text: string, format: TextFormat): Parsed {
   return { headings, units };
 }
 
-/** The free-text patterns counted for the profile: the same finder the engine uses, with card and secret left out. */
-const HIT_PATTERNS: Patterns = { ip: true, email: true, host: true, guid: true, mac: true, phone: true, address: true, card: false, secret: false };
-const HIT_NAMES = new Set<string>(["ip", "email", "host", "guid", "mac", "phone", "address"]);
+/** The free-text patterns counted for the profile: the same finder the engine uses (secret without the trigger boost). */
+const HIT_PATTERNS: Patterns = { ip: true, email: true, host: true, guid: true, mac: true, phone: true, address: true, card: true, secret: true };
+const HIT_NAMES = new Set<string>(["ip", "email", "host", "guid", "mac", "phone", "address", "card", "secret"]);
 
 /** Values in `text` per pattern (AGT-1856). Counts only: nothing here is kept but the number. */
 export function patternHits(text: string): PatternHits {

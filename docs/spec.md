@@ -59,7 +59,7 @@ One rule per table column or JSON key path. An array, possibly empty. Each rule:
 | `sheet` | string, non-empty | no | Worksheet name, for workbooks. Example: `"Servers"`. |
 | `header` | string | one of `header` / `jsonPath` | Column header text. May be `""` for a blank header. Example: `"Owner"`. |
 | `jsonPath` | string, non-empty | one of `header` / `jsonPath` | Key path, for JSON and JSONL. Example: `"$.items[*].ref_code"`. |
-| `class` | `person` \| `org` \| `host` \| `email` \| `id` \| `location` \| `vocabulary` \| `secret` \| `unknown` | yes | What the values are. `vocabulary` means ordinary words that identify no one. `secret` means passwords, keys or tokens: under `blind` every non-empty value is written as `REDACTED`, as `redact` does, and the model analyst may not propose it with `blind`. `unknown` means nobody could decide. |
+| `class` | `person` \| `org` \| `host` \| `email` \| `id` \| `location` \| `vocabulary` \| `secret` \| `unknown` | yes | What the values are. `vocabulary` means ordinary words that identify no one. `secret` means passwords, keys or tokens: under `blind` every non-empty value is written as `REDACTED`, as `redact` does, and the model analyst may not propose it with `blind` or `keep` (a reply that does is rejected). `unknown` means nobody could decide. |
 | `treatment` | `blind` \| `keep` \| `value` \| `drop` \| `redact` \| `scan` | yes | `blind`: replace with a class-labelled pseudonym (`Person_BCF6` compact, `[Person A #BCF6]` readable; see [pseudonym styles](#pseudonym-styles)). `keep`: leave unchanged. `value`: replace with a neutral `Value` pseudonym. `scan`: keep the cell as written except for what the free-text scanner finds in it. `drop`: remove the column or key from the output. `redact`: write `REDACTED` in place of every non-empty value. Neither `drop` nor `redact` is recorded in the map, so neither can be revealed. The model analyst may not use `drop`, `redact` or `scan`: they come from `blind.toml` ([policy.md](policy.md#columns)) or from you. A column rule in the analyst's reply with one of them is dropped, not the reply: `blind plan` prints a note per dropped rule and that column is ruled as if the analyst had left it out (heuristic, then your `[[columns]]` rules, which may set them). The analyst also may not `keep` (or class `vocabulary`) an identifying column (an email, host, ID, address, phone or a column of names): that rule is dropped and noted the same way, and it may not turn a pattern off that the policy's classes call sensitive (it is turned back on and noted); `blind.toml` or you can do either. |
 | `confidence` | number, 0 to 1 | yes | How sure the author of the rule was. Example: `0.95`. |
 | `source` | `analyst` \| `human` \| `heuristic` \| `policy` | yes | Who wrote the rule: the model analyst, you, the built-in heuristics, or `blind plan` from a `[[columns]]` rule or `[keep]` term in `blind.toml`. |
@@ -130,8 +130,8 @@ hand-edited spec until one is deleted.
 ### `seen`
 
 Fingerprints of the document and transcript excerpts (outline entries, sample sentences, speakers,
-sample lines) the analyst has already read: the first 16 hex digits of each excerpt's SHA-256,
-sorted and unique. `blind plan` writes it; the analyst cannot. Delete an entry, or the whole field,
+sample lines) the analyst has already read: the first 16 hex digits of each excerpt's SHA-256
+(lowercase; each entry must match `^[0-9a-f]{16}$`), sorted and unique. `blind plan` writes it; the analyst cannot. Delete an entry, or the whole field,
 to have those excerpts sent again.
 
 ### `redact`

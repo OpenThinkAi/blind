@@ -49,7 +49,7 @@
       "description": "Fingerprints (first 16 hex digits of SHA-256) of the document and transcript excerpts the analyst has already read. Written by blind plan; a later plan sends the analyst only excerpts not listed here.",
       "type": "array",
       "uniqueItems": true,
-      "items": { "type": "string", "minLength": 16, "maxLength": 16 }
+      "items": { "type": "string", "pattern": "^[0-9a-f]{16}$" }
     },
     "redact": {
       "description": "Values to write as REDACTED wherever they occur, never pseudonymised and never recorded in the map: a secret or card number accepted from an audit leak. Each item is the value's length in UTF-16 code units, a colon, and the first 32 hex digits of HMAC-SHA256 keyed by .blind/salt; the value itself is never stored. Written by blind plan --from-audit.",

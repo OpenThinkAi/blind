@@ -109,7 +109,7 @@ describe("local-only refuses non-loopback endpoints before any request", () => {
   });
 
   test("refuses claude-cli and the hosted Anthropic API, with no fallback", async () => {
-    const env = { K: KEY };
+    const env = { K_API_KEY: KEY };
     const cli = await rejection(
       ask("analyst", "sys", PROMPT, SCHEMA, { policy: policy({ backend: "claude-cli" }), spawn: noSpawn, fetch: noFetch, env }),
     );
@@ -117,7 +117,7 @@ describe("local-only refuses non-loopback endpoints before any request", () => {
     expect(cli).toContain("claude-cli");
     const api = await rejection(
       ask("analyst", "sys", PROMPT, SCHEMA, {
-        policy: policy({ backend: "anthropic", url: "", model: "m", key_env: "K" }),
+        policy: policy({ backend: "anthropic", url: "", model: "m", key_env: "K_API_KEY" }),
         fetch: noFetch,
         env,
       }),
@@ -457,8 +457,8 @@ describe("anthropic", () => {
       return Response.json({ content: [{ type: "text", text: '{"label":"unknown"}' }], stop_reason: "end_turn" });
     };
     await ask("analyst", "s", PROFILE_PROMPT, SCHEMA, {
-      policy: policy({ backend: "anthropic", url: "", model: "claude-test", key_env: "K" }, "profile-only"),
-      env: { K: KEY },
+      policy: policy({ backend: "anthropic", url: "", model: "claude-test", key_env: "K_API_KEY" }, "profile-only"),
+      env: { K_API_KEY: KEY },
       fetch: fake,
       stderr: () => {},
     });
@@ -469,8 +469,8 @@ describe("anthropic", () => {
     fresh(anthropic("I cannot decide."), anthropic('{"label":"maybe"}'));
     const msg = await rejection(
       ask("analyst", "s", PROMPT, SCHEMA, {
-        policy: policy({ backend: "anthropic", url: base, model: "m", key_env: "K" }),
-        env: { K: KEY },
+        policy: policy({ backend: "anthropic", url: base, model: "m", key_env: "K_API_KEY" }),
+        env: { K_API_KEY: KEY },
         quiet: true,
       }),
     );
@@ -482,8 +482,8 @@ describe("anthropic", () => {
     const cfg = { backend: "anthropic" as const, url: base, model: "m" };
     const none = await rejection(ask("analyst", "s", PROMPT, SCHEMA, { policy: policy({ ...cfg, key_env: "" }), fetch: noFetch, env: { ANTHROPIC_API_KEY: KEY } }));
     expect(none).toContain("key_env is empty");
-    const unset = await rejection(ask("analyst", "s", PROMPT, SCHEMA, { policy: policy({ ...cfg, key_env: "K" }), fetch: noFetch, env: {} }));
-    expect(unset).toContain("names K, which is not set");
+    const unset = await rejection(ask("analyst", "s", PROMPT, SCHEMA, { policy: policy({ ...cfg, key_env: "K_API_KEY" }), fetch: noFetch, env: {} }));
+    expect(unset).toContain("names K_API_KEY, which is not set");
     const pasted = "sk-test-0000-synthetic-pasted";
     const literal = await rejection(ask("analyst", "s", PROMPT, SCHEMA, { policy: policy({ ...cfg, key_env: pasted }), fetch: noFetch, env: {} }));
     expect(literal).toContain("not the key itself");

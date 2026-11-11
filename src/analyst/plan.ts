@@ -11,7 +11,7 @@ import { MAP_FILE, SPEC_FILE } from "../apply.ts";
 import { MapError, readMap } from "../engine/map.ts";
 import { isTerminal, maskQuoted, maskValue, shownValue } from "../mask.ts";
 import { BLIND_DIR, SALT_FILE } from "../init.ts";
-import { type AskOptions, ModelError, modelsEnabled } from "../model.ts";
+import { type AskOptions, knownValues, ModelError, modelsEnabled } from "../model.ts";
 import { loadKeepTerms, loadPolicy, POLICY_FILE, PolicyError, type PolicyPatterns, withPolicyPatterns } from "../policy.ts";
 import { writeProfile } from "../profile/command.ts";
 import { buildProfile, forPrivacyMode, InputError } from "../profile/profile.ts";
@@ -414,7 +414,12 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
     const remarks: string[] = [];
     const useModel = !values["no-model"] && modelsEnabled(policy);
     if (!values["no-model"] && !useModel) remarks.push('privacy.mode is "none", so no model was called: heuristic analyst only');
-    const modelOpts = { ...io.model, quiet: values.quiet, stderr: (line: string) => io.err.write(`blind plan: ${line}\n`) };
+    const modelOpts = {
+      ...io.model,
+      quiet: values.quiet,
+      stderr: (line: string) => io.err.write(`blind plan: ${line}\n`),
+      known: knownValues(saved, readMapIfAny(io.cwd), policy.keep.terms),
+    };
     let filled: Location[] = [];
     let ruledOut: DroppedRule[] = [];
     let patternsRestored: PatternName[] = [];

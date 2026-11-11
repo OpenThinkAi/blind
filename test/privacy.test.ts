@@ -9,7 +9,9 @@ import {
   type SpawnFn,
   ask,
   assertNoProxy,
+  knownValues,
   modelsEnabled,
+  policyOverlap,
   profilePayload,
   splitText,
 } from "../src/model.ts";
@@ -203,10 +205,64 @@ describe("profile-only", () => {
     });
     const size = Buffer.byteLength(bodies[0] ?? "");
     expect(events).toEqual([
+      "analyst: calling models.example.com with no API key",
       `analyst · openai-compatible · m · profile-only · samples 0 · ${size} bytes sent`,
       "fetch https://models.example.com/v1/chat/completions",
     ]);
     expect(sentData(bodies[0] ?? "")).toEqual(payload());
+  });
+
+  test("a non-loopback call names the host and the key variable first, even when quiet (AGT-2452)", async () => {
+    const events: string[] = [];
+    await ask("analyst", "s", { task: "t", data: payload() }, SCHEMA, {
+      policy: policyWith("profile-only", { ...REMOTE, key_env: "EXAMPLE_API_KEY" }),
+      env: { EXAMPLE_API_KEY: "sk-test-not-a-real-key" },
+      fetch: recorder(events, []),
+      stderr: (l) => events.push(l),
+      quiet: true,
+    });
+    expect(events[0]).toBe("analyst: calling models.example.com with the API key in EXAMPLE_API_KEY");
+    expect(events.join("\n")).not.toContain("sk-test-not-a-real-key");
+  });
+
+  test("a key_env that does not look like a key variable is refused unless BLIND_ALLOW_KEY_ENV names it (AGT-2452)", async () => {
+    const opts = (env: Record<string, string>) => ({ policy: policyWith("profile-only", { ...REMOTE, key_env: "DATABASE_URL" }), env, fetch: noFetch, stderr: () => {} });
+    const msg = await refusal(ask("analyst", "s", { task: "t", data: payload() }, SCHEMA, opts({ DATABASE_URL: "postgres://u:p@db/x" })));
+    expect(msg).toContain("DATABASE_URL, which does not look like an API key variable");
+    expect(msg).toContain("BLIND_ALLOW_KEY_ENV=DATABASE_URL");
+    expect(msg).not.toContain("postgres://");
+    const events: string[] = [];
+    await ask("analyst", "s", { task: "t", data: payload() }, SCHEMA, {
+      ...opts({ DATABASE_URL: "postgres://u:p@db/x", BLIND_ALLOW_KEY_ENV: "DATABASE_URL" }),
+      fetch: recorder(events, []),
+    });
+    expect(events.some((e) => e.startsWith("fetch "))).toBe(true);
+    for (const ok of ["OPENAI_API_KEY", "HF_TOKEN", "MY_KEY"]) {
+      await ask("analyst", "s", { task: "t", data: payload() }, SCHEMA, { ...opts({ [ok]: "x" }), policy: policyWith("profile-only", { ...REMOTE, key_env: ok }), fetch: recorder([], []) });
+    }
+  });
+
+  test("warns, without refusing, when the policy's description or examples hold a known value (AGT-2452)", async () => {
+    const p = policyWith("profile-only", REMOTE);
+    p.sensitive.description = "Hide client names such as Marisol Okonkwo and hosts.";
+    p.sensitive.examples = ["db07.corp.example.net", "Ada Example"];
+    const events: string[] = [];
+    await ask("analyst", "s", { task: "t", data: profilePayload(PROFILE_ONLY, p) }, SCHEMA, {
+      policy: p,
+      fetch: recorder(events, []),
+      stderr: (l) => events.push(l),
+      known: knownValues(
+        { entities: { person: [{ canonical: "Marisol Okonkwo", aliases: [], parts: ["Okonkwo"] }], vocabulary: [{ canonical: "hosts", aliases: [], parts: [] }] } },
+        { version: 1, entries: [{ kind: "host", canonical: "db07.corp.example.net", value: "db07.corp.example.net", pseudonym: "host-1a2b.host-3c4d.net" }] },
+        ["Ada"],
+      ),
+    });
+    const warning = events.find((e) => e.startsWith("warning:"));
+    expect(warning).toContain("hold 4 value(s)");
+    expect(warning).not.toContain("Marisol");
+    expect(warning).not.toContain("db07.corp");
+    expect(events.some((e) => e.startsWith("fetch "))).toBe(true);
+    expect(policyOverlap({ description: ["nothing here"], examples: ["Example Widgets"] }, ["Ada", "Wid"])).toEqual([]);
   });
 
   test("the policy view carries the classes, description, examples and (outside profile-only) the keep list", () => {

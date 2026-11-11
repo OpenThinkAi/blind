@@ -49,11 +49,11 @@ these with hostile document content and a fake model that obeys any instruction 
 
 ## What leaves the machine under profile-only
 
-The policy is sent as written. Under `profile-only` the remote model gets the `[sensitive]` class
-names, description and examples, and the `[keep]` terms, verbatim (`policyView` in
-`src/model.ts`). Keep terms are often client or vendor names, so write them generically when the
-name itself is sensitive (`vendor terms`, not the vendor). The same applies to examples and the
-description: use invented examples.
+Under `profile-only` the remote model gets the `[sensitive]` class names, description and
+examples as written (`policyView` in `src/model.ts`). The `[keep]` terms are never sent in this
+mode (`keepSent` is false, so the payload carries an empty keep list): blind applies them locally
+to the reply instead. The class names, description and examples do go verbatim, so do not put
+real document values in them: use invented examples.
 
 ## Quoted as data
 
@@ -133,8 +133,6 @@ was not checked by a model), never as `clean`. If the analyst failed and the
 spec came from the heuristic analyst (`--no-model`) or a human, the audit is the same check.
 `clean` means only that the check found nothing it knows to look for; it is not a guarantee that
 nothing identifying remains.
-
-## Secrets on disk
 
 ## What stays on disk
 

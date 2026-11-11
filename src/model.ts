@@ -25,7 +25,12 @@
 //     longer than MAX_DATA_STRING characters is refused, not truncated: a long string
 //     there means document text is about to leave the machine.
 //   - API keys come only from the environment variable `key_env` names, go only into
-//     request headers, and never appear in a message.
+//     request headers, and never appear in a message. blind.toml may come from someone else, so a
+//     `key_env` that does not look like a key variable (*_API_KEY, *_TOKEN, *_KEY) is refused unless
+//     BLIND_ALLOW_KEY_ENV names it, and the endpoint host and variable name are printed before every
+//     call to a non-loopback host.
+//   - under profile-only, a policy description or example that holds a value from the map, the spec
+//     or the keep terms is warned about (AskOptions.known): the policy goes to the model as written.
 //   - a reply must be exactly one JSON value matching the caller's schema (after a leading
 //     <think> block is dropped). Anything else is retried once with the problems listed,
 //     then rejected. Nothing is repaired or scraped out of prose.
@@ -38,8 +43,10 @@ import { isIP } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_LOCAL_URL, type ModelConfig, type Policy, type PrivacyMode, SENSITIVE_CLASSES } from "./policy.ts";
+import type { BlindMap } from "./engine/map.ts";
+import { maskValue } from "./mask.ts";
 import { untokenised } from "./profile/tokens.ts";
-import type { Profile } from "./schema.ts";
+import type { Profile, Spec } from "./schema.ts";
 import { type Schema, validateProfile, validateSchema } from "./validate.ts";
 
 export type Role = "analyst" | "auditor";
@@ -86,6 +93,11 @@ export interface AskOptions {
   env?: Record<string, string | undefined>;
   stderr?: (line: string) => void;
   timeoutMs?: number;
+  /**
+   * Values that must not reach a hosted model (knownValues: map values, spec entity forms, keep
+   * terms). Under profile-only, a policy description or example that holds one is warned about.
+   */
+  known?: readonly string[];
 }
 
 export class ModelError extends Error {
@@ -391,6 +403,10 @@ export function assertProfilePayload(data: unknown): asserts data is ProfilePayl
 }
 
 const KEY_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** What an API key variable is called. Anything else (HOME, DATABASE_URL) needs BLIND_ALLOW_KEY_ENV. */
+const KEY_ENV_SHAPE = /(?:_API_KEY|_TOKEN|_KEY)$/i;
+/** The environment variable a user sets to the one `key_env` name blind.toml may use although it does not look like a key variable. */
+export const ALLOW_KEY_ENV = "BLIND_ALLOW_KEY_ENV";
 
 function readKey(role: Role, cfg: ModelConfig, env: Record<string, string | undefined>): string | undefined {
   if (cfg.backend === "claude-cli") return undefined;
@@ -405,9 +421,57 @@ function readKey(role: Role, cfg: ModelConfig, env: Record<string, string | unde
   if (!KEY_ENV_NAME.test(name)) {
     throw new ModelRefusal(`models.${role}.key_env must be the name of an environment variable (letters, digits, _), not the key itself`);
   }
+  // blind.toml may come from someone else: it must not be able to send any variable as a bearer token.
+  if (!KEY_ENV_SHAPE.test(name) && env[ALLOW_KEY_ENV] !== name) {
+    throw new ModelRefusal(
+      `models.${role}.key_env names ${name}, which does not look like an API key variable (*_API_KEY, *_TOKEN, *_KEY); ` +
+        `blind.toml may come from someone else, so to send it anyway set ${ALLOW_KEY_ENV}=${name} in your environment`,
+    );
+  }
   const key = env[name];
   if (key === undefined || key === "") throw new ModelRefusal(`models.${role}.key_env names ${name}, which is not set`);
   return key;
+}
+
+/** Every value that must not reach a hosted model: spec entity forms (vocabulary aside), map values and canonical forms, and keep terms. */
+export function knownValues(spec: Pick<Spec, "entities"> | undefined, map: BlindMap | undefined, keep: readonly string[]): string[] {
+  const out = new Set<string>(keep);
+  for (const [cls, list] of Object.entries(spec?.entities ?? {})) {
+    if (cls === "vocabulary") continue;
+    for (const e of list ?? []) for (const f of [e.canonical, ...e.aliases, ...e.parts]) out.add(f);
+  }
+  for (const e of map?.entries ?? []) {
+    if (e.kind === "host-label" || e.kind === "email-local") continue;
+    out.add(e.value);
+    out.add(e.canonical);
+  }
+  return [...out];
+}
+
+const foldText = (s: string): string => s.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+const WORDISH = /[\p{L}\p{N}]/u;
+
+/** `inner` occurs in `outer` (both folded) with no letter or digit right around it. */
+function holdsWord(outer: string, inner: string): boolean {
+  for (let i = outer.indexOf(inner); i >= 0; i = outer.indexOf(inner, i + 1)) {
+    if (!WORDISH.test(outer[i - 1] ?? "") && !WORDISH.test(outer[i + inner.length] ?? "")) return true;
+  }
+  return false;
+}
+
+/**
+ * The `known` values a policy view's description or examples hold as whole words (case-folded),
+ * sorted. A value with fewer than 3 letters and digits is not checked.
+ */
+export function policyOverlap(view: Pick<PolicyView, "description" | "examples">, known: readonly string[]): string[] {
+  const texts = [view.description.join(" "), ...view.examples].map(foldText);
+  const hits = new Set<string>();
+  for (const k of known) {
+    const f = foldText(k);
+    if ((f.match(/[\p{L}\p{N}]/gu) ?? []).length < 3) continue;
+    if (texts.some((t) => holdsWord(t, f))) hits.add(k);
+  }
+  return [...hits].sort();
 }
 
 // ---------------------------------------------------------------------------
@@ -633,6 +697,20 @@ export async function ask<T>(role: Role, system: string, prompt: Prompt, schema:
   assertShortStrings(prompt.data);
   const samples = mode === "profile-only" ? (prompt.data as ProfilePayload).profile.sampleCount : undefined;
   const key = readKey(role, cfg, opts.env ?? process.env);
+  const write = opts.stderr ?? ((line: string) => process.stderr.write(`${line}\n`));
+  if (mode === "profile-only" && opts.known !== undefined) {
+    const hits = policyOverlap((prompt.data as ProfilePayload).policy, opts.known);
+    if (hits.length > 0) {
+      write(
+        `warning: privacy.mode is profile-only, but the policy's [sensitive] description or examples hold ${hits.length} value(s) ` +
+          `from the map, the spec or [keep] terms (${hits.map(maskValue).join(", ")}); they are sent to the model as written. Reword them in blind.toml`,
+      );
+    }
+  }
+  // Where a call off this machine goes, and which variable's value rides along, whatever --quiet says.
+  if (url !== null && !isLoopback(url)) {
+    write(`${role}: calling ${url.host}${key === undefined ? " with no API key" : ` with the API key in ${cfg.key_env}`}`);
+  }
   const transport = cfg.backend === "claude-cli" ? callClaude : cfg.backend === "anthropic" ? callAnthropic : callOpenAI;
   const timeoutMs = opts.timeoutMs ?? CALL_TIMEOUT_MS;
 

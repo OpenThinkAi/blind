@@ -12,7 +12,7 @@ import { MAP_FILE, SPEC_FILE } from "../apply.ts";
 import { type BlindMap, MapError, readMap } from "../engine/map.ts";
 import { BLIND_DIR } from "../init.ts";
 import { isTerminal, maskQuoted } from "../mask.ts";
-import { type AskOptions, ModelRefusal, modelsEnabled } from "../model.ts";
+import { type AskOptions, knownValues, ModelRefusal, modelsEnabled } from "../model.ts";
 import { loadPolicy, type Policy, POLICY_FILE, PolicyError, withPolicyPatterns } from "../policy.ts";
 import type { Spec } from "../schema.ts";
 import { parseSpec, SchemaError } from "../validate.ts";
@@ -272,7 +272,7 @@ export async function runAudit(argv: string[], io: AuditIO): Promise<number> {
         spec,
         keep,
         style: policy.pseudonyms.style,
-        ask: { ...io.model, stderr: (line) => io.err.write(`blind audit: ${line}\n`) },
+        ask: { ...io.model, stderr: (line) => io.err.write(`blind audit: ${line}\n`), known: knownValues(spec, map, keep) },
       });
     }
     io.out.write(values.json ? `${JSON.stringify(report, null, 2)}\n` : renderTable(report));

@@ -324,7 +324,7 @@ four keys, all required in the table:
 | `backend` | `"claude-cli"`, `"anthropic"` or `"openai-compatible"` | How to reach the model. |
 | `url` | string | The server's base URL. Empty means the backend's default (`https://api.anthropic.com` for `anthropic`; `http://127.0.0.1:11434/v1` for `openai-compatible`). Ignored by `claude-cli`. |
 | `model` | string | The model name. Empty means "not set": `openai-compatible` then asks the server which models it has and uses the first (a request that carries no document data); `claude-cli` uses its own default; `anthropic` refuses to run. |
-| `key_env` | string | The **name** of the environment variable that holds the API key, never the key. Empty means no key. A value that is not a valid variable name (a pasted key) is refused without being printed. |
+| `key_env` | string | The **name** of the environment variable that holds the API key, never the key. Empty means no key. A value that is not a valid variable name (a pasted key) is refused without being printed. A name that does not end in `_API_KEY`, `_TOKEN` or `_KEY` (any case) is refused too, since a `blind.toml` from someone else could otherwise send any variable (`DATABASE_URL`, say) as a bearer token; to use such a name anyway, set `BLIND_ALLOW_KEY_ENV` to it in your environment (`BLIND_ALLOW_KEY_ENV=MY_CREDENTIAL`). |
 
 The backends:
 
@@ -386,7 +386,14 @@ pieces of at most 120 characters. The things you write cannot be cut for you: a 
 `profile-only` keep terms are not sent, so only `examples` are checked.)
 
 Each call prints a line to stderr first: `role · backend · model · mode · [samples k ·] N bytes
-sent`. `--quiet` hides it, except under `profile-only`.
+sent`. `--quiet` hides it, except under `profile-only`. A call to a host that is not loopback is
+also preceded, whatever `--quiet` says, by where it goes and which variable's value is sent:
+`analyst: calling api.anthropic.com with the API key in ANTHROPIC_API_KEY`.
+
+Under `profile-only`, the policy's `description` and `examples` are sent as written. When one of
+them holds, as whole words in any case, a value from the map, a spec entity form or a `[keep]`
+term, `blind plan` and `blind audit` warn before the call (the values masked) and still send it:
+`examples` are meant to be invented, so reword them in `blind.toml`.
 
 ## `[patterns]`
 

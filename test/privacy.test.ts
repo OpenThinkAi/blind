@@ -8,6 +8,7 @@ import {
   ModelRefusal,
   type SpawnFn,
   ask,
+  assertNoProxy,
   modelsEnabled,
   profilePayload,
   splitText,
@@ -117,6 +118,74 @@ describe("local-only", () => {
       `analyst · openai-compatible · m · local-only · ${Buffer.byteLength(bodies[0] ?? "")} bytes sent`,
       "fetch http://127.0.0.1:8000/v1/chat/completions",
     ]);
+  });
+});
+
+describe("local-only refuses a proxied call (AGT-2446)", () => {
+  const data = { task: "t", data: { header: "contact_name" } };
+  const LOCAL = { url: "http://127.0.0.1:8000/v1", model: "m" };
+  const run = (env: Record<string, string>, cfg: Partial<ModelConfig> = LOCAL, fetch: AskOptions["fetch"] = noFetch) =>
+    ask("analyst", "s", data, SCHEMA, {
+      policy: policyWith("local-only", cfg),
+      fetch,
+      lookup: async () => [{ address: "127.0.0.1" }],
+      env,
+      stderr: () => {},
+    });
+
+  test.each(["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"])(
+    "refuses before any send when %s is set and NO_PROXY is not",
+    async (name) => {
+      const msg = await refusal(run({ [name]: "http://proxy.example.com:3128" }));
+      expect(msg).toStartWith("privacy.mode is local-only: ");
+      expect(msg).toContain(name);
+      expect(msg).toContain("NO_PROXY=127.0.0.1");
+    },
+  );
+
+  test.each([
+    ["a list without the host", { NO_PROXY: "example.com" }],
+    ["a CIDR range", { NO_PROXY: "127.0.0.0/8" }],
+    ["another port", { NO_PROXY: "127.0.0.1:9000" }],
+    ["a space-separated list", { NO_PROXY: "example.com 127.0.0.1" }],
+    ["NO_PROXY covering it but no_proxy not", { NO_PROXY: "127.0.0.1", no_proxy: "example.com" }],
+    ["a blank no_proxy", { NO_PROXY: "127.0.0.1", no_proxy: " " }],
+  ])("refuses with %s", async (_name, noProxy) => {
+    await refusal(run({ HTTP_PROXY: "http://proxy.example.com:3128", ...noProxy }));
+  });
+
+  test("refuses a localhost URL that NO_PROXY does not name", async () => {
+    const msg = await refusal(run({ HTTP_PROXY: "http://proxy.example.com:3128", NO_PROXY: "127.0.0.1" }, { url: "http://localhost:8000/v1", model: "m" }));
+    expect(msg).toContain("NO_PROXY=localhost");
+  });
+
+  test.each([
+    ["the host", { NO_PROXY: "127.0.0.1" }],
+    ["the host in a list, any case", { no_proxy: " example.com , 127.0.0.1 " }],
+    ["host:port", { NO_PROXY: "127.0.0.1:8000" }],
+    ["*", { NO_PROXY: "*" }],
+    ["both variables naming it", { NO_PROXY: "127.0.0.1", no_proxy: "127.0.0.1" }],
+  ])("sends when NO_PROXY names %s", async (_name, noProxy) => {
+    const events: string[] = [];
+    await run({ HTTP_PROXY: "http://proxy.example.com:3128", ...noProxy }, LOCAL, recorder(events, []));
+    expect(events).toEqual(["fetch http://127.0.0.1:8000/v1/chat/completions"]);
+  });
+
+  test("an IPv6 loopback is covered by its bracketed form", async () => {
+    const events: string[] = [];
+    await run({ ALL_PROXY: "socks5://proxy.example.com:1080", NO_PROXY: "[::1]" }, { url: "http://[::1]:8000/v1", model: "m" }, recorder(events, []));
+    expect(events).toEqual(["fetch http://[::1]:8000/v1/chat/completions"]);
+  });
+
+  test("an empty proxy variable is not a proxy", async () => {
+    const events: string[] = [];
+    await run({ HTTP_PROXY: "" }, LOCAL, recorder(events, []));
+    expect(events).toHaveLength(1);
+  });
+
+  test("assertNoProxy counts a proxy variable for another scheme", () => {
+    expect(() => assertNoProxy(new URL("http://127.0.0.1:8000"), { HTTPS_PROXY: "http://p:1", NO_PROXY: "127.0.0.1" })).not.toThrow();
+    expect(() => assertNoProxy(new URL("http://127.0.0.1:8000"), { HTTPS_PROXY: "http://p:1" })).toThrow(ModelRefusal);
   });
 });
 

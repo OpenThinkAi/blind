@@ -1232,7 +1232,7 @@ or backend.
 
 | Mode | Model calls | What is sent |
 |---|---|---|
-| `local-only` (default) | Loopback endpoints only (127.0.0.0/8, `::1`, `localhost`). `claude-cli`, the hosted Anthropic API and any other host are refused with "privacy.mode is local-only". | The caller's data, every string at most 120 characters. The policy part is the classes, the description in pieces, the `examples` and the `[keep] terms`. |
+| `local-only` (default) | Loopback endpoints only (127.0.0.0/8, `::1`, `localhost`). `claude-cli`, the hosted Anthropic API and any other host are refused with "privacy.mode is local-only", and so is any call while `HTTP_PROXY`, `HTTPS_PROXY` or `ALL_PROXY` (either case) is set and every set `NO_PROXY`/`no_proxy` does not name the host (`*`, the host, or `host:port`), since fetch would send the loopback request through the proxy. | The caller's data, every string at most 120 characters. The policy part is the classes, the description in pieces, the `examples` and the `[keep] terms`. |
 | `profile-only` | Remote endpoints allowed, over https (a loopback server may still use http). | Exactly the profile and the policy, with no value in the profile and every name a token (below). The policy part is the sensitive classes, the description split into pieces of at most 120 characters, and the `examples`, as you wrote them; `keep` goes as an empty list. Anything else (a non-empty `keep` included) is refused. |
 | `none` | None. `blind plan` uses the heuristic analyst; `blind audit` runs its mechanical and semantic layers only. | Nothing. |
 

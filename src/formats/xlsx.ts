@@ -260,6 +260,8 @@ export interface XlsxWorkbook {
   members: MemberResult[];
   /** Indices of cell formats (`XlsxCell.style`) whose number format is a date or time. */
   dateStyles: ReadonlySet<number>;
+  /** Every member whose root element is `worksheet`, whether or not workbook.xml lists it. */
+  worksheetParts: string[];
 }
 
 /** Built-in number formats that are dates or times (ECMA-376 18.8.30, plus the East Asian ones). */
@@ -428,7 +430,15 @@ export function readWorkbook(bytes: Uint8Array): XlsxWorkbook {
     const code = customFormats.get(id);
     if (code === undefined ? BUILTIN_DATE_FORMATS.has(id) : isDateFormatCode(code)) dateStyles.add(i);
   });
-  return { sheets, sharedStrings, definedNames: wb.definedNames, tables, members, dateStyles };
+  return {
+    sheets,
+    sharedStrings,
+    definedNames: wb.definedNames,
+    tables,
+    members,
+    dateStyles,
+    worksheetParts: [...worksheets.keys()],
+  };
 }
 
 /** A worksheet as rows of cell text, row 1 first, for header detection and statistics. */

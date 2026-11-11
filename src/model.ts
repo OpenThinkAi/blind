@@ -10,7 +10,8 @@
 // 2 means a leak, reports it with exit 3):
 //   - privacy.mode "none" calls no model; "local-only" refuses anything that is not a
 //     loopback literal (127.0.0.0/8, ::1), and a host name (localhost) only if every address it
-//     resolves to is loopback. That rules out claude-cli and the hosted Anthropic API. There is
+//     resolves to is loopback; the request then connects to that address (pinnedRequest), so fetch
+//     never resolves the name a second time. That rules out claude-cli and the hosted Anthropic API. There is
 //     no fallback to another backend. A call is also refused when a proxy variable
 //     (HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, any case) is set and NO_PROXY does not name the host,
 //     since fetch would otherwise send the loopback request through the proxy.
@@ -40,6 +41,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { lookup as dnsLookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { checkServerIdentity, type PeerCertificate } from "node:tls";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_LOCAL_URL, type ModelConfig, type Policy, type PrivacyMode, SENSITIVE_CLASSES } from "./policy.ts";
@@ -194,14 +196,15 @@ export function isLoopbackAddress(address: string): boolean {
 const systemLookup: LookupFn = (host) => dnsLookup(host, { all: true });
 
 /**
- * Under local-only, a host NAME (such as localhost) is only as local as what it resolves to,
- * because fetch asks the system resolver. Every address it returns must be loopback. IP
- * literals were already decided by resolveEndpoint, so they are not looked up. Call before
- * any request is sent.
+ * Under local-only, a host NAME (such as localhost) is only as local as what it resolves to.
+ * Every address it returns must be loopback. Returns the first of them, which the call then
+ * connects to (pinnedUrl), so a second resolution by fetch cannot send it elsewhere; null for an
+ * IP literal, which resolveEndpoint already decided and which is not looked up. Call before any
+ * request is sent.
  */
-export async function assertResolvesLoopback(url: URL, lookup: LookupFn = systemLookup): Promise<void> {
+export async function assertResolvesLoopback(url: URL, lookup: LookupFn = systemLookup): Promise<string | null> {
   const host = url.hostname.replace(/^\[(.*)\]$/, "$1");
-  if (isIP(host) !== 0) return;
+  if (isIP(host) !== 0) return null;
   let addresses: { address: string }[];
   try {
     addresses = await lookup(host);
@@ -218,6 +221,7 @@ export async function assertResolvesLoopback(url: URL, lookup: LookupFn = system
         `use 127.0.0.1 in the url, or set privacy.mode = "profile-only" to allow a remote model`,
     );
   }
+  return (addresses[0] as { address: string }).address;
 }
 
 const PROXY_VARS = ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"] as const;
@@ -531,6 +535,26 @@ interface Call {
   user: string;
   opts: AskOptions;
   timeoutMs: number;
+  /** Under local-only, the loopback address `url`'s host name was verified to resolve to: requests connect to it. */
+  pinned: string | null;
+}
+
+/**
+ * `url` with its host replaced by the verified address `pinned` (IPv6 bracketed), and what keeps the
+ * request addressed to the name: the Host header and, for https, the server name and certificate
+ * check against it. Connecting by address means fetch never resolves the name a second time.
+ */
+export function pinnedRequest(
+  url: string,
+  pinned: string | null,
+): { url: string; host?: string; tls?: { serverName: string; checkServerIdentity: (host: string, cert: PeerCertificate) => Error | undefined } } {
+  if (pinned === null) return { url };
+  const u = new URL(url);
+  const name = u.hostname;
+  const host = u.host;
+  u.hostname = isIP(pinned) === 6 ? `[${pinned}]` : pinned;
+  if (u.protocol !== "https:") return { url: u.toString(), host };
+  return { url: u.toString(), host, tls: { serverName: name, checkServerIdentity: (_h, cert) => checkServerIdentity(name, cert) } };
 }
 
 const bytes = (s: string): number => Buffer.byteLength(s, "utf8");
@@ -550,24 +574,35 @@ function endpointUrl(base: URL, path: string): string {
 async function http(c: Call, method: "GET" | "POST", url: string, headers: Record<string, string>, body?: string): Promise<unknown> {
   const doFetch = c.opts.fetch ?? fetch;
   const what = `${c.role} (${c.cfg.backend})`;
+  // Messages name the host as configured, not the address it was pinned to.
+  const shown = new URL(url).host;
+  const to = pinnedRequest(url, c.pinned);
   let res: Response;
   let text: string;
   try {
     // No redirects: a loopback server must not be able to bounce the payload elsewhere.
-    res = await doFetch(url, { method, headers, body, redirect: "error", signal: AbortSignal.timeout(c.timeoutMs) });
+    const init = {
+      method,
+      headers: to.host === undefined ? headers : { ...headers, Host: to.host },
+      body,
+      redirect: "error" as const,
+      signal: AbortSignal.timeout(c.timeoutMs),
+      ...(to.tls === undefined ? {} : { tls: to.tls }),
+    };
+    res = await doFetch(to.url, init);
     text = await res.text();
   } catch (e) {
     const err = e as Error;
     if (err.name === "TimeoutError" || err.name === "AbortError") {
       throw new ModelError(`${what}: no reply within ${c.timeoutMs / 1000} s`);
     }
-    throw new ModelError(`${what}: request to ${new URL(url).host} failed: ${err.message}`);
+    throw new ModelError(`${what}: request to ${shown} failed: ${err.message}`);
   }
-  if (!res.ok) throw new ModelError(`${what}: ${new URL(url).host} answered HTTP ${res.status}`);
+  if (!res.ok) throw new ModelError(`${what}: ${shown} answered HTTP ${res.status}`);
   try {
     return JSON.parse(text);
   } catch {
-    throw new ModelError(`${what}: ${new URL(url).host} answered with a body that is not JSON`);
+    throw new ModelError(`${what}: ${shown} answered with a body that is not JSON`);
   }
 }
 
@@ -689,9 +724,10 @@ export async function ask<T>(role: Role, system: string, prompt: Prompt, schema:
   const cfg = opts.policy.models[role];
   const mode = opts.policy.privacy.mode;
   const url = resolveEndpoint(role, cfg, mode);
+  let pinned: string | null = null;
   if (mode === "local-only" && url !== null) {
     assertNoProxy(url, opts.env ?? process.env);
-    await assertResolvesLoopback(url, opts.lookup);
+    pinned = await assertResolvesLoopback(url, opts.lookup);
   }
   if (mode === "profile-only") assertProfilePayload(prompt.data);
   assertShortStrings(prompt.data);
@@ -717,7 +753,7 @@ export async function ask<T>(role: Role, system: string, prompt: Prompt, schema:
   let feedback: string | undefined;
   for (let attempt = 0; attempt < 2; attempt++) {
     const user = renderPrompt(prompt, schema, feedback);
-    const reply = await transport({ role, samples, cfg, url, key, system, user, opts, timeoutMs });
+    const reply = await transport({ role, samples, cfg, url, key, system, user, opts, timeoutMs, pinned });
     const parsed = parseReply(reply, schema);
     if (parsed.ok) return parsed.value as T;
     feedback = parsed.reason;

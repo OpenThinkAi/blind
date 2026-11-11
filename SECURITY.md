@@ -41,7 +41,10 @@ these with hostile document content and a fake model that obeys any instruction 
   synthetic kit v2.
 - **Endpoints.** `local-only` (the default) refuses any endpoint that is not a loopback literal
   (127.0.0.0/8, `::1`, `localhost`) before sending, which rules out `claude -p` and the hosted
-  Anthropic API. It also refuses the call when `HTTP_PROXY`, `HTTPS_PROXY` or `ALL_PROXY` (either
+  Anthropic API. A host name such as `localhost` must resolve only to loopback addresses, and the
+  request then connects to the address it was checked against (the name kept in the `Host` header,
+  and for https in the server name and certificate check), so a second lookup cannot send it
+  elsewhere. It also refuses the call when `HTTP_PROXY`, `HTTPS_PROXY` or `ALL_PROXY` (either
   case) is set and `NO_PROXY` does not name the loopback host, because fetch would otherwise send
   the request through the proxy; set `NO_PROXY` (and `no_proxy`, if set) or unset the proxy. `profile-only` allows a remote model over https (a loopback server may use http), including
   `claude -p`, and refuses any data that is not exactly the profile payload. `none` calls no model. There is no fallback to another mode or

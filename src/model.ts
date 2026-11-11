@@ -227,7 +227,10 @@ function noProxyCovers(list: string, url: URL): boolean {
  * options does not turn that off, so a proxy variable in the environment could carry the payload
  * off the machine. Every proxy variable counts, whatever the URL's scheme, and every NO_PROXY
  * variable that is set must name the host (`*`, the host, or `host:port`); CIDR ranges and
- * wildcard suffixes are not treated as cover. Call before any request is sent.
+ * wildcard suffixes are not treated as cover. Each accepted form was checked against Bun 1.3.13's
+ * own matching with a listening proxy: `127.0.0.1`, `127.0.0.1:<port>`, `[::1]` and `*` go direct,
+ * while `127.0.0.0/8`, a different port, `::1` unbracketed and space-separated lists are proxied;
+ * a set `no_proxy` takes precedence over `NO_PROXY`. Call before any request is sent.
  */
 export function assertNoProxy(url: URL, env: Record<string, string | undefined>): void {
   const proxies = PROXY_VARS.filter((v) => (env[v] ?? "") !== "");

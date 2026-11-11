@@ -199,7 +199,7 @@ report is written as JSON to `<kit>/bench-report.json` (or `--report <path>`; no
 | `spec` | `kit` (the kit's spec.json) or `heuristic` (`--plan`). |
 | `apply`, `audit` | Exit codes; files written and not written; the audit's status, counts and layers. |
 | `leaks`, `damage`, `honesty` | `count` and `items` (masked). |
-| `unscored` | What could not be scored, and why. |
+| `unscored` | What could not be scored, and why (a quoted string in the reason, such as a parser message quoting document text, is masked). |
 | `timing` | `applyMs`, `auditMs`, `totalMs`. |
 
 For a fixed kit everything except `timing` is the same on every run: items are in a fixed order and

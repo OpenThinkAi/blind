@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AuditReport, TreeEntry } from "../../src/audit/mechanical.ts";
-import { type BenchReport, REPORT_FILE, runBench } from "../../src/bench/command.ts";
+import { type BenchReport, maskUnscored, REPORT_FILE, runBench } from "../../src/bench/command.ts";
 import { parseCsv, serializeCsv } from "../../src/engine/csv.ts";
 import { OracleError, OracleMatcher, parseOracle, scanLeaks, scoreDamage, scoreHonesty } from "../../src/bench/score.ts";
 import { buildWorkbook } from "../../src/bench/office.ts";
@@ -526,5 +526,17 @@ describe("blind bench masks a not-written reason (AGT-2452)", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("blind bench masks an unscored reason (AGT-2452)", () => {
+  test("a parser message quoting document text is masked; paths and the rest of the reason stay", () => {
+    const items = maskUnscored([
+      { file: "staff.json", part: "", reason: `cannot be parsed as json (Unexpected token, "Avery Quill" is not valid JSON); its keys and values were not compared` },
+      { file: "kit.zip", part: "a.txt", reason: "not decoded; its content was not read" },
+    ]);
+    expect(items[0]?.reason).toBe("cannot be parsed as json (Unexpected token, Av***11 is not valid JSON); its keys and values were not compared");
+    expect(items[0]?.file).toBe("staff.json");
+    expect(items[1]?.reason).toBe("not decoded; its content was not read");
   });
 });

@@ -256,9 +256,12 @@ describe("XLSX apply: round trip", () => {
     }
   });
 
-  // A real spreadsheet library, where one is installed (openpyxl). The structural check above always runs.
-  const py = spawnSync("python3", ["-P", "-c", "import openpyxl"], { encoding: "utf8" });
-  test.skipIf(py.status !== 0)("opens with openpyxl, with the same sheets, dimensions and formulas", () => {
+  // A real spreadsheet library (openpyxl), only when asked for with BLIND_TEST_OPENPYXL=1: the suite does
+  // not run whatever python3 is on the PATH by default. The structural check above always runs.
+  const optIn = process.env.BLIND_TEST_OPENPYXL === "1";
+  const py = optIn ? spawnSync("python3", ["-P", "-c", "import openpyxl"], { encoding: "utf8" }) : null;
+  if (optIn && py?.status !== 0) throw new Error("BLIND_TEST_OPENPYXL=1 but python3 with openpyxl is not available");
+  test.skipIf(!optIn)("opens with openpyxl, with the same sheets, dimensions and formulas", () => {
     const dir = mkdtempSync(join(tmpdir(), "blind-xlsx-"));
     try {
       const dump = (bytes: Uint8Array) => {

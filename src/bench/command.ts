@@ -172,6 +172,14 @@ export function renderBench(r: BenchReport): string {
   return `${lines.join("\n")}\n`;
 }
 
+/**
+ * Unscored items with their reasons masked, as apply and run mask a refusal: a reason can carry a
+ * parser's message, which can quote document text (a cell, a key, a JSON fragment).
+ */
+export function maskUnscored(items: readonly UnscoredItem[]): UnscoredItem[] {
+  return items.map((u) => ({ ...u, reason: maskQuoted(u.reason, false) }));
+}
+
 export async function runBench(argv: string[], io: BenchIO): Promise<number> {
   let parsed;
   try {
@@ -258,7 +266,7 @@ export async function runBench(argv: string[], io: BenchIO): Promise<number> {
     });
     const damage = scoreDamage(scored, oracle, matcher);
     const honesty = scoreHonesty(audit, leakScan.leaks);
-    const unscored = [...leakScan.unscored, ...damage.unscored];
+    const unscored = maskUnscored([...leakScan.unscored, ...damage.unscored]);
 
     const inputBytes = scored.reduce((n, f) => n + f.input.byteLength, 0);
     const fail = leakScan.leaks.length + damage.damage.length + honesty.length + notWritten.length + unscored.length > 0;

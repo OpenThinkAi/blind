@@ -10,7 +10,7 @@ import { parseArgs } from "node:util";
 import { MAP_FILE, SPEC_FILE } from "../apply.ts";
 import { MapError, readMap } from "../engine/map.ts";
 import { isTerminal, maskQuoted, maskValue, shownValue } from "../mask.ts";
-import { BLIND_DIR } from "../init.ts";
+import { BLIND_DIR, SALT_FILE } from "../init.ts";
 import { type AskOptions, ModelError, modelsEnabled } from "../model.ts";
 import { loadKeepTerms, loadPolicy, POLICY_FILE, PolicyError, type PolicyPatterns, withPolicyPatterns } from "../policy.ts";
 import { writeProfile } from "../profile/command.ts";
@@ -80,13 +80,16 @@ const PLAN_HELP = [
   "values only) and listed once as a candidate c1, c2, ... with what raised it and where. On a",
   "terminal you are asked about each; otherwise decide with --accept and --reject. Accepted, a value",
   "is added to the spec as an entity (source human) of the class you give, or the suggested one; or",
-  "with <id>=pattern, its shape pattern is turned on. Rejected, it is added to the spec's vocabulary",
+  "with <id>=pattern, its shape pattern is turned on. A secret or card number is accepted only as",
+  "redact: its salted fingerprint, never the value, goes into the spec's redact list and apply writes",
+  "it as REDACTED, recorded in no map. Rejected, it is added to the spec's vocabulary",
   "so the audit does not raise it again. Undecided candidates change nothing and stay in the audit.",
   "Saved entries are never changed. Findings that are not one value (columns, unanswered questions,",
   "parts the audit could not read) are listed, not turned into changes. No model is called.",
   "",
   "--accept-leaks accepts every candidate the audit raised as a leak (a spec entity, map value or",
-  "enabled pattern that survives) at its suggested class, or id when it suggests none, without",
+  "enabled pattern that survives) at its suggested class (redact for a secret or card number), or",
+  "id when it suggests none, without",
   "asking. Candidates that are not leaks stay undecided unless --accept or --reject decides them;",
   "an --accept or --reject of a leak wins over --accept-leaks. A leak that cannot be accepted (a",
   "vocabulary form) or is not sensitive (dictionary or field-label words only, a value kept by a",
@@ -528,6 +531,7 @@ function renderCandidate(c: Candidate, show: boolean): string[] {
     c.severity,
     c.kinds.join(", "),
     `accept as: ${c.suggested ?? `(name one: ${ACCEPT_CLASSES.join("|")})`}`,
+    ...(c.suggested === "redact" ? ["(a secret or card number: written as REDACTED; only its salted fingerprint is kept, never the value)"] : []),
     ...(c.pattern === null ? [] : [`shape: ${c.pattern}`]),
     ...(c.known ? ["cannot be rejected (the spec or map already treats it as sensitive)"] : []),
   ];
@@ -538,6 +542,8 @@ function renderChange(x: Change, show: boolean): string {
   switch (x.result) {
     case "entity":
       return `  ${x.id}  accepted ${shownValue(x.value, show)}: added ${x.class} entity (source human)`;
+    case "redact":
+      return `  ${x.id}  accepted ${shownValue(x.value, show)}: added to the redact list (only its salted fingerprint is kept; written as REDACTED)`;
     case "pattern":
       return `  ${x.id}  accepted ${shownValue(x.value, show)}: turned pattern ${x.pattern} on`;
     case "vocabulary":
@@ -548,11 +554,18 @@ function renderChange(x: Change, show: boolean): string {
 }
 
 /** Asks about each candidate on the terminal. Returns the decisions made; skipped ones are left out. */
-async function promptDecisions(collected: Collected, saved: Spec, map: ReturnType<typeof readMap>, io: PlanIO & { prompt: NonNullable<PlanIO["prompt"]> }, show: boolean): Promise<Decision[]> {
+async function promptDecisions(
+  collected: Collected,
+  saved: Spec,
+  map: ReturnType<typeof readMap>,
+  io: PlanIO & { prompt: NonNullable<PlanIO["prompt"]> },
+  show: boolean,
+  salt: Uint8Array | undefined,
+): Promise<Decision[]> {
   const decisions: Decision[] = [];
   for (const c of collected.candidates) {
     io.out.write(`\n${renderCandidate(c, show).join("\n")}\n`);
-    const opts = [`a = accept as ${c.suggested ?? "(name a class)"}`, `<class> = accept as ${ACCEPT_CLASSES.join("|")}`];
+    const opts = c.suggested === "redact" ? ["a = accept as redact"] : [`a = accept as ${c.suggested ?? "(name a class)"}`, `<class> = accept as ${ACCEPT_CLASSES.join("|")}|redact`];
     if (c.pattern !== null) opts.push(`pattern = turn pattern ${c.pattern} on`);
     if (!c.known) opts.push("r = reject (vocabulary)");
     opts.push("s or empty = skip", "q = stop");
@@ -564,13 +577,13 @@ async function promptDecisions(collected: Collected, saved: Spec, map: ReturnTyp
       let d: Decision;
       if (a === "a") d = { id: c.id, action: "accept", as: null };
       else if (a === "r") d = { id: c.id, action: "reject" };
-      else if (a === "pattern" || ACCEPT_CLASSES.includes(a as AcceptClass)) d = { id: c.id, action: "accept", as: a as AcceptClass | "pattern" };
+      else if (a === "pattern" || a === "redact" || ACCEPT_CLASSES.includes(a as AcceptClass)) d = { id: c.id, action: "accept", as: a as AcceptClass | "pattern" | "redact" };
       else {
         io.out.write(`  not an option: ${q(a)}\n`);
         continue;
       }
       try {
-        applyDecisions(saved, collected.candidates, [...decisions, d], map);
+        applyDecisions(saved, collected.candidates, [...decisions, d], map, salt);
       } catch (e) {
         if (!(e instanceof FromAuditError)) throw e;
         io.out.write(`  ${maskQuoted(e.message, show)}\n`);
@@ -606,6 +619,17 @@ async function fromAudit(reportPath: string, out: string, values: FromAuditOptio
   return (await decideFromReport(report, reportPath, out, values, io)).code;
 }
 
+/** .blind/salt, or undefined when there is none. A salt that exists but cannot be read is refused, not treated as missing. */
+function readSaltIfAny(cwd: string): Uint8Array | undefined {
+  const path = join(cwd, BLIND_DIR, SALT_FILE);
+  try {
+    return readFileSync(path);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw new Refusal(`${path}: cannot read the salt`);
+  }
+}
+
 /**
  * `--from-audit` on a report already in hand (`blind run --accept-leaks` passes the audit's own):
  * the exit code plan gives, and whether the saved spec changed. Throws what fromAudit's caller
@@ -630,15 +654,17 @@ export async function decideFromReport(
   }
   const findings = parseAuditReport(readReport(), label);
   const collected = collectCandidates(findings, resolve(io.cwd, out), map);
+  // The key for a redacted value's fingerprint (AGT-2438); a decision that needs it refuses without it.
+  const salt = readSaltIfAny(io.cwd);
 
   const flagged = values.accept !== undefined || values.reject !== undefined || values.acceptLeaks === true;
   // Checked before anything is printed or asked: a bad id or a refused decision writes nothing.
   let decisions = parseDecisions(values.accept ?? [], values.reject ?? []);
-  applyDecisions(saved, collected.candidates, decisions, map);
+  applyDecisions(saved, collected.candidates, decisions, map, salt);
   const show = values.show === true;
   let leaksSkipped: ReturnType<typeof leakDecisions>["skipped"] = [];
-  if (values.acceptLeaks) ({ decisions, skipped: leaksSkipped } = leakDecisions(saved, collected.candidates, decisions, map, keptValues(resolve(io.cwd, out), saved, loadKeepTerms(io.cwd))));
-  let applied = applyDecisions(saved, collected.candidates, decisions, map);
+  if (values.acceptLeaks) ({ decisions, skipped: leaksSkipped } = leakDecisions(saved, collected.candidates, decisions, map, keptValues(resolve(io.cwd, out), saved, loadKeepTerms(io.cwd)), salt));
+  let applied = applyDecisions(saved, collected.candidates, decisions, map, salt);
   const interactive = !flagged && !values.json && io.prompt !== undefined && collected.candidates.length > 0;
 
   if (!values.json) {
@@ -650,8 +676,8 @@ export async function decideFromReport(
     }
   }
   if (interactive) {
-    decisions = await promptDecisions(collected, saved, map, { ...io, prompt: io.prompt as NonNullable<PlanIO["prompt"]> }, show);
-    applied = applyDecisions(saved, collected.candidates, decisions, map);
+    decisions = await promptDecisions(collected, saved, map, { ...io, prompt: io.prompt as NonNullable<PlanIO["prompt"]> }, show, salt);
+    applied = applyDecisions(saved, collected.candidates, decisions, map, salt);
   }
 
   const decided = new Set(decisions.map((d) => d.id));

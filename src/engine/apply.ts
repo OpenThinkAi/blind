@@ -55,6 +55,7 @@
 // values replaced above), planned with the cells and rendered after them.
 
 import { type ColumnRule, type EntityClassName, patternOn, REDACTED_VALUE, type Spec, type Treatment } from "../schema.ts";
+import { findRedactValues } from "./redactlist.ts";
 import { newSecretCarry } from "./secret.ts";
 import { Shield, type ShieldReport } from "./shield.ts";
 import type { PseudoClass } from "./canonical.ts";
@@ -730,6 +731,19 @@ function renderJson(
   return { text: out + p.text.slice(at), entityReplacements, patternReplacements, mappedReplacements, keptHosts };
 }
 
+/** Every text of the corpus blind reads: paths, documents, cells and values, for the redact list (redactlist.ts). */
+function* corpusTexts(plans: readonly Plan[]): Generator<string> {
+  for (const p of plans) {
+    yield p.input.path;
+    if (p.kind === "text") yield p.text;
+    else if (p.kind === "docx") yield* p.docx.values;
+    else if (p.kind === "xlsx") yield* xlsxValues(p.plan);
+    else if (p.kind === "json") {
+      for (const t of p.tokens) if (t.kind !== "literal") yield t.value;
+    } else for (const row of p.rows) for (const cell of row.cells) yield cell.value;
+  }
+}
+
 /** Tokens of a text, for the set of real values no pseudonym may equal. */
 function tokens(text: string): string[] {
   return text.match(/[\p{L}\p{N}][\p{L}\p{N}._@:-]*/gu) ?? [];
@@ -799,10 +813,10 @@ function hidesRemoved(plans: readonly Plan[]): (text: string) => boolean {
  * `keep` or `scan` cell somewhere (heldValues) is left as text instead, scanned like free text, and
  * counted in its column's `heldWhole`; it no longer recurs. Every plan's own decisions stand.
  */
-function settleFallback(plans: readonly Plan[]): void {
+function settleFallback(plans: readonly Plan[], listed: (t: string) => boolean = () => false): void {
   const heldSet = heldValues(plans);
   const hides = hidesRemoved(plans);
-  const held = { has: (t: string): boolean => heldSet.has(t) || hides(t) };
+  const held = { has: (t: string): boolean => heldSet.has(t) || hides(t) || listed(t) };
   const release = <K>(fallback: readonly Fallback<K>[], edits: Map<K, CellEdit>, pending: Pending<K>[], mapped: ExtraForm[]): void => {
     const freed = new Set<ExtraForm>();
     for (const f of fallback) {
@@ -961,7 +975,11 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
 
   // A value held whole in a `keep` or `scan` cell anywhere is the owner's to keep: the fail-closed
   // fallback does not pseudonymise it whole elsewhere (an explicit rule still does).
-  settleFallback(plans);
+  // Values on the spec's redact list (AGT-2438), found again by their fingerprint, are not either:
+  // such a cell is scanned, so the value is written as the placeholder and never mapped.
+  const listedValues = findRedactValues(corpusTexts(plans), spec.redact ?? [], opts.salt);
+  const listedSet = new Set(listedValues);
+  settleFallback(plans, (t) => listedSet.has(t));
 
   // File and folder names go through the patterns, the spec entities and every cell value a
   // column rule pseudonymises, so a value hidden in a cell is hidden in a name too.
@@ -1022,12 +1040,18 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       .map((p) => ({ cls: "redact" as const, value: p.form, form: p.form, source: "removed" as const }));
   // An earlier map's entries for such values go on the next write (the count is reported, never the values).
   const redactedParts = removedParts();
-  const pruned = opts.map === undefined ? undefined : withoutValues(opts.map, [...removedValues.map((f) => f.value), ...redactedParts.map((f) => f.value)]);
+  // Values on the spec's redact list (listedValues, above): written as the placeholder wherever they
+  // occur, never a pseudonym, never in the map. An earlier map's entry for one goes on the next
+  // write, as for a removed column's value.
+  const listed: ExtraForm[] = listedValues.map((v) => ({ cls: "redact", value: v, form: v, source: "removed" }));
+  const listedTexts = new Set(listed.map((f) => textKey(f.value)));
+  const pruned =
+    opts.map === undefined ? undefined : withoutValues(opts.map, [...removedValues.map((f) => f.value), ...redactedParts.map((f) => f.value), ...listed.map((f) => f.value)]);
   const priorMap = pruned?.map;
   const mapDropped = pruned?.dropped ?? 0;
   const asRemoved = (f: ExtraForm): ExtraForm => (f.cls === "redact" ? { ...f, source: "removed" } : f);
   const mapped = [...columnMapped, ...removedValues];
-  columnValues.push(...removedValues);
+  columnValues.push(...removedValues, ...listed);
   const voiceNames = speakers.filter((n) => !kept(n));
   const people = personValues(mapped, priorMap);
   // Redacted names are people too for who-is-who and for what prose is new, though they get no pseudonym.
@@ -1062,8 +1086,10 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   // A removed form whose text a pseudonymised form also matches is that pseudonym's, never the placeholder.
   const pseudoTexts = new Set([...pseudoForms, ...pseudoParts, ...voices].filter((f) => f.cls !== "redact").map((f) => textKey(f.form ?? f.value)));
   const redactable = (f: ExtraForm): boolean => f.cls !== "redact" || !pseudoTexts.has(textKey(f.form ?? f.value));
-  const parts = [...pseudoParts, ...redactedParts].filter(redactable);
-  const forms = [...pseudoForms, ...redactedParts].filter(redactable);
+  // A listed value is always the placeholder: no pseudonymised form of the same text competes with it.
+  const unlisted = (f: ExtraForm): boolean => !listedTexts.has(textKey(f.form ?? f.value));
+  const parts = [...pseudoParts, ...redactedParts].filter(redactable).filter(unlisted);
+  const forms = [...[...pseudoForms, ...redactedParts].filter(redactable).filter(unlisted), ...listed];
   // Name parts that are common words (dictionary, label, role, keep or kept-value words): reported, never matched alone.
   const commonNameParts = commonNamePartCount(mapped, priorMap, vocabularySet, recurOpts);
   // A form already matched for a known value or a speaker keeps that value's pseudonym.

@@ -146,7 +146,7 @@ Everything blind keeps is under `.blind/` in the corpus directory. The files are
 | `.blind/map.json` | Every pseudonym and its original value (`blind apply`). | Originals. Enough on its own for `blind reveal`. | `rm .blind/map.json` |
 | `.blind/revealed/` | Originals of the files `blind reveal` wrote, under their real names. | Originals in full. | `rm -r .blind/revealed` |
 | `.blind/profile.json` | File, folder, sheet and column names, statistics, and sample values (none under `profile-only`). | Real names and, outside `profile-only`, sample values. | `rm .blind/profile.json` (the next `blind profile` or `blind plan` rewrites it) |
-| `.blind/spec.json` | The reviewed spec: entity names and aliases, column rules, patterns. | Names of people, organisations and hosts. | `rm .blind/spec.json` (the next `blind plan` proposes it again) |
+| `.blind/spec.json` | The reviewed spec: entity names and aliases, column rules, patterns, and salted fingerprints (never the values) of secrets and card numbers to redact. | Names of people, organisations and hosts. | `rm .blind/spec.json` (the next `blind plan` proposes it again) |
 | `.blind/run.json` | Each input's real path and where it was written (`blind run`). | Real paths, which can carry names. | `rm .blind/run.json` |
 | `.blind/salt` | 32 random bytes. Pseudonyms are HMACs of the value under it. | Holds no value, but with a guessed value it confirms a match. Needed by `blind apply`. | `rm .blind/salt`, then `blind init` for a new one (breaks the link, see below) |
 

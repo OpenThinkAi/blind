@@ -50,6 +50,12 @@
       "type": "array",
       "uniqueItems": true,
       "items": { "type": "string", "minLength": 16, "maxLength": 16 }
+    },
+    "redact": {
+      "description": "Values to write as REDACTED wherever they occur, never pseudonymised and never recorded in the map: a secret or card number accepted from an audit leak. Each item is the value's length in UTF-16 code units, a colon, and the first 32 hex digits of HMAC-SHA256 keyed by .blind/salt; the value itself is never stored. Written by blind plan --from-audit.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[1-9][0-9]{0,3}:[0-9a-f]{32}$" }
     }
   },
   "$defs": {

@@ -76,6 +76,12 @@ export interface Spec {
   questions: Question[];
   /** Fingerprints of the document and transcript excerpts the analyst has read (see docs/spec.md). */
   seen?: string[];
+  /**
+   * Values written as REDACTED wherever they occur, never pseudonymised or mapped: secrets and card
+   * numbers accepted from an audit leak. Each is `<length>:<fingerprint>` (engine/redactlist.ts); the
+   * value itself is never stored.
+   */
+  redact?: string[];
 }
 
 export type FileFormat =

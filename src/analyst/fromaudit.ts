@@ -14,6 +14,11 @@
 //
 // `--accept-leaks` (leakDecisions) decides the mechanical layer's leaks without asking: each is
 // accepted at its suggested class. Candidates (semantic, model, variants) stay the human's.
+//
+// A secret or card number (a `pattern:secret` or `pattern:card` finding, or a value of that shape)
+// is never accepted as an entity, which would store it in the spec and give it a pseudonym in the
+// map (AGT-2438). It is accepted as `redact`: its salted fingerprint goes into the spec's `redact`
+// list (engine/redactlist.ts) and apply writes it as REDACTED; the value is recorded nowhere.
 
 import { lstatSync, readFileSync, readlinkSync } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
@@ -28,6 +33,7 @@ import { looksLikeXml } from "../audit/xml.ts";
 import { looksLikeZip, readZip, type ZipBudget, zipBudget } from "../audit/zip.ts";
 import type { BlindMap } from "../engine/map.ts";
 import { isPseudonym } from "../engine/pseudonym.ts";
+import { redactEntry } from "../engine/redactlist.ts";
 import { findPatternSpans } from "../engine/text.ts";
 import { type Entities, type Entity, type ColumnRule, type EntityClassName, type PatternName, patternOn, type Spec } from "../schema.ts";
 
@@ -76,8 +82,8 @@ export interface Candidate {
   value: string;
   /** Finding classes that raised it (`semantic:phrase`, `person`, `pattern:host`, ...), in report order. */
   kinds: string[];
-  /** The class a bare `--accept <id>` gives it; null when the human must name one. */
-  suggested: AcceptClass | null;
+  /** The class a bare `--accept <id>` gives it (`redact` for a secret or card number); null when the human must name one. */
+  suggested: AcceptClass | "redact" | null;
   /** The shape pattern the whole value matches, for `--accept <id>=pattern`; null when none does. */
   pattern: PatternName | null;
   /** Raised by the mechanical layer as a spec entity, map value or pattern match: blinded on purpose, so it cannot be rejected. */
@@ -304,11 +310,19 @@ const SEMANTIC_CLASS: Record<string, AcceptClass | null> = {
   "semantic:host": "host",
   "semantic:phrase": null,
 };
-// A surviving secret is accepted as an `id` entity: the value is pseudonymised from then on.
-const PATTERN_CLASS: Record<PatternName, AcceptClass> = { email: "email", ip: "host", host: "host", guid: "id", mac: "id", phone: "id", card: "id", address: "location", secret: "id" };
+// A surviving secret or card number is accepted as `redact`, never as an entity (secretLike).
+const PATTERN_CLASS: Record<PatternName, AcceptClass | "redact"> = { email: "email", ip: "host", host: "host", guid: "id", mac: "id", phone: "id", card: "redact", address: "location", secret: "redact" };
+
+/**
+ * Whether a candidate is a secret or a card number: the audit raised it as one, or the whole value
+ * has that shape. Such a value is only ever accepted as `redact` (AGT-2438).
+ */
+export function secretLike(c: Pick<Candidate, "kinds" | "pattern">): boolean {
+  return c.kinds.includes("pattern:secret") || c.kinds.includes("pattern:card") || c.pattern === "secret" || c.pattern === "card";
+}
 
 /** The class a finding suggests for its value, or null when only the human can say. */
-function suggestion(f: ReportFinding): AcceptClass | null {
+function suggestion(f: ReportFinding): AcceptClass | "redact" | null {
   const as = (c: string): AcceptClass | null => (ACCEPT_CLASSES.includes(c as AcceptClass) ? (c as AcceptClass) : null);
   switch (f.source) {
     case "entity":
@@ -366,6 +380,8 @@ export function collectCandidates(findings: readonly ReportFinding[], root: stri
     // Known only when the word is itself the spec or map value, not a longer word around one.
     if (MECHANICAL.has(f.source) && got.word === got.value) c.known = true;
     if (f.severity === "leak") c.severity = "leak";
+    // A secret or card number is redacted whatever an earlier finding suggested (an `id` from the map, say).
+    if (secretLike(c)) c.suggested = "redact";
     c.places.push({ file: f.file, part: f.part, in: f.in, offset: f.offset as number, line: f.line });
   }
   return { candidates: [...byValue.values()], unmapped, other };
@@ -373,9 +389,9 @@ export function collectCandidates(findings: readonly ReportFinding[], root: stri
 
 // --- Decisions -------------------------------------------------------------
 
-export type Decision = { id: string; action: "accept"; as: AcceptClass | "pattern" | null } | { id: string; action: "reject" };
+export type Decision = { id: string; action: "accept"; as: AcceptClass | "pattern" | "redact" | null } | { id: string; action: "reject" };
 
-/** `--accept c1,c2=org` and `--reject c3,c4`, each repeatable. Throws FromAuditError on a bad entry. */
+/** `--accept c1,c2=org`, `--accept c5=redact` and `--reject c3,c4`, each repeatable. Throws FromAuditError on a bad entry. */
 export function parseDecisions(accept: readonly string[], reject: readonly string[]): Decision[] {
   const out: Decision[] = [];
   const seen = new Map<string, string>();
@@ -394,10 +410,10 @@ export function parseDecisions(accept: readonly string[], reject: readonly strin
       continue;
     }
     const as = item.slice(eq + 1).trim();
-    if (as !== "pattern" && !ACCEPT_CLASSES.includes(as as AcceptClass)) {
-      throw new FromAuditError(`--accept ${id}=${as}: the class must be one of ${ACCEPT_CLASSES.join(", ")}, or "pattern" (to reject, use --reject ${id})`);
+    if (as !== "pattern" && as !== "redact" && !ACCEPT_CLASSES.includes(as as AcceptClass)) {
+      throw new FromAuditError(`--accept ${id}=${as}: the class must be one of ${ACCEPT_CLASSES.join(", ")}, "redact" or "pattern" (to reject, use --reject ${id})`);
     }
-    out.push({ id, action: "accept", as: as as AcceptClass | "pattern" });
+    out.push({ id, action: "accept", as: as as AcceptClass | "pattern" | "redact" });
   }
   for (const item of reject.flatMap((r) => r.split(","))) {
     const id = item.trim();
@@ -482,6 +498,7 @@ export function leakDecisions(
   decided: readonly Decision[],
   map: BlindMap,
   kept: KeptValues = NO_KEPT,
+  salt?: Uint8Array,
 ): { decisions: Decision[]; skipped: { id: string; value: string; why: string }[] } {
   const ids = new Set(decided.map((d) => d.id));
   const decisions = [...decided];
@@ -494,9 +511,9 @@ export function leakDecisions(
       skipped.push({ id: c.id, value: c.value, why });
       continue;
     }
-    const d: Decision = { id: c.id, action: "accept", as: c.suggested ?? LEAK_FALLBACK_CLASS };
+    const d: Decision = { id: c.id, action: "accept", as: secretLike(c) ? "redact" : (c.suggested ?? LEAK_FALLBACK_CLASS) };
     try {
-      applyDecisions(saved, candidates, [...decisions, d], map);
+      applyDecisions(saved, candidates, [...decisions, d], map, salt);
     } catch (e) {
       if (!(e instanceof FromAuditError)) throw e;
       skipped.push({ id: c.id, value: c.value, why: e.message });
@@ -511,8 +528,11 @@ export function leakDecisions(
 export interface Change {
   id: string;
   value: string;
-  /** `entity`: added as an entity of `class`; `vocabulary`: added to the vocabulary; `pattern`: turned `pattern` on; `unchanged`: the spec already says so. */
-  result: "entity" | "vocabulary" | "pattern" | "unchanged";
+  /**
+   * `entity`: added as an entity of `class`; `redact`: its fingerprint added to the `redact` list;
+   * `vocabulary`: added to the vocabulary; `pattern`: turned `pattern` on; `unchanged`: the spec already says so.
+   */
+  result: "entity" | "redact" | "vocabulary" | "pattern" | "unchanged";
   class?: AcceptClass;
   pattern?: PatternName;
   note?: string;
@@ -536,13 +556,21 @@ function containsWord(outer: string, inner: string): boolean {
 /**
  * The saved spec with the decisions applied. Saved entries are kept as the same objects; new
  * entities and vocabulary entries are appended in decision order with `source: "human"`.
- * Throws FromAuditError, naming the candidate, for a decision that cannot be applied; then
- * nothing is applied.
+ * A `redact` decision adds the value's fingerprint under `salt` to the spec's `redact` list, never
+ * the value. Throws FromAuditError, naming the candidate, for a decision that cannot be applied;
+ * then nothing is applied.
  */
-export function applyDecisions(saved: Spec, candidates: readonly Candidate[], decisions: readonly Decision[], map: BlindMap): { spec: Spec; changes: Change[] } {
+export function applyDecisions(
+  saved: Spec,
+  candidates: readonly Candidate[],
+  decisions: readonly Decision[],
+  map: BlindMap,
+  salt?: Uint8Array,
+): { spec: Spec; changes: Change[] } {
   const byId = new Map(candidates.map((c) => [c.id, c]));
   const entities: Entities = { ...saved.entities };
   let patterns = saved.patterns;
+  let redact = saved.redact ?? [];
   const changes: Change[] = [];
 
   /** Who owns a form exactly: a saved or just-added non-vocabulary entity. */
@@ -601,7 +629,27 @@ export function applyDecisions(saved: Spec, candidates: readonly Candidate[], de
     }
     const cls = d.as ?? c.suggested;
     if (cls === null) {
-      throw new FromAuditError(`${d.id} needs a class: --accept ${d.id}=<${ACCEPT_CLASSES.join("|")}> (the audit raised it as ${c.kinds.join(", ")})`);
+      throw new FromAuditError(`${d.id} needs a class: --accept ${d.id}=<${ACCEPT_CLASSES.join("|")}|redact> (the audit raised it as ${c.kinds.join(", ")})`);
+    }
+    if (cls !== "redact" && secretLike(c)) {
+      throw new FromAuditError(
+        `${d.id} cannot be accepted as ${cls}: it is a secret or card number, which would then be stored in the spec and the map. Accept it as redact (--accept ${d.id}=redact): it is written as REDACTED and only its salted fingerprint is kept`,
+      );
+    }
+    if (cls === "redact") {
+      const own = owner.get(value);
+      if (own !== undefined) {
+        throw new FromAuditError(`${d.id} cannot be redacted: it is a form of the ${own.cls} entity ${JSON.stringify(own.canonical)} in .blind/spec.json, which would pseudonymise it. Delete that entry by hand first`);
+      }
+      if (salt === undefined) throw new FromAuditError(`${d.id} cannot be redacted without .blind/salt; run \`blind init\` first`);
+      const entry = redactEntry(salt, value);
+      if (redact.includes(entry)) {
+        changes.push({ id: d.id, value, result: "unchanged", note: "already in the spec's redact list" });
+        continue;
+      }
+      redact = [...redact, entry];
+      changes.push({ id: d.id, value, result: "redact" });
+      continue;
     }
     const own = owner.get(value);
     if (own !== undefined) {
@@ -614,5 +662,5 @@ export function applyDecisions(saved: Spec, candidates: readonly Candidate[], de
     changes.push({ id: d.id, value, result: "entity", class: cls });
   }
   const changed = changes.some((x) => x.result !== "unchanged");
-  return { spec: changed ? { ...saved, entities, patterns } : saved, changes };
+  return { spec: changed ? { ...saved, entities, patterns, ...(redact.length > 0 ? { redact } : {}) } : saved, changes };
 }

@@ -249,6 +249,7 @@ export function mergeProposal(
     patterns: saved.patterns,
     questions: [...saved.questions, ...added],
     ...(seen.length > 0 ? { seen } : {}),
+    ...(saved.redact !== undefined ? { redact: saved.redact } : {}),
   };
   return {
     spec,

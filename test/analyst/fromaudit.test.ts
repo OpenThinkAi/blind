@@ -19,6 +19,7 @@ import {
 import { type PlanIO, runPlan } from "../../src/analyst/plan.ts";
 import { runApply } from "../../src/apply.ts";
 import { maskValue } from "../../src/mask.ts";
+import { redactEntry } from "../../src/engine/redactlist.ts";
 import { collectTree, runAudit } from "../../src/audit/command.ts";
 import { auditTree } from "../../src/audit/mechanical.ts";
 import { addSemanticLayer } from "../../src/audit/semantic.ts";
@@ -50,6 +51,7 @@ const SPEC: Spec = {
 };
 
 const EMPTY_MAP: BlindMap = { version: 1, entries: [] };
+const SALT = Buffer.from(Array.from({ length: 32 }, (_, i) => i + 9));
 
 function sink() {
   const s = new PassThrough();
@@ -334,9 +336,9 @@ describe("decisions", () => {
       cand({ id: "c3", value: "open sesame", kinds: ["pattern:secret"], suggested: "id", severity: "leak" }),
     ];
     const kept = { values: new Set(["open sesame"]), terms: new Set(["sunflower"]) };
-    const { decisions, skipped } = leakDecisions(SPEC, cs, [], EMPTY_MAP, kept);
+    const { decisions, skipped } = leakDecisions(SPEC, cs, [], EMPTY_MAP, kept, SALT);
     expect(skipped).toEqual([]);
-    expect(decisions.map((d) => [d.id, d.action === "accept" ? d.as : null])).toEqual([["c1", "id"], ["c2", "id"], ["c3", "id"]]);
+    expect(decisions.map((d) => [d.id, d.action === "accept" ? d.as : null])).toEqual([["c1", "redact"], ["c2", "redact"], ["c3", "redact"]]);
   });
 
   test("keptValues reads the cells of the keep columns of the output, and the policy terms, folded", () => {
@@ -595,5 +597,83 @@ describe("masking original values in plan --from-audit (AGT-1866)", () => {
   test("--help documents --show-values", async () => {
     const r = await run(runPlan, ["--help"]);
     expect(r.out).toContain("--show-values");
+  });
+});
+
+describe("a secret or card number is redacted, never stored in the spec or the map (AGT-2438)", () => {
+  const SECRET = "Zq7%mPlx92";
+  const cand = (over: Partial<Candidate>): Candidate => ({
+    id: "c1", value: SECRET, kinds: ["pattern:secret"], suggested: "redact", pattern: "secret", known: false,
+    severity: "leak", places: [{ file: "notes.md", part: "", in: "content", offset: 0, line: 1 }], ...over,
+  });
+
+  test("accepted, its fingerprint goes into the redact list and the value goes nowhere", () => {
+    const { spec, changes } = applyDecisions(SPEC, [cand({})], parseDecisions(["c1"], []), EMPTY_MAP, SALT);
+    expect(changes.map((c) => c.result)).toEqual(["redact"]);
+    expect(spec.redact).toEqual([redactEntry(SALT, SECRET)]);
+    expect(spec.redact?.[0]).toMatch(/^10:[0-9a-f]{32}$/);
+    expect(JSON.stringify(spec)).not.toContain(SECRET);
+    expect(validateSchema(proposalSchema, { ...SPEC, redact: spec.redact }).length).toBeGreaterThan(0);
+    expect(parseSpec(JSON.stringify(spec)).redact).toEqual(spec.redact);
+    // Accepting it again changes nothing.
+    const again = applyDecisions(spec, [cand({})], parseDecisions(["c1=redact"], []), EMPTY_MAP, SALT);
+    expect(again.spec).toBe(spec);
+  });
+
+  test("an explicit accept as an entity class is refused for a secret or a card number, by finding or by shape", () => {
+    expect(() => applyDecisions(SPEC, [cand({})], parseDecisions(["c1=id"], []), EMPTY_MAP, SALT)).toThrow(/secret or card number.*=redact/);
+    const card = cand({ value: "4111 1111 1111 1111", kinds: ["value"], suggested: "id", pattern: "card" });
+    expect(() => applyDecisions(SPEC, [card], parseDecisions(["c1=id"], []), EMPTY_MAP, SALT)).toThrow(/secret or card number/);
+    expect(applyDecisions(SPEC, [card], parseDecisions(["c1=redact"], []), EMPTY_MAP, SALT).changes[0]?.result).toBe("redact");
+    expect(() => applyDecisions(SPEC, [cand({})], parseDecisions(["c1"], []), EMPTY_MAP)).toThrow(/without \.blind\/salt/);
+  });
+
+  test("--accept-leaks redacts a secret even when an earlier finding suggested id", () => {
+    const { decisions } = leakDecisions(SPEC, [cand({ suggested: "id", kinds: ["id", "pattern:secret"] })], [], EMPTY_MAP, undefined, SALT);
+    expect(decisions).toEqual([{ id: "c1", action: "accept", as: "redact" }]);
+  });
+
+  test("end to end: an accepted secret leak is in neither spec.json nor map.json and comes out REDACTED", async () => {
+    const spec: Spec = { ...SPEC, patterns: { ...SPEC.patterns, secret: true } };
+    writeFileSync(join(dir, ".blind", "spec.json"), JSON.stringify(spec), { mode: 0o600 });
+    // The secret survives in the output, as a missed one would.
+    const first = await round("out", () => appendFileSync(join(dir, "out", "notes.md"), `Filed under ${SECRET} today.\n`));
+    expect(first.code).toBe(2);
+    const r = await plan(["--from-audit", "report.json", "-o", "out", "--accept-leaks"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toMatch(/added to the redact list/);
+    const specText = readFileSync(join(dir, ".blind", "spec.json"), "utf8");
+    expect(specText).not.toContain(SECRET);
+    expect(savedSpec().redact).toEqual([redactEntry(SALT, SECRET)]);
+    expect(savedSpec().entities.id).toBeUndefined();
+
+    // Next round: the secret is in the input where the pattern does not catch it (the pattern is
+    // turned off here to stand for the miss), and an earlier map still holds it as an id.
+    writeFileSync(join(dir, ".blind", "spec.json"), JSON.stringify({ ...savedSpec(), patterns: { ...spec.patterns, secret: false, card: false } }), { mode: 0o600 });
+    appendFileSync(join(dir, "in", "notes.md"), `Filed under ${SECRET} today.\n`);
+    writeFileSync(join(dir, "in", "codes.csv"), `Code\n${SECRET}\n`);
+    const mapFile = join(dir, ".blind", "map.json");
+    const prior = JSON.parse(readFileSync(mapFile, "utf8"));
+    prior.entries.push({ kind: "id", canonical: SECRET, value: SECRET, pseudonym: "Id_0F0F" });
+    writeFileSync(mapFile, JSON.stringify(prior), { mode: 0o600 });
+    rmSync(join(dir, "out2"), { recursive: true, force: true });
+    const a = await apply(["in", "-o", "out2"]);
+    expect(a.code).toBe(0);
+    const notes = readFileSync(join(dir, "out2", "notes.md"), "utf8");
+    expect(notes).not.toContain(SECRET);
+    expect(notes).toContain("Filed under REDACTED today.");
+    expect(readFileSync(join(dir, "out2", "codes.csv"), "utf8")).not.toContain(SECRET);
+    expect(readFileSync(mapFile, "utf8")).not.toContain(SECRET);
+  });
+});
+
+describe("findRedactValues (AGT-2438)", () => {
+  test("finds a listed value at word edges only, in any text, and nothing else", async () => {
+    const { findRedactValues } = await import("../../src/engine/redactlist.ts");
+    const entries = [redactEntry(SALT, "Zq7%mPlx92"), redactEntry(SALT, "4111 1111 1111 1111")];
+    expect(findRedactValues(["pw: Zq7%mPlx92.", "card 4111 1111 1111 1111 ok"], entries, SALT)).toEqual(["4111 1111 1111 1111", "Zq7%mPlx92"]);
+    expect(findRedactValues(["xZq7%mPlx92", "Zq7%mPlx92y"], entries, SALT)).toEqual([]);
+    expect(findRedactValues(["Zq7%mPlx92"], entries, Buffer.from("another salt, sixteen+ bytes"))).toEqual([]);
+    expect(findRedactValues(["Zq7%mPlx92"], [], SALT)).toEqual([]);
   });
 });

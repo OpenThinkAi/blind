@@ -69,7 +69,7 @@ export type Schema = { readonly [keyword: string]: unknown };
 const ANNOTATIONS = new Set(["$schema", "$id", "$defs", "title", "description"]);
 const KEYWORDS = new Set([
   "$ref", "type", "const", "enum", "properties", "required", "additionalProperties", "items",
-  "oneOf", "minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems", "uniqueItems",
+  "oneOf", "minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems", "uniqueItems", "pattern",
 ]);
 
 function own(obj: object, key: string): boolean {
@@ -174,6 +174,10 @@ function check(root: Schema, node: Schema, value: unknown, path: string, out: Sc
     }
     if (typeof node.maxLength === "number" && len > node.maxLength) {
       out.push({ path, message: `must be at most ${node.maxLength} characters, got ${len}` });
+    }
+    // The pattern is a schema constant: it is quoted, the value is not (it may be document text).
+    if (typeof node.pattern === "string" && !new RegExp(node.pattern, "u").test(value)) {
+      out.push({ path, message: `must match ${show(node.pattern)}` });
     }
   }
 

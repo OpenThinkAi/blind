@@ -43,7 +43,7 @@ Field names are camelCase. All examples below are synthetic.
 }
 ```
 
-The first five top-level fields are required; [`seen`](#seen) is optional.
+The first five top-level fields are required; [`seen`](#seen) and [`redact`](#redact) are optional.
 
 ### `version`
 
@@ -133,6 +133,23 @@ Fingerprints of the document and transcript excerpts (outline entries, sample se
 sample lines) the analyst has already read: the first 16 hex digits of each excerpt's SHA-256,
 sorted and unique. `blind plan` writes it; the analyst cannot. Delete an entry, or the whole field,
 to have those excerpts sent again.
+
+### `redact`
+
+Secrets and card numbers to write as `REDACTED` wherever they occur: never a pseudonym, and not
+recorded in the map. `blind plan --from-audit` adds one when a `pattern:secret` or `pattern:card`
+leak (or any candidate of that shape) is accepted ([feeding the audit back](#feeding-the-audit-back-into-the-spec)).
+The value itself is never stored: each entry is its length in UTF-16 code units, a colon, and the
+first 32 hex digits of HMAC-SHA256 over it keyed by `.blind/salt`
+(`"10:3f9c…"`; each entry must match `^[1-9][0-9]{0,3}:[0-9a-f]{32}$`). `blind apply` fingerprints
+every stretch of the corpus text of a listed length that has no letter or digit right before or
+after it, and redacts each that matches, in text, scanned cells, names and paths; a cell the
+fail-closed fallback would pseudonymise whole is scanned instead, so the value is redacted there
+too. An earlier map's entry for a listed value is dropped on the next apply. A cell a column rule
+pseudonymises whole by your rule is left to that rule. The entries mean nothing without the salt
+(anyone with both could test guesses against them, as with the map's pseudonyms), and a new salt
+(`blind init --force`) makes them match nothing. The analyst cannot write the field; `--force` on
+`blind plan` loses it with the rest of the saved spec.
 
 ## Re-planning with a saved spec
 
@@ -229,7 +246,8 @@ same blinded output tree. No model is called.
 | Decision | Spec change |
 |---|---|
 | `--accept c1` | an entity of the suggested class, `{ "canonical": <value>, "aliases": [], "parts": [], "source": "human" }` |
-| `--accept c1=<class>` | the same, of `person`, `org`, `host`, `email`, `id` or `location` |
+| `--accept c1=<class>` | the same, of `person`, `org`, `host`, `email`, `id` or `location`; refused for a secret or card number |
+| `--accept c1=redact` | the value's salted fingerprint is added to [`redact`](#redact): it is written as `REDACTED` and recorded in neither the spec nor the map. What a bare `--accept` does for a candidate the audit raised as `pattern:secret` or `pattern:card`, or whose whole value has that shape |
 | `--accept c1=pattern` | the shape pattern the whole value matches (`email`, `ip`, `mac`, `guid`, `phone`, `card`, `address`, `host`, `secret`) is turned on |
 | `--reject c1` | a `vocabulary` entity with `source: "human"`, so the mechanical and semantic layers do not raise it again |
 | neither | nothing; the next audit raises it again |
@@ -249,7 +267,8 @@ same blinded output tree. No model is called.
   keep the originals on stdout; their stderr is masked by the same rules.
 - **`--accept-leaks`** decides the leaks without asking: every candidate with a `leak` finding (a
   spec entity, a map value or an enabled pattern match that survives, all from the mechanical
-  layer) is accepted at its suggested class, or `id` when it suggests none (a map value a column
+  layer) is accepted at its suggested class (`redact` for a secret or a card number, so neither is
+  ever stored in the spec or the map), or `id` when it suggests none (a map value a column
   pass pseudonymised as `Value`, an account name in a path). Candidates that are not leaks
   (semantic and model findings, variants in another case) stay undecided unless `--accept` or
   `--reject` decides them, and an `--accept` or `--reject` of a leak wins. A leak that cannot be
@@ -932,7 +951,11 @@ up to three layers, mechanical, semantic, then model; the report lists the layer
   CSV/TSV and JSON, where each value stands alone as the engine reads it) and the text of an XML
   member's elements (runs of a paragraph joined, entities undone). Markup, attribute values, file
   names, images and other binary content are not read for secrets: they are not document text, and
-  random bytes look like keys. `--accept-leaks` accepts one as an `id` entity.
+  random bytes look like keys. `--accept-leaks` accepts one as `redact` ([`redact`](#redact)): from
+  the next apply it is written as `REDACTED`, and it is stored in neither `spec.json` nor `map.json`.
+  A spec from before this change may hold a secret accepted as an `id` entity; delete that entity
+  by hand (accepting it as `redact` is refused while it is there), and the next apply drops its map
+  entry.
 - **Kept hosts.** A host name under a domain in the `blind.toml` keep list is not reported: the
   engine keeps it because the policy says to. An invalid `blind.toml` stops the audit (exit 3).
 - **`leak`**: a whole-word survivor in the case the engine would have replaced; in a CSV/TSV

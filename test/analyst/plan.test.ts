@@ -903,6 +903,17 @@ describe("patternWarnings (AGT-1856)", () => {
     ]);
   });
 
+  test("card numbers and secrets in free text are counted and warned about when their patterns are off (AGT-2452)", () => {
+    const text = "Card 4111 1111 1111 1111 on file.\nThe vault code is Zq7%mPlx92 now.";
+    expect(patternHits(text)).toEqual({ card: 1, secret: 1 });
+    const doc = { ...profileOf([]), tables: [], documents: [{ file: "notes.txt", outline: [], sampleSentences: [], patternHits: { card: 1, secret: 1 } }] };
+    expect(patternWarnings(doc, specOf("value", OFF_IP), { patterns: {} })).toEqual([
+      "warning: [patterns] card is off, but 1 card-shaped value(s) were found in 1 file(s); they will be written as is",
+      "warning: [patterns] secret is off, but 1 secret-shaped value(s) were found in 1 file(s); they will be written as is",
+    ]);
+    expect(patternWarnings(doc, specOf("value", { ...OFF_IP, secret: true }), { patterns: {} })).toEqual([]);
+  });
+
   test("a file that is both a transcript and a document counts its hits once", () => {
     const doc = { ...profileOf([]), tables: [], documents: [{ file: "t.txt", outline: [], sampleSentences: [], patternHits: { ip: 3 } }], transcripts: [{ file: "t.txt", speakers: [], sampleLines: [], patternHits: { ip: 3 } }] };
     expect(patternWarnings(doc, specOf("value", OFF_IP), { patterns: {} })[0]).toContain("3 ip-shaped value(s) were found in 1 file(s)");

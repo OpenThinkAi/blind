@@ -132,7 +132,7 @@ const where = (l: Location, show: boolean): string => `${q(l.file)}${l.sheet ===
 const CLASS_ORDER: EntityClassName[] = ["unknown", "person", "org", "host", "email", "id", "location", "secret", "vocabulary"];
 
 /** Patterns the profile counts hits for (AGT-1856): columns by detector rate, free text by patternHits. */
-const COUNTED_PATTERNS: HitPattern[] = ["ip", "email", "host", "guid", "mac", "address", "phone"];
+const COUNTED_PATTERNS: HitPattern[] = ["ip", "email", "host", "guid", "mac", "address", "phone", "card", "secret"];
 /** Treatments that decide a column's values by rule, so a pattern switched off does not let them through. */
 const RULED: Treatment[] = ["keep", "drop", "redact", "blind"];
 
@@ -155,7 +155,8 @@ export function patternWarnings(profile: Profile, spec: Spec, policy: { patterns
     for (const { loc, stats } of profileLocations(profile)) {
       const treatment = treatments.get(locationKey(loc));
       if (treatment !== undefined && RULED.includes(treatment)) continue;
-      add(loc.file, Math.round((stats.detectorRates[name] ?? 0) * stats.count));
+      // Columns have no card or secret detector rate: those two are counted in free text only.
+      add(loc.file, Math.round(((stats.detectorRates as Partial<Record<HitPattern, number>>)[name] ?? 0) * stats.count));
     }
     const freeText = new Map<string, number>();
     for (const d of [...profile.documents, ...profile.transcripts]) {

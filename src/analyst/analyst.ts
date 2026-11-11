@@ -160,6 +160,10 @@ export function checkProposal(spec: Spec, profile: Profile): SchemaIssue[] {
     if (c.class === "secret" && c.treatment === "blind") {
       issues.push({ path: `$.columns[${i}].class`, message: `a "secret" column under "blind" is redacted; only blind.toml or a human may redact a column (ask a question instead)` });
     }
+    // A credential column kept would publish every password in clear: only blind.toml or a human may say so.
+    if (c.class === "secret" && c.treatment === "keep") {
+      issues.push({ path: `$.columns[${i}].treatment`, message: `a "secret" column must not be kept; only blind.toml or a human may keep a credential column (ask a question instead)` });
+    }
   });
   const asked = new Map<string, number>();
   spec.questions.forEach((q, i) => {

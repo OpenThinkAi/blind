@@ -119,6 +119,15 @@ describe("spec", () => {
     expect(() => parseSpec("{ not json")).toThrow(/spec: invalid spec\n {2}\$: not valid JSON/);
   });
 
+  test("seen fingerprints must be 16 lowercase hex digits (AGT-2452)", () => {
+    const issues = (seen: string[]) => {
+      const r = validateSpec({ ...specFixture, seen });
+      return r.ok ? [] : r.issues.map((i) => i.path);
+    };
+    expect(issues(["0123456789abcdef"])).toEqual([]);
+    expect(issues(["0123456789ABCDEF", "Avery Quill 1234", "0123456789abcde"])).toEqual(["$.seen[0]", "$.seen[1]", "$.seen[2]"]);
+  });
+
   test("parseSpec returns the spec when valid", () => {
     expect(parseSpec(JSON.stringify(specFixture)).columns).toHaveLength(4);
   });

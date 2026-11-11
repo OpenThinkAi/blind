@@ -731,7 +731,6 @@ function renderJson(
   return { text: out + p.text.slice(at), entityReplacements, patternReplacements, mappedReplacements, keptHosts };
 }
 
-/** Tokens of a text, for the set of real values no pseudonym may equal. */
 /** Every text of the corpus blind reads: paths, documents, cells and values, for the redact list (redactlist.ts). */
 function* corpusTexts(plans: readonly Plan[]): Generator<string> {
   for (const p of plans) {
@@ -745,6 +744,7 @@ function* corpusTexts(plans: readonly Plan[]): Generator<string> {
   }
 }
 
+/** Tokens of a text, for the set of real values no pseudonym may equal. */
 function tokens(text: string): string[] {
   return text.match(/[\p{L}\p{N}][\p{L}\p{N}._@:-]*/gu) ?? [];
 }

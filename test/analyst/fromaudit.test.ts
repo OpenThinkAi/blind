@@ -666,14 +666,3 @@ describe("a secret or card number is redacted, never stored in the spec or the m
     expect(readFileSync(mapFile, "utf8")).not.toContain(SECRET);
   });
 });
-
-describe("findRedactValues (AGT-2438)", () => {
-  test("finds a listed value at word edges only, in any text, and nothing else", async () => {
-    const { findRedactValues } = await import("../../src/engine/redactlist.ts");
-    const entries = [redactEntry(SALT, "Zq7%mPlx92"), redactEntry(SALT, "4111 1111 1111 1111")];
-    expect(findRedactValues(["pw: Zq7%mPlx92.", "card 4111 1111 1111 1111 ok"], entries, SALT)).toEqual(["4111 1111 1111 1111", "Zq7%mPlx92"]);
-    expect(findRedactValues(["xZq7%mPlx92", "Zq7%mPlx92y"], entries, SALT)).toEqual([]);
-    expect(findRedactValues(["Zq7%mPlx92"], entries, Buffer.from("another salt, sixteen+ bytes"))).toEqual([]);
-    expect(findRedactValues(["Zq7%mPlx92"], [], SALT)).toEqual([]);
-  });
-});

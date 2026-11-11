@@ -39,9 +39,8 @@ function wordAt(text: string, i: number): boolean {
 export function findRedactValues(texts: Iterable<string>, entries: readonly string[], salt: Uint8Array): string[] {
   if (entries.length === 0) return [];
   const wanted = new Set(entries);
-  const lengths = [...new Set(entries.map((e) => Number(e.slice(0, e.indexOf(":")))))].filter((n) => Number.isInteger(n) && n > 0);
+  const lengths = [...new Set(entries.map((e) => Number(e.slice(0, e.indexOf(":")))))];
   const found = new Set<string>();
-  const tried = new Set<string>();
   for (const text of texts) {
     for (let i = 0; i < text.length; i++) {
       if (wordBefore(text, i)) continue;
@@ -49,8 +48,7 @@ export function findRedactValues(texts: Iterable<string>, entries: readonly stri
         const end = i + n;
         if (end > text.length || wordAt(text, end)) continue;
         const v = text.slice(i, end);
-        if (v.trim() !== v || tried.has(v)) continue;
-        tried.add(v);
+        if (v.trim() !== v || found.has(v)) continue;
         if (wanted.has(redactEntry(salt, v))) found.add(v);
       }
     }

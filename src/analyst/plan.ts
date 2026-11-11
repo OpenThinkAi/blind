@@ -531,7 +531,7 @@ function renderCandidate(c: Candidate, show: boolean): string[] {
     c.severity,
     c.kinds.join(", "),
     `accept as: ${c.suggested ?? `(name one: ${ACCEPT_CLASSES.join("|")})`}`,
-    ...(c.suggested === "redact" ? ["(a secret or card number: written as REDACTED, never stored in the spec or the map)"] : []),
+    ...(c.suggested === "redact" ? ["(a secret or card number: written as REDACTED; only its salted fingerprint is kept, never the value)"] : []),
     ...(c.pattern === null ? [] : [`shape: ${c.pattern}`]),
     ...(c.known ? ["cannot be rejected (the spec or map already treats it as sensitive)"] : []),
   ];
@@ -543,7 +543,7 @@ function renderChange(x: Change, show: boolean): string {
     case "entity":
       return `  ${x.id}  accepted ${shownValue(x.value, show)}: added ${x.class} entity (source human)`;
     case "redact":
-      return `  ${x.id}  accepted ${shownValue(x.value, show)}: added to the redact list (its fingerprint only; written as REDACTED)`;
+      return `  ${x.id}  accepted ${shownValue(x.value, show)}: added to the redact list (only its salted fingerprint is kept; written as REDACTED)`;
     case "pattern":
       return `  ${x.id}  accepted ${shownValue(x.value, show)}: turned pattern ${x.pattern} on`;
     case "vocabulary":
@@ -619,20 +619,22 @@ async function fromAudit(reportPath: string, out: string, values: FromAuditOptio
   return (await decideFromReport(report, reportPath, out, values, io)).code;
 }
 
+/** .blind/salt, or undefined when there is none. A salt that exists but cannot be read is refused, not treated as missing. */
+function readSaltIfAny(cwd: string): Uint8Array | undefined {
+  const path = join(cwd, BLIND_DIR, SALT_FILE);
+  try {
+    return readFileSync(path);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw new Refusal(`${path}: cannot read the salt`);
+  }
+}
+
 /**
  * `--from-audit` on a report already in hand (`blind run --accept-leaks` passes the audit's own):
  * the exit code plan gives, and whether the saved spec changed. Throws what fromAudit's caller
  * catches (Refusal, FromAuditError, SchemaError, MapError) when it refuses; then nothing is written.
  */
-/** .blind/salt, or undefined when there is none or it cannot be read. */
-function readSaltIfAny(cwd: string): Uint8Array | undefined {
-  try {
-    return readFileSync(join(cwd, BLIND_DIR, SALT_FILE));
-  } catch {
-    return undefined;
-  }
-}
-
 export async function decideFromReport(
   readReport: () => string,
   label: string,

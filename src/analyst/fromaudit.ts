@@ -18,7 +18,7 @@
 // A secret or card number (a `pattern:secret` or `pattern:card` finding, or a value of that shape)
 // is never accepted as an entity, which would store it in the spec and give it a pseudonym in the
 // map (AGT-2438). It is accepted as `redact`: its salted fingerprint goes into the spec's `redact`
-// list (engine/redactlist.ts) and apply writes it as REDACTED, recorded nowhere.
+// list (engine/redactlist.ts) and apply writes it as REDACTED; the value is recorded nowhere.
 
 import { lstatSync, readFileSync, readlinkSync } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
@@ -633,7 +633,7 @@ export function applyDecisions(
     }
     if (cls !== "redact" && secretLike(c)) {
       throw new FromAuditError(
-        `${d.id} cannot be accepted as ${cls}: it is a secret or card number, which would then be stored in the spec and the map. Accept it as redact (--accept ${d.id}=redact): it is written as REDACTED and recorded nowhere`,
+        `${d.id} cannot be accepted as ${cls}: it is a secret or card number, which would then be stored in the spec and the map. Accept it as redact (--accept ${d.id}=redact): it is written as REDACTED and only its salted fingerprint is kept`,
       );
     }
     if (cls === "redact") {

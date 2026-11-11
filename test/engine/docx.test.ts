@@ -336,6 +336,20 @@ describe("DOCX: fail closed", () => {
     expect(skippedReason(run(docx(e)))).toBe("embedded file word/embeddings/oleObject1.bin cannot be blinded inside a DOCX; not written");
   });
 
+  test("an embedded font is copied unread and listed in the report (AGT-2452)", () => {
+    const font = new Uint8Array([0, 1, 0, 0, 9, 8, 7]);
+    const res = run(docx(entries({ extra: [{ name: "word/fonts/font1.odttf", data: font, method: 0 }] })));
+    expect(res.skipped).toEqual([]);
+    expect(res.files[0]?.unread).toEqual(["word/fonts/font1.odttf"]);
+    const out = readZip(res.outputs[0]!.bytes).find((e) => e.name === "word/fonts/font1.odttf");
+    expect(out).toBeDefined();
+    expect(renderReport(res)).toContain("copied without reading (not XML; the audit still reads them): word/fonts/font1.odttf");
+  });
+
+  test("a DOCX with no font reports nothing unread", () => {
+    expect(run().files[0]?.unread).toBeUndefined();
+  });
+
   test("a package thumbnail is a picture of the original, so the document is not written", () => {
     const e = entries({ extra: [{ name: "docProps/thumbnail.jpeg", data: "\xff\xd8\xff" }] });
     expect(skippedReason(run(docx(e)))).toBe(

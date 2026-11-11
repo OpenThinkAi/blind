@@ -1364,6 +1364,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         keptHosts: r.keptHosts,
         metadataReplacements: r.metadataReplacements,
         warnings: p.docx.warnings,
+        ...(p.docx.fonts.length > 0 ? { unread: [...p.docx.fonts] } : {}),
         ...(p.transcript === undefined
           ? r.speakerReplacements > 0 ? { speakerMentions: r.speakerReplacements } : {}
           : { transcript: transcriptReport("docx", p.transcript.speakers, p.transcript.tags, r.speakerReplacements, kept) }),

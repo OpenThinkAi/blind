@@ -85,6 +85,8 @@ export interface DocxPlan {
   warnings: string[];
   /** Image parts written as placeholders (the default; `[images] keep = true` leaves this empty). */
   images?: Set<string>;
+  /** Embedded font members, copied unread; apply lists them in the file's report. */
+  fonts: string[];
 }
 
 export interface DocxRender {
@@ -347,14 +349,15 @@ export function planDocx(bytes: Uint8Array, images: ImageMode): DocxPlan {
   } catch (e) {
     throw new DocxError(`not a readable DOCX package (${(e as Error).message})`);
   }
-  const plan: DocxPlan = { bytes, nodes: new Map(), kinds: new Map(), edits: [], wholes: [], units: [], tables: [], keptHosts: 0, requests: [], values: [], hexIds: [], accounts: [], warnings: [] };
+  const plan: DocxPlan = { bytes, nodes: new Map(), kinds: new Map(), edits: [], wholes: [], units: [], tables: [], keptHosts: 0, requests: [], values: [], hexIds: [], accounts: [], warnings: [], fonts: [] };
 
   const pictures: string[] = [];
   for (const m of members) {
     if (m.kind !== "other" || m.name.endsWith("/")) continue;
     if (THUMBNAIL.test(m.name)) throw new DocxError(thumbnailReason(m.name));
     if (IMAGE.test(m.name)) pictures.push(m.name);
-    else if (!FONT.test(m.name)) throw new DocxError(`embedded file ${m.name} cannot be blinded inside a DOCX`);
+    else if (FONT.test(m.name)) plan.fonts.push(m.name);
+    else throw new DocxError(`embedded file ${m.name} cannot be blinded inside a DOCX`);
   }
   const warning = imageWarning(pictures, images);
   if (warning.refusal !== null) throw new DocxError(warning.refusal);

@@ -14,6 +14,7 @@ import { generateKit, type Kit, type KitOptions, writeKit } from "../../src/benc
 import type { FileReport } from "../../src/engine/apply.ts";
 import type { Spec } from "../../src/schema.ts";
 import { makeZip } from "../audit/zipfixture.ts";
+import { buildWorkbook as buildFixtureWorkbook } from "../formats/xlsxfixture.ts";
 import { defaultPolicy, renderPolicy } from "../../src/policy.ts";
 
 class Sink {
@@ -496,4 +497,34 @@ describe("bench case: people named only in prose (AGT-1830)", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 30_000);
+});
+
+describe("blind bench masks a not-written reason (AGT-2452)", () => {
+  test("a refusal quoting a worksheet name is masked in the table and in bench-report.json", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "blind-bench-notwritten-"));
+    try {
+      mkdirSync(join(dir, "input"));
+      // A drop rule on a column of numbers: apply refuses the workbook, quoting the sheet name.
+      writeFileSync(join(dir, "input", "staff.xlsx"), buildFixtureWorkbook());
+      writeFileSync(join(dir, "input", "visits.csv"), "Species,Weight\nCanine,12.5 lb\nFeline,9.1 lb\n");
+      writeFileSync(join(dir, "oracle.json"), JSON.stringify({ values: [{ value: "Robin Example", class: "person" }] }));
+      const dropRule = { file: "staff.xlsx", sheet: "Staff", header: "Employee ID", class: "id", treatment: "drop", confidence: 1, source: "human" };
+      const spec: Spec = { version: 1, columns: [dropRule as Spec["columns"][number]], entities: {}, patterns: { ip: true, email: true, host: true, guid: true, mac: true }, questions: [] };
+      writeFileSync(join(dir, "spec.json"), JSON.stringify(spec));
+      const out = new Sink();
+      const err = new Sink();
+      const code = await runBench([dir], { out: out as unknown as NodeJS.WritableStream, err: err as unknown as NodeJS.WritableStream, cwd: dir });
+      if (code === 2) throw new Error(err.text);
+      const rep = JSON.parse(readFileSync(join(dir, REPORT_FILE), "utf8")) as BenchReport;
+      expect(rep.apply.notWritten).toHaveLength(1);
+      const reason = rep.apply.notWritten[0]?.reason ?? "";
+      expect(reason).toContain("worksheet St***5 cell");
+      expect(reason).not.toContain('"Staff"');
+      const row = out.text.split("\n").find((l) => l.startsWith("not-written"));
+      expect(row).toContain("worksheet St***5 cell");
+      expect(out.text).not.toContain('"Staff"');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

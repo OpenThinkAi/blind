@@ -19,7 +19,9 @@ blind audit ./out           # exit 0 clean, 1 candidates to review, 2 leak
 blind run ./in -o ./out     # plan, apply and audit in one go
 ```
 
-Run the commands in the directory that holds `blind.toml`. `blind plan` asks the model set in
+Run the commands in the directory that holds `blind.toml`. Once its `[keep] terms` hold real
+names, hosts or address ranges, `blind.toml` is sensitive too: keep it as private as
+`.blind/spec.json`. `blind plan` asks the model set in
 `blind.toml`, by default a server on your own machine; `blind plan --no-model` uses only the
 built-in detectors and leaves everything else for you to decide. `blind run` stops for review the
 first time (exit 3); once the spec is saved, the next run on the same kind of data needs no

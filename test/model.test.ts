@@ -189,7 +189,7 @@ describe("local-only resolves host names before any request", () => {
       const urls: string[] = [];
       // A resolver that would answer differently the second time: only the first, verified answer may be used.
       let n = 0;
-      const lookup = async () => (n++ === 0 ? [{ address: "127.0.0.1" }] : [{ address: "93.184.216.34" }]);
+      const lookup = async () => (n++ === 0 ? [{ address: "127.0.0.1" }] : [{ address: "192.0.2.1" }]);
       await ask("analyst", "sys", PROMPT, SCHEMA, {
         policy: policy({ url: `http://localhost:${server.port}/v1`, model: "m" }),
         lookup,
@@ -202,6 +202,16 @@ describe("local-only resolves host names before any request", () => {
     } finally {
       server.stop(true);
     }
+  });
+
+  test("NO_PROXY must cover the pinned address too: a proxy with NO_PROXY=localhost is refused (AGT-2452)", async () => {
+    const { lookup } = answering("127.0.0.1");
+    const opts = (env: Record<string, string>) => ({ policy: policy({ url: "http://localhost:11434/v1", model: "m" }), lookup, fetch: noFetch, env, stderr: () => {} });
+    const msg = await rejection(ask("analyst", "sys", PROMPT, SCHEMA, opts({ HTTP_PROXY: "http://proxy.example:3128", NO_PROXY: "localhost" })));
+    expect(msg).toContain("127.0.0.1");
+    // Covering both the name and the address lets the call through to fetch.
+    const sent = await ask("analyst", "sys", PROMPT, SCHEMA, opts({ HTTP_PROXY: "http://proxy.example:3128", NO_PROXY: "localhost,127.0.0.1" })).catch((e: Error) => e.message);
+    expect(String(sent)).toContain("a request was sent");
   });
 
   test("pinnedRequest keeps the name for Host, SNI and the certificate check; IPv6 is bracketed", () => {

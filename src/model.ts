@@ -221,6 +221,7 @@ export async function assertResolvesLoopback(url: URL, lookup: LookupFn = system
         `use 127.0.0.1 in the url, or set privacy.mode = "profile-only" to allow a remote model`,
     );
   }
+  // Not empty: an empty answer was refused above.
   return (addresses[0] as { address: string }).address;
 }
 
@@ -728,6 +729,8 @@ export async function ask<T>(role: Role, system: string, prompt: Prompt, schema:
   if (mode === "local-only" && url !== null) {
     assertNoProxy(url, opts.env ?? process.env);
     pinned = await assertResolvesLoopback(url, opts.lookup);
+    // The request goes to the pinned address, and fetch matches NO_PROXY against that host: it must be covered too.
+    if (pinned !== null) assertNoProxy(new URL(pinnedRequest(url.toString(), pinned).url), opts.env ?? process.env);
   }
   if (mode === "profile-only") assertProfilePayload(prompt.data);
   assertShortStrings(prompt.data);

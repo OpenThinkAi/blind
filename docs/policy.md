@@ -366,7 +366,7 @@ speaker names that `local-only` also sends and `profile-only` leaves out.
 
 | Mode | Models | What is sent |
 |---|---|---|
-| `local-only` | Only a loopback server: `127.0.0.1` (the whole `127.0.0.0/8`), `::1` or `localhost`. `claude-cli`, the hosted Anthropic API and any other host are refused. | Analyst: the profile and the policy (classes, description, examples and keep terms). Auditor: the blinded output's text in lines of at most 120 characters, in chunks of at most 8 kB, and the policy. |
+| `local-only` | Only a loopback server: `127.0.0.1` (the whole `127.0.0.0/8`), `::1` or `localhost`. `claude-cli`, the hosted Anthropic API and any other host are refused, and so is any call while a proxy variable (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, either case) is set and `NO_PROXY` does not name the host. | Analyst: the profile and the policy (classes, description, examples and keep terms). Auditor: the blinded output's text in lines of at most 120 characters, in chunks of at most 8 kB, and the policy. |
 | `profile-only` | Remote servers over https, and `claude-cli`. A loopback server may use http. | Exactly the profile's statistics and the policy's classes, description and examples, nothing else; anything else is refused. No value: no samples, sample sentences or lines, document outlines or speaker names, and no keep terms (they are applied on this machine instead). Every file, folder and sheet name, header and JSON key as an opaque token. Auditor: the profile of the output tree, the same way. |
 | `none` | No model. `blind plan` uses the built-in detectors; `blind audit` runs its rule-based layers only. | Nothing. |
 

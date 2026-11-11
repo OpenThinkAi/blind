@@ -11,7 +11,9 @@
 //   - privacy.mode "none" calls no model; "local-only" refuses anything that is not a
 //     loopback literal (127.0.0.0/8, ::1), and a host name (localhost) only if every address it
 //     resolves to is loopback. That rules out claude-cli and the hosted Anthropic API. There is
-//     no fallback to another backend.
+//     no fallback to another backend. A call is also refused when a proxy variable
+//     (HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, any case) is set and NO_PROXY does not name the host,
+//     since fetch would otherwise send the loopback request through the proxy.
 //   - privacy.mode "profile-only" allows a remote model that never sees a value (AGT-1832): the
 //     data must be exactly profilePayload(profile, policy), a schema-valid profile and the policy,
 //     nothing else; the profile carries no samples (sampleCount 0, no sample values, sentences or
@@ -204,6 +206,38 @@ export async function assertResolvesLoopback(url: URL, lookup: LookupFn = system
         `use 127.0.0.1 in the url, or set privacy.mode = "profile-only" to allow a remote model`,
     );
   }
+}
+
+const PROXY_VARS = ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"] as const;
+const NO_PROXY_VARS = ["NO_PROXY", "no_proxy"] as const;
+
+/** True when one NO_PROXY list names the host: `*`, the host itself, or `host:port` with the port in use. */
+function noProxyCovers(list: string, url: URL): boolean {
+  const host = url.hostname.toLowerCase();
+  const port = url.port !== "" ? url.port : url.protocol === "https:" ? "443" : "80";
+  return list
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .some((e) => e === "*" || e === host || e === `${host}:${port}`);
+}
+
+/**
+ * Under local-only, refuses a call that the runtime's fetch would send through a proxy. Bun's
+ * fetch honours HTTP_PROXY and friends for loopback targets too, and `proxy: ""` in the fetch
+ * options does not turn that off, so a proxy variable in the environment could carry the payload
+ * off the machine. Every proxy variable counts, whatever the URL's scheme, and every NO_PROXY
+ * variable that is set must name the host (`*`, the host, or `host:port`); CIDR ranges and
+ * wildcard suffixes are not treated as cover. Call before any request is sent.
+ */
+export function assertNoProxy(url: URL, env: Record<string, string | undefined>): void {
+  const proxies = PROXY_VARS.filter((v) => (env[v] ?? "") !== "");
+  if (proxies.length === 0) return;
+  const lists = NO_PROXY_VARS.map((v) => env[v] ?? "").filter((l) => l !== "");
+  if (lists.length > 0 && lists.every((l) => noProxyCovers(l, url))) return;
+  throw new ModelRefusal(
+    `privacy.mode is local-only: ${proxies.join(", ")} is set, so the request to ${url.host} could go through a proxy; ` +
+      `set NO_PROXY=${url.hostname} (and no_proxy, if it is set) or unset the proxy variable`,
+  );
 }
 
 /** Refuses data holding any string or key longer than MAX_DATA_STRING characters. */
@@ -588,7 +622,10 @@ export async function ask<T>(role: Role, system: string, prompt: Prompt, schema:
   const cfg = opts.policy.models[role];
   const mode = opts.policy.privacy.mode;
   const url = resolveEndpoint(role, cfg, mode);
-  if (mode === "local-only" && url !== null) await assertResolvesLoopback(url, opts.lookup);
+  if (mode === "local-only" && url !== null) {
+    assertNoProxy(url, opts.env ?? process.env);
+    await assertResolvesLoopback(url, opts.lookup);
+  }
   if (mode === "profile-only") assertProfilePayload(prompt.data);
   assertShortStrings(prompt.data);
   const samples = mode === "profile-only" ? (prompt.data as ProfilePayload).profile.sampleCount : undefined;

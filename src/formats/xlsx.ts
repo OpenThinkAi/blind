@@ -430,7 +430,15 @@ export function readWorkbook(bytes: Uint8Array): XlsxWorkbook {
     const code = customFormats.get(id);
     if (code === undefined ? BUILTIN_DATE_FORMATS.has(id) : isDateFormatCode(code)) dateStyles.add(i);
   });
-  return { sheets, sharedStrings, definedNames: wb.definedNames, tables, members, dateStyles, worksheetParts: [...worksheets.keys()] };
+  return {
+    sheets,
+    sharedStrings,
+    definedNames: wb.definedNames,
+    tables,
+    members,
+    dateStyles,
+    worksheetParts: [...worksheets.keys()],
+  };
 }
 
 /** A worksheet as rows of cell text, row 1 first, for header detection and statistics. */

@@ -155,7 +155,7 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
   }
   const listed = new Set(wb.sheets.flatMap((s) => (s.member === null ? [] : [s.member])));
   const unlisted = wb.worksheetParts.find((m) => !listed.has(m));
-  if (unlisted !== undefined) throw new XlsxError(`member ${unlisted} is a worksheet that workbook.xml does not list`);
+  if (unlisted !== undefined) throw new XlsxError(`member ${unlisted} is a worksheet that workbook.xml does not list; remove the part or list it as a sheet`);
 
   for (const rule of rules) {
     if (rule.jsonPath !== undefined || rule.sheet === undefined) {
@@ -684,7 +684,10 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
           const ref = c?.attrs.get("r") ?? "";
           const plan = p.cells.get(ctx.member)?.get(ref);
           const type = c?.attrs.get("t") ?? "n";
-          // A string with no plan is read as free text, never copied as it is (AGT-2445).
+          // planXlsx gives every cell of every listed sheet a plan and refuses unlisted worksheets
+          // and duplicate members, so a cell with no plan should not reach here. If one does, a
+          // string is read as free text rather than copied (AGT-2445); number, boolean, error and
+          // shared-string-index values carry no text and pass through, relying on those refusals.
           if (plan === undefined) return type === "str" ? freeCell(value) : value;
           if (plan.zero === true) return type === "d" ? "1900-01-01" : "0";
           if (type === "n") return plan.renumber ? (numbers.get(value) ?? renumber(value, pz)) : value;

@@ -109,12 +109,19 @@ describe("semantic layer", () => {
       entries: [
         { kind: "id", canonical: "x1", value: "x1", pseudonym: "5820193746" },
         { kind: "id", canonical: "x2", value: "x2", pseudonym: "0f1e2d3c-4b5a-4968-8776-a5b4c3d2e1f0" },
+        { kind: "email", canonical: "x3", value: "x3", pseudonym: "user_1a2b@host-3c4d.com" },
+        { kind: "email-local", canonical: "x4", value: "x4", pseudonym: "user_1a2b" },
+        { kind: "host-label", canonical: "x5", value: "x5", pseudonym: "host-3c4d" },
+        { kind: "host-label", canonical: "x6", value: "x6", pseudonym: "host-5e6f" },
+        { kind: "host-label", canonical: "x7", value: "x7", pseudonym: "host-7a8b" },
+        { kind: "person", canonical: "x8", value: "x8", pseudonym: "Person_A7F3" },
+        { kind: "org", canonical: "x9", value: "x9", pseudonym: "Org_2C9E" },
       ],
     };
     const text = "seen 5820193746 and 0f1e2d3c-4b5a-4968-8776-a5b4c3d2e1f0 and user_1a2b@host-3c4d.com on host-5e6f.host-7a8b.net, Person_A7F3 Org_2C9E\n";
     expect(semantic(audit([file("a.txt", text)], SPEC, map))).toEqual([]);
-    // Without the map they are unexplained.
-    expect(classes(audit([file("a.txt", text)]))).toEqual(["semantic:digits", "semantic:guid"]);
+    // Without the map they are unexplained, the host- and user_-shaped ones too: a shape alone is not a pseudonym (AGT-2452).
+    expect(classes(audit([file("a.txt", text)]))).toEqual(["semantic:digits", "semantic:guid", "semantic:email", "semantic:host"]);
   });
 
   test("the keep list, vocabulary forms, vocabulary column values and the spec's headers explain phrases", () => {
@@ -164,7 +171,14 @@ describe("semantic layer", () => {
   });
 
   test("a blinded name made of pseudonyms joined by underscores is not a candidate; a real host piece is", () => {
-    const r = audit([file("Person_1E95_user_559f@host-f3ce.com.md", "x\n"), file("backup_db01.example.com.txt", "x\n")]);
+    const map: BlindMap = {
+      version: 1,
+      entries: [
+        { kind: "person", canonical: "a", value: "a", pseudonym: "Person_1E95" },
+        { kind: "email", canonical: "b", value: "b", pseudonym: "user_559f@host-f3ce.com" },
+      ],
+    };
+    const r = audit([file("Person_1E95_user_559f@host-f3ce.com.md", "x\n"), file("backup_db01.example.com.txt", "x\n")], SPEC, map);
     expect(semantic(r).map((f) => [f.file, f.class, f.masked])).toEqual([["backup_db01.example.com.txt", "semantic:host", "db***16"]]);
   });
 

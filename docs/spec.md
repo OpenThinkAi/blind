@@ -911,7 +911,13 @@ up to three layers, mechanical, semantic, then model; the report lists the layer
   whole words only), and every match of an enabled pattern that is not a pseudonym. A lone word of a
   blinded person's name in the engine's case for a single-word form (capitalised, or an exact short
   acronym) is a `leak`; in another case, a `candidate`; one that is also a dictionary word or a keep
-  term is a `candidate` in that case and is not reported otherwise. Text that is a pseudonym or a `vocabulary` form is never a finding,
+  term is a `candidate` in that case and is not reported otherwise. Text counts as a pseudonym only
+  when the map issued it: a whole pseudonym in either style or its name-safe twin, or a host or
+  email pseudonym built from `host-` labels and `user_` local parts the map holds. A real value
+  that merely has a pseudonym's shape (`Person_1A2B`, `[Client A #1A2B]`, `host-1a2b.net`, an RFC
+  5737 address) is checked like any other text. Pseudonyms from an earlier map are still
+  recognised: `blind apply` with an earlier map carries its entries into the map it writes, so
+  audit with that map (or pass `--map` with the one that issued them). Text that is a pseudonym or a `vocabulary` form is never a finding,
   and neither is a pattern match made only of pseudonyms and punctuation (a blinded file name whose parts are
   all pseudonyms and `_`, such as a name-safe twin joined to an email pseudonym). File and directory names are also read piece by
   piece between underscores, as `blind apply` reads them, and a file's or zip member's extension is read on its own

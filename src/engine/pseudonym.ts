@@ -177,18 +177,52 @@ function isShapedPseudonym(s: string, nameSafeShape = true): boolean {
   return String(last) === ip[1] && last >= 1 && last <= 254;
 }
 
+/** What a map issued: every pseudonym and its name-safe twin, and the host-label and email-local pieces. */
+interface Issued {
+  whole: Set<string>;
+  labels: Set<string>;
+  locals: Set<string>;
+}
+const issuedCache = new WeakMap<BlindMap, Issued>();
+
+function issuedBy(map: BlindMap): Issued {
+  let got = issuedCache.get(map);
+  if (got !== undefined) return got;
+  got = { whole: new Set(), labels: new Set(), locals: new Set() };
+  for (const e of map.entries) {
+    got.whole.add(e.pseudonym);
+    got.whole.add(nameSafe(e.pseudonym));
+    if (e.kind === "host-label") got.labels.add(e.pseudonym);
+    else if (e.kind === "email-local") got.locals.add(e.pseudonym);
+  }
+  issuedCache.set(map, got);
+  return got;
+}
+
+/** A host pseudonym (`host-1a2b.host-3c4d.example`) every `host-` label of which the map issued. */
+function issuedHost(s: string, issued: Issued): boolean {
+  if (!HOST_RE.test(s)) return false;
+  const labels = s.split(".");
+  const body = /^host-[0-9a-f]{4}$/.test(labels[labels.length - 1] as string) ? labels : labels.slice(0, -1);
+  return body.every((l) => issued.labels.has(l));
+}
+
 /**
- * Recognises every emitted form. GUID and numeric pseudonyms are
- * indistinguishable from real ones by shape, so they are recognised only via
- * the map that issued them.
+ * Recognises every emitted form. With a map, a value counts only when that map issued it (a whole
+ * pseudonym or its name-safe twin, or a host or email built from labels and local parts it issued):
+ * a real value that merely has a pseudonym's shape (`Person_1A2B`, `host-1a2b.example`, an RFC 5737
+ * address) is not one, so the audit still checks it. An earlier map's pseudonyms are recognised
+ * because apply carries that map's entries into the map it writes. Without a map (nothing to ask)
+ * the shape is all there is; GUID and numeric pseudonyms are never recognised by shape.
  */
 export function isPseudonym(s: string, map?: BlindMap): boolean {
-  // With a map, a name-safe class-word shape (`Host_A_1234`) reads as an ordinary identifier: only the
-  // map's entries confirm it. Without one (no map to ask) the shape is all there is.
-  if (isShapedPseudonym(s, map === undefined)) return true;
-  if (!map) return false;
+  if (!map) return isShapedPseudonym(s, true);
+  const issued = issuedBy(map);
   const norm = guidCore(s) ?? s;
-  return map.entries.some((e) => e.pseudonym === norm || nameSafe(e.pseudonym) === norm);
+  if (issued.whole.has(norm)) return true;
+  if (issuedHost(s, issued)) return true;
+  const at = s.indexOf("@");
+  return at > 0 && EMAIL_RE.test(s) && issued.locals.has(s.slice(0, at)) && issuedHost(s.slice(at + 1), issued);
 }
 
 function isHostname(c: string): boolean {

@@ -195,10 +195,28 @@ describe("auditTree", () => {
 
   test("pattern matches that are not pseudonyms are leaks; pseudonyms are not", () => {
     const { entries, map } = kit();
-    const r = auditTree([...entries, file("p.txt", "from 10.1.2.3 and db07.example.net, also 203.0.113.9 and Person_ABCD")], SPEC, map);
+    const issued: BlindMap = {
+      ...map,
+      entries: [
+        ...map.entries,
+        { kind: "host", canonical: "198.18.0.9", value: "198.18.0.9", pseudonym: "203.0.113.9" },
+        { kind: "person", canonical: "x", value: "x", pseudonym: "Person_ABCD" },
+        { kind: "host-label", canonical: "db08", value: "db08", pseudonym: "host-1a2b" },
+      ],
+    };
+    const text = "from 10.1.2.3 and db07.example.net, also 203.0.113.9 and Person_ABCD on host-1a2b.net";
+    const r = auditTree([...entries, file("p.txt", text)], SPEC, issued);
     expect(leaks(r).map((f) => [f.class, f.masked])).toEqual([
       ["pattern:ip", "10***8"],
       ["pattern:host", "db***16"],
+    ]);
+    // The same shapes, not issued by this map, are real values: an RFC 5737 address and a host-shaped name are leaks (AGT-2452).
+    const unissued = auditTree([...entries, file("p.txt", text)], SPEC, map);
+    expect(leaks(unissued).map((f) => [f.class, f.masked])).toEqual([
+      ["pattern:ip", "10***8"],
+      ["pattern:host", "db***16"],
+      ["pattern:ip", "20***11"],
+      ["pattern:host", "ho***13"],
     ]);
   });
 

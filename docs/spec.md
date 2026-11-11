@@ -735,7 +735,10 @@ is an error). The column table above applies to every cell, with these workbook 
   `blind audit`: a URI on a host Office uses, a GUID or hex code, a cell reference, a number); any other value
   there (`<row r="1" spans="jane@corp.example.com">`) is scanned like the rest. One found there stops the
   workbook (listed and not written, exit 1), naming the part and element but never the value. So
-  does a member that cannot be parsed, a cell without a reference, and a zip that is not a workbook.
+  does a member that cannot be parsed, a cell without a reference, a zip that is not a workbook, a
+  worksheet part that `xl/workbook.xml` does not list as a sheet, and two zip members with the same
+  name (ignoring case), since only listed sheets get cell plans. A text cell value that somehow has
+  no cell plan is read as free text, never copied.
   Members that are not XML are copied unread and listed in the report when they are images, fonts
   or printer settings; any other (an embedded file or workbook, a macro, an ActiveX part) stops the
   workbook (listed and not written, exit 1), as in a DOCX. So does a saved thumbnail

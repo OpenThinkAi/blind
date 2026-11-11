@@ -433,3 +433,27 @@ describe("XLSX apply: fail closed", () => {
     expect(() => run(buildZip(entries))).toThrow(NameError);
   });
 });
+
+describe("XLSX apply: cells with no plan fail closed (AGT-2445)", () => {
+  const MAIN_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+  const ws = (rows: string) => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n<worksheet xmlns="${MAIN_NS}"><sheetData>${rows}</sheetData></worksheet>`;
+  const HIDDEN = '<row r="1"><c r="A1" t="str"><v>Avery Quill</v></c><c r="B1" t="inlineStr"><is><t>Dana Pell</t></is></c></row>';
+
+  test("a worksheet part that workbook.xml does not list is refused, not copied", () => {
+    const r = run(buildZip([...workbookEntries(), { name: "xl/worksheets/sheet9.xml", data: ws(HIDDEN) }]));
+    expect(r.outputs.find((o) => o.path === FILE)).toBeUndefined();
+    expect(r.skipped).toEqual([{ path: FILE, reason: expect.stringContaining("xl/worksheets/sheet9.xml is a worksheet that workbook.xml does not list") }]);
+  });
+
+  test("a second member with a sheet's name is refused", () => {
+    const r = run(buildZip([...workbookEntries(), { name: "xl/worksheets/sheet2.xml", data: ws(HIDDEN) }]));
+    expect(r.outputs.find((o) => o.path === FILE)).toBeUndefined();
+    expect(r.skipped).toEqual([{ path: FILE, reason: expect.stringContaining("xl/worksheets/sheet2.xml appears more than once") }]);
+  });
+
+  test("a member differing from a sheet only in case is refused", () => {
+    const r = run(buildZip([...workbookEntries(), { name: "xl/worksheets/Sheet2.xml", data: ws(HIDDEN) }]));
+    expect(r.outputs.find((o) => o.path === FILE)).toBeUndefined();
+    expect(r.skipped[0]?.reason).toContain("xl/worksheets/Sheet2.xml appears more than once");
+  });
+});

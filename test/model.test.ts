@@ -11,6 +11,7 @@ import {
   ask,
   profilePayload,
   assertResolvesLoopback,
+  pinnedRequest,
   isLoopback,
   isLoopbackAddress,
   parseReply,
@@ -170,8 +171,60 @@ describe("local-only resolves host names before any request", () => {
 
   test("a name that resolves only to loopback is accepted", async () => {
     const { asked, lookup } = answering("127.0.0.1", "::1");
-    await expect(assertResolvesLoopback(new URL("http://localhost:11434/v1"), lookup)).resolves.toBeUndefined();
+    await expect(assertResolvesLoopback(new URL("http://localhost:11434/v1"), lookup)).resolves.toBe("127.0.0.1");
     expect(asked).toEqual(["localhost"]);
+  });
+
+  test("the call connects to the verified address, with the name kept in the Host header (AGT-2452)", async () => {
+    const seen: { url: string; host: string | null }[] = [];
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        seen.push({ url: req.url, host: req.headers.get("host") });
+        return Response.json({ choices: [{ message: { content: '{"label":"unknown"}' }, finish_reason: "stop" }] });
+      },
+    });
+    try {
+      const urls: string[] = [];
+      // A resolver that would answer differently the second time: only the first, verified answer may be used.
+      let n = 0;
+      const lookup = async () => (n++ === 0 ? [{ address: "127.0.0.1" }] : [{ address: "192.0.2.1" }]);
+      await ask("analyst", "sys", PROMPT, SCHEMA, {
+        policy: policy({ url: `http://localhost:${server.port}/v1`, model: "m" }),
+        lookup,
+        fetch: (input, init) => (urls.push(String(input)), fetch(input, init)),
+        stderr: () => {},
+      });
+      expect(n).toBe(1);
+      expect(urls).toEqual([`http://127.0.0.1:${server.port}/v1/chat/completions`]);
+      expect(seen.map((s) => s.host)).toEqual([`localhost:${server.port}`]);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("NO_PROXY must cover the pinned address too: a proxy with NO_PROXY=localhost is refused (AGT-2452)", async () => {
+    const { lookup } = answering("127.0.0.1");
+    const opts = (env: Record<string, string>) => ({ policy: policy({ url: "http://localhost:11434/v1", model: "m" }), lookup, fetch: noFetch, env, stderr: () => {} });
+    const msg = await rejection(ask("analyst", "sys", PROMPT, SCHEMA, opts({ HTTP_PROXY: "http://proxy.example:3128", NO_PROXY: "localhost" })));
+    expect(msg).toContain("127.0.0.1");
+    // Covering both the name and the address lets the call through to fetch.
+    const sent = await ask("analyst", "sys", PROMPT, SCHEMA, opts({ HTTP_PROXY: "http://proxy.example:3128", NO_PROXY: "localhost,127.0.0.1" })).catch((e: Error) => e.message);
+    expect(String(sent)).toContain("a request was sent");
+  });
+
+  test("pinnedRequest keeps the name for Host, SNI and the certificate check; IPv6 is bracketed", () => {
+    expect(pinnedRequest("http://localhost:8000/v1/x", null)).toEqual({ url: "http://localhost:8000/v1/x" });
+    expect(pinnedRequest("http://localhost:8000/v1/x", "::1")).toEqual({ url: "http://[::1]:8000/v1/x", host: "localhost:8000" });
+    const tls = pinnedRequest("https://localhost/v1/x", "127.0.0.1");
+    expect(tls.url).toBe("https://127.0.0.1/v1/x");
+    expect(tls.host).toBe("localhost");
+    expect(tls.tls?.serverName).toBe("localhost");
+    // The certificate is checked against the name, not the address.
+    const cert = { subject: { CN: "localhost" }, subjectaltname: "DNS:localhost" } as never;
+    expect(tls.tls?.checkServerIdentity("127.0.0.1", cert)).toBeUndefined();
+    expect(pinnedRequest("https://other.localhost/v1/x", "127.0.0.1").tls?.checkServerIdentity("127.0.0.1", cert)).toBeInstanceOf(Error);
   });
 
   test("localhost resolving to one loopback and one private address is refused", async () => {
@@ -213,7 +266,7 @@ describe("local-only resolves host names before any request", () => {
   });
 
   test.each(["http://127.0.0.1:11434/v1", "http://[::1]:8000/v1"])("IP literal %s is not looked up", async (url) => {
-    await expect(assertResolvesLoopback(new URL(url), mustNotLookUp)).resolves.toBeUndefined();
+    await expect(assertResolvesLoopback(new URL(url), mustNotLookUp)).resolves.toBeNull();
   });
 
   test("a non-loopback literal is still refused by resolveEndpoint before the lookup", async () => {

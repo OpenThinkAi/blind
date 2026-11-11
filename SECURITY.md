@@ -52,8 +52,8 @@ these with hostile document content and a fake model that obeys any instruction 
 Under `profile-only` the remote model gets the `[sensitive]` class names, description and
 examples as written (`policyView` in `src/model.ts`). The `[keep]` terms are never sent in this
 mode (`keepSent` is false, so the payload carries an empty keep list): blind applies them locally
-to the reply instead. The class names, description
-and examples do go verbatim, so do not put real document values in them: use invented examples.
+to the reply instead. The class names, description and examples do go verbatim, so do not put
+real document values in them: use invented examples.
 
 ## Quoted as data
 

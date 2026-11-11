@@ -11,8 +11,11 @@ without it, with an empty keep list, and `blind audit` then runs no model layer.
 not parse stops the command, and so does a typo: **unknown keys are rejected** at every level, and
 the message names the key and what was expected.
 
-The file is not a secret, but the text in it is sent to your analyst model (see
-[What is sent](#what-is-sent)). Write invented examples, never real values.
+The file holds no key or salt, but it is sensitive when `[keep] terms` hold real names, hosts or
+address ranges: those are real document content, so treat such a `blind.toml` as you treat
+`.blind/spec.json` and keep it out of shared repositories, tickets and logs. The text in it is
+sent to your analyst model (see [What is sent](#what-is-sent); under `profile-only` the keep terms
+are not). Write invented examples, never real values.
 
 ## A complete file
 

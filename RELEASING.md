@@ -10,13 +10,13 @@ through `stamp push`, and the workflow runs from that mirror.
 ## One-time setup (before the first publish)
 
 1. Publish the first version of `@openthink/blind` to npm by hand so the package exists (npm only lets you configure a Trusted Publisher on an existing package).
-2. In the GitHub repo open Settings, then Environments, and create `npm-release`. Under "Deployment branches and tags" choose "Selected branches and tags" and add the branch `main` only (no tag patterns: the workflow has no tag trigger, and main is the only release ref). Optionally add yourself as a required reviewer, so every publish waits for an approval.
+2. Check the `stamp-mirror-only` ruleset under Settings, then Rules, then Rulesets. It already exists: it targets the default branch, blocks updates, deletions and force pushes, and lets only organisation admins and deploy keys (the stamp server's mirror push) bypass it, so nothing reaches `main` on GitHub except `stamp push`. It cannot exist while the repo is private on a free plan, so confirm it is active once the repo is public. Then open Settings, then Environments, and create `npm-release`. Under "Deployment branches and tags" choose "Selected branches and tags" and add the branch `main` only (no tag patterns: the workflow has no tag trigger, and main is the only release ref). Optionally add yourself as a required reviewer, so every publish waits for an approval.
 3. On npmjs.com open the package, then Settings, then Trusted Publishers, and add a GitHub Actions publisher:
    - Organization or user: `OpenThinkAi`
    - Repository: `blind`
    - Workflow filename: `release.yml`
    - Environment: `npm-release`
-4. Optionally set the package's publishing access to "Require two-factor authentication and disallow tokens".
+4. Set the package's publishing access to "Require two-factor authentication and disallow tokens". This is required, not optional: with tokens disallowed, a leaked or forgotten npm token cannot publish, and Trusted Publishing from the workflow is the only way a version reaches npm.
 
 The workflow filename and the environment name must match exactly; renaming either breaks publishing until the publisher is updated.
 

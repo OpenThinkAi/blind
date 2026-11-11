@@ -325,6 +325,11 @@ compact   5580,Org_8481,Value_A888,Id_5763,Person_F884,host-ee89.host-470e.examp
 - Some shapes are the same in both styles: email addresses, host names (`host-` labels), IPv4 addresses
   in the documentation ranges, GUIDs and numeric IDs of the same length. A phone written with
   separators takes the `Id` form.
+- A host or email pseudonym keeps the real top-level domain: every label but the last is replaced,
+  and the last is kept when it is alphabetic (`db01.corp.example.de` becomes
+  `host-1a2b.host-3c4d.host-5e6f.de`, `ada@example.com` becomes `user_7a8b@host-9c0d.com`). A
+  country-code domain (`.de`, `.ch`) or an unusual one (`.museum`) therefore stays readable and can
+  narrow down who the documents are about; a last label with a digit or hyphen is replaced too.
 
 ### Role labels
 

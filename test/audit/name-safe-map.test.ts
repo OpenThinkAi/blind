@@ -57,11 +57,16 @@ describe("name-safe shapes need the map", () => {
     expect(isPseudonym("Host_A_1234", { version: 1, entries: [{ kind: "host", canonical: "h", value: "h", pseudonym: "[Host A #1234]" }] })).toBe(true);
   });
 
-  test("compact and bracketed forms are unchanged", () => {
-    expect(isPseudonym("Person_A7F3", MAP)).toBe(true);
+  test("compact and bracketed forms count only when the map issued them; without a map the shape is enough", () => {
+    const issued: BlindMap = { version: 1, entries: [...MAP.entries, { kind: "person", canonical: "y", value: "y", pseudonym: "Person_A7F3" }] };
+    expect(isPseudonym("Person_A7F3", issued)).toBe(true);
     expect(isPseudonym("[Client A #7F3A]", MAP)).toBe(true);
     expect(isPseudonym("Person_A7F3")).toBe(true);
-    expect(all(audit([file("notes.txt", "see Person_A7F3 here\n")]))).toEqual([]);
-    expect(accounts(audit([file("memo.docx", docx("Person_A7F3"))]))).toEqual([]);
+    // A real value that only has the shape is not one (AGT-2452).
+    expect(isPseudonym("Person_A7F3", MAP)).toBe(false);
+    expect(isPseudonym("[Client B #0000]", MAP)).toBe(false);
+    expect(all(audit([file("notes.txt", "see Person_A7F3 here\n")], issued))).toEqual([]);
+    expect(accounts(audit([file("memo.docx", docx("Person_A7F3"))], issued))).toEqual([]);
+    expect(accounts(audit([file("memo.docx", docx("Person_A7F3"))]))).not.toEqual([]);
   });
 });

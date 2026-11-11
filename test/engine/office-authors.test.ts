@@ -273,7 +273,8 @@ describe("audit: a surviving account name in a path is a leak", () => {
             : e,
       ),
     );
-    const ok = auditTree([{ path: "notes.docx", kind: "file", bytes: clean }], SPEC, { version: 1, entries: [] } as never);
+    const issued = { version: 1, entries: [{ kind: "person", canonical: "x", value: "x", pseudonym: "Person_1E95" }] };
+    const ok = auditTree([{ path: "notes.docx", kind: "file", bytes: clean }], SPEC, issued as never);
     expect(ok.files.flatMap((f) => f.findings).filter((f) => f.class === "account")).toEqual([]);
   });
 });

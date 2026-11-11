@@ -325,8 +325,9 @@ class NeedleIndex {
   }
 }
 
-// Pseudonym shapes, recognised by shape alone (and confirmed with isPseudonym), so pseudonyms from an
-// earlier map are still recognised.
+// Pseudonym shapes: where a pseudonym may stand. Each match counts only when isPseudonym confirms the
+// map issued it (AGT-2452), so a real value with a pseudonym's shape is still checked. Pseudonyms from
+// an earlier map are still recognised: apply carries an earlier map's entries into the map it writes.
 export const SHAPED_RE =
   /(?<![A-Za-z0-9_.-])(?:\[[A-Za-z0-9][A-Za-z0-9 -]*[ ][A-Z]+ #[0-9A-F]{4}\]|user_[0-9a-f]{4}@host-[0-9a-f]{4}(?:\.host-[0-9a-f]{4})*(?:\.[a-z]{2,63})?|host-[0-9a-f]{4}(?:\.host-[0-9a-f]{4})*(?:\.[a-z]{2,63})?|(?:Person|Org|Host|Id|Value|Loc)_[0-9A-F]{4}|(?:192\.0\.2|198\.51\.100|203\.0\.113)\.\d{1,3})/g;
 

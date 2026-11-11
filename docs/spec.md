@@ -616,7 +616,8 @@ rewritten at the XML level, so everything not blinded is copied byte for byte:
   content-type and metadata stubs (`xsi:nil`, empty values, the type's own name and id). The same
   rule applies to a workbook's `customXml/item*.xml`. The audit reports any other such part of a
   written package as a `leak` of class `custom-xml`, naming the part.
-- Images are copied unchanged and listed as a warning. A package that cannot be read, has a part
+- Images are copied unchanged and listed as a warning. Embedded fonts (`.odttf`, `.ttf`, `.otf`,
+  `.fntdata`) are copied unread and listed in the file's report. A package that cannot be read, has a part
   this handler does not know that holds text, or embeds another file (an OLE object, a chart's
   workbook, macros) is listed and not written (exit 1). So is one with a saved thumbnail
   (`docProps/thumbnail.*`), a picture of the original first page.

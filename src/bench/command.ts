@@ -20,6 +20,7 @@ import { collectTree, EXIT_NOT_RUN, layersLine, runAudit } from "../audit/comman
 import type { AuditReport, ModelLayerStatus } from "../audit/mechanical.ts";
 import type { ApplyResult, SkippedFile } from "../engine/apply.ts";
 import { BLIND_DIR, writeSalt } from "../init.ts";
+import { maskQuoted } from "../mask.ts";
 import { defaultPolicy, POLICY_FILE, renderPolicy } from "../policy.ts";
 import {
   type BenchOracle,
@@ -266,7 +267,8 @@ export async function runBench(argv: string[], io: BenchIO): Promise<number> {
       result: fail ? "fail" : "pass",
       kit: { version: oracle.version, seed: oracle.seed, rows: oracle.rows, files: scored.length + notWritten.length, inputBytes, oracleValues: oracle.values.length, decoys: oracle.decoys.length },
       spec: spec === undefined ? "heuristic" : "kit",
-      apply: { exit: applyExit, written: engine.outputs.length, notWritten: [...notWritten] },
+      // A refusal can quote a value (a worksheet name, a cell); masked as apply and run mask it.
+      apply: { exit: applyExit, written: engine.outputs.length, notWritten: notWritten.map((n) => ({ ...n, reason: maskQuoted(n.reason, false) })) },
       audit: { exit: auditExit, status: audit.status, leaks: audit.summary.leaks, candidates: audit.summary.candidates, layers: audit.layers, modelLayer: audit.modelLayer },
       leaks: { count: leakScan.leaks.length, items: leakScan.leaks },
       damage: { count: damage.damage.length, items: damage.damage },

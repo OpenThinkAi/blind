@@ -640,7 +640,8 @@ rewritten at the XML level, so everything not blinded is copied byte for byte:
   content-type and metadata stubs (`xsi:nil`, empty values, the type's own name and id). The same
   rule applies to a workbook's `customXml/item*.xml`. The audit reports any other such part of a
   written package as a `leak` of class `custom-xml`, naming the part.
-- Images are copied unchanged and listed as a warning. Embedded fonts (`.odttf`, `.ttf`, `.otf`,
+- Images are replaced with 1x1 placeholders unless `[images] keep = true`, which copies them
+  unchanged and warns (see [`[images]`](policy.md#images)). Embedded fonts (`.odttf`, `.ttf`, `.otf`,
   `.fntdata`) are copied unread and listed in the file's report. A package that cannot be read, has a part
   this handler does not know that holds text, or embeds another file (an OLE object, a chart's
   workbook, macros) is listed and not written (exit 1). So is one with a saved thumbnail
@@ -764,9 +765,10 @@ is an error). The column table above applies to every cell, with these workbook 
   worksheet part that `xl/workbook.xml` does not list as a sheet, and two zip members with the same
   name (ignoring case), since only listed sheets get cell plans. A text cell value that somehow has
   no cell plan is read as free text, never copied.
-  Members that are not XML are copied unread and listed in the report when they are images, fonts
-  or printer settings; any other (an embedded file or workbook, a macro, an ActiveX part) stops the
-  workbook (listed and not written, exit 1), as in a DOCX. So does a saved thumbnail
+  Members that are not XML are copied unread and listed in the report when they are fonts or
+  printer settings, and images are handled as in a DOCX (placeholders unless `[images] keep =
+  true`); any other (an embedded file or workbook, a macro, an ActiveX part) stops the workbook
+  (listed and not written, exit 1), as in a DOCX. So does a saved thumbnail
   (`docProps/thumbnail.*`), a picture of the original sheet.
 
 **Office structural IDs.** Word and Excel write IDs of their own into a package. They name no
@@ -1340,4 +1342,5 @@ Each call prints one line to stderr before it is sent, after the command's name:
 `blind plan: analyst · openai-compatible · m · local-only · 31570 bytes sent`. The line is
 `role · backend · model · mode · [samples k ·] N bytes sent`, where `N` is the size of the request
 and `samples k` is the profile's `sampleCount` (always 0), shown under `profile-only`. Under `profile-only`
-the line is printed even when the command is quiet (`--quiet`).
+the line is printed even when the command is quiet (`--quiet`). A call to a host that is not
+loopback is also preceded, even with `--quiet`, by the host and the API key variable it sends.

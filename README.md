@@ -65,7 +65,8 @@ and never falls back to a less private mode:
 
 Two limits hold in every mode. **Nothing over 120 characters is sent:** sample values are cut to
 120 characters when the profile is built, and a call carrying any longer string is refused, not
-shortened. And every call is announced on stderr (backend, model, mode, bytes) before it is sent.
+shortened. And every call is announced on stderr (backend, model, mode, bytes) before it is sent; a call
+to a host that is not loopback also names the host and the API key variable, even with `--quiet`.
 How a reply is held to a schema, and what a model can and cannot change, is in
 [SECURITY.md](SECURITY.md).
 
@@ -151,6 +152,7 @@ is listed in [SECURITY.md](SECURITY.md#what-stays-on-disk).
 - [docs/bench.md](docs/bench.md): synthetic kits and `blind bench`, which scores a run against an
   answer key.
 - [SECURITY.md](SECURITY.md): what reaches a model, and how model output is contained.
+- [CHANGELOG.md](CHANGELOG.md): what changed in each release, and what you must do.
 - [RELEASING.md](RELEASING.md): how releases are cut.
 
 ## License

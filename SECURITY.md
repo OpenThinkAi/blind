@@ -52,7 +52,12 @@ these with hostile document content and a fake model that obeys any instruction 
   `claude -p`, and refuses any data that is not exactly the profile payload. `none` calls no model. There is no fallback to another mode or
   backend, and redirects are not followed.
 - **Announced.** Every call prints `role · backend · model · mode · [samples k ·] N bytes sent`
-  to stderr before it is sent; under `profile-only` it is printed even with `--quiet`.
+  to stderr before it is sent; under `profile-only` it is printed even with `--quiet`. A call to a
+  host that is not loopback is also preceded, even with `--quiet`, by the host and the variable
+  whose value is sent (`analyst: calling api.anthropic.com with the API key in ANTHROPIC_API_KEY`).
+- **Key variables.** `key_env` must name a variable ending in `_API_KEY`, `_TOKEN` or `_KEY`, so a
+  `blind.toml` from someone else cannot send `DATABASE_URL` or the like as a bearer token. To use
+  another name, set `BLIND_ALLOW_KEY_ENV` to it in your environment.
 
 ## What leaves the machine under profile-only
 
@@ -177,7 +182,8 @@ that link, and the match with earlier maps.
 - The first plan on a new corpus is a model's proposal. blind does not apply it until you have
   seen it, which is the control; review it.
 - Files in formats blind does not handle are listed and not written, never passed through.
-  Images inside a DOCX are copied unchanged and listed as a warning.
+  Pictures inside a DOCX or XLSX are replaced with 1x1 placeholders by default; with
+  `[images] keep = true` they are copied unchanged, unread, and the audit lists each one.
 
 ## Reporting an issue
 

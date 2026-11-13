@@ -766,8 +766,9 @@ is an error). The column table above applies to every cell, with these workbook 
   name (ignoring case), since only listed sheets get cell plans. A text cell value that somehow has
   no cell plan is read as free text, never copied.
   Members that are not XML are copied unread and listed in the report when they are fonts or
-  printer settings, and images are handled as in a DOCX (placeholders unless `[images] keep = true`); any other (an embedded file or workbook, a macro, an ActiveX part) stops the
-  workbook (listed and not written, exit 1), as in a DOCX. So does a saved thumbnail
+  printer settings, and images are handled as in a DOCX (placeholders unless `[images] keep =
+  true`); any other (an embedded file or workbook, a macro, an ActiveX part) stops the workbook
+  (listed and not written, exit 1), as in a DOCX. So does a saved thumbnail
   (`docProps/thumbnail.*`), a picture of the original sheet.
 
 **Office structural IDs.** Word and Excel write IDs of their own into a package. They name no

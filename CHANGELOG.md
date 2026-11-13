@@ -30,7 +30,8 @@ and `docs/` for each.
   list that address as well as the host name (`NO_PROXY=localhost,127.0.0.1`). `local-only`
   refuses any call a proxy variable would carry.
 - **Stricter spec checks.** An analyst reply with `class: secret, treatment: keep` is rejected;
-  `seen` entries must be 16 lowercase hex characters; `blind plan` warns when the card or secret
-  pattern is off but the profile finds such values.
+  `seen` entries must be 16 lowercase hex characters (blind has always written them so; delete a
+  hand-edited entry that fails and the next plan re-reads that excerpt); `blind plan` warns when
+  the card or secret pattern is off but the profile finds such values.
 - **More XLSX refusals.** A workbook is refused (listed, not written) when it has a worksheet with
   no cell plan (one `xl/workbook.xml` does not list) or two zip members with the same name.

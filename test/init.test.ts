@@ -89,6 +89,28 @@ describe("existing files", () => {
     expect(existsSync(join(dir, "blind.toml"))).toBe(false);
   });
 
+  test("--force warns when the spec has redact entries, which the new salt no longer matches (AGT-2460)", async () => {
+    await runInit([dir, "--defaults"], capture(false).io);
+    writeFileSync(join(dir, ".blind", "spec.json"), JSON.stringify({ version: 1, columns: [], entities: {}, patterns: {}, questions: [], redact: ["24:00112233445566778899aabbccddeeff", "16:ffeeddccbbaa99887766554433221100"] }));
+    const c = capture(false);
+    expect(await runInit([dir, "--defaults", "--force"], c.io)).toBe(0);
+    expect(c.err()).toContain("lists 2 value(s) to redact, fingerprinted with the old salt");
+    expect(c.err()).toContain("accept each one again as redact");
+  });
+
+  test("--force says nothing about redact entries when the spec has none, or there is no salt to replace", async () => {
+    await runInit([dir, "--defaults"], capture(false).io);
+    writeFileSync(join(dir, ".blind", "spec.json"), JSON.stringify({ version: 1, columns: [], entities: {}, patterns: {}, questions: [] }));
+    const c = capture(false);
+    expect(await runInit([dir, "--defaults", "--force"], c.io)).toBe(0);
+    expect(c.err()).not.toContain("redact");
+    rmSync(saltPath());
+    writeFileSync(join(dir, ".blind", "spec.json"), JSON.stringify({ version: 1, columns: [], entities: {}, patterns: {}, questions: [], redact: ["24:00112233445566778899aabbccddeeff"] }));
+    const fresh = capture(false);
+    expect(await runInit([dir, "--defaults", "--force"], fresh.io)).toBe(0);
+    expect(fresh.err()).not.toContain("redact");
+  });
+
   test("--force replaces the salt, still mode 0600", async () => {
     await runInit([dir, "--defaults"], capture(false).io);
     const salt = readFileSync(saltPath());

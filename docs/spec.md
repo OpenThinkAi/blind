@@ -148,7 +148,8 @@ fail-closed fallback would pseudonymise whole is scanned instead, so the value i
 too. An earlier map's entry for a listed value is dropped on the next apply. A cell a column rule
 pseudonymises whole by your rule is left to that rule. The entries mean nothing without the salt
 (anyone with both could test guesses against them, as with the map's pseudonyms), and a new salt
-(`blind init --force`) makes them match nothing. The analyst cannot write the field; `--force` on
+(`blind init --force`) makes them match nothing, so `init --force` warns when the spec has any; accept
+each value again as redact after the next audit. The analyst cannot write the field; `--force` on
 `blind plan` loses it with the rest of the saved spec.
 
 ## Re-planning with a saved spec
@@ -952,6 +953,13 @@ up to three layers, mechanical, semantic, then model; the report lists the layer
   all pseudonyms and `_`, such as a name-safe twin joined to an email pseudonym). File and directory names are also read piece by
   piece between underscores, as `blind apply` reads them, and a file's or zip member's extension is read on its own
   (`word/_rels/document.xml.rels` is not a host).
+- **Redacted values.** When the spec has [`redact`](#redact) entries, the audit reads
+  `.blind/salt` and fingerprints the output's text the way `blind apply` does (every stretch of a
+  listed length with no letter or digit right before or after it, in each file and zip member, and
+  in an XML member's text with entities resolved). A value whose fingerprint is listed is a `leak`
+  of class `redact`, shown masked, whatever its shape: apply writes each one as `REDACTED`, so one
+  still there means apply missed it. Without the salt, the audit adds a general `candidate` saying
+  the redact entries were not checked.
 - **OOXML structure.** In the members of an OOXML package (a zip with `[Content_Types].xml`), the
   values in these attribute positions are format structure and are not read: namespace
   declarations (`xmlns`, `xmlns:*`), `ContentType` on `Default`/`Override` in `[Content_Types].xml`,

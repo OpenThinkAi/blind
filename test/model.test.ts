@@ -592,7 +592,9 @@ describe("claude-cli", () => {
     const cwd = readFileSync(join(dir, "cwd"), "utf8").trim();
     expect(cwd).toContain("blind-claude-");
     expect(existsSync(cwd)).toBe(false);
-    expect(lines[0]).toStartWith("analyst · claude-cli · default · profile-only · samples 0 · ");
+    // claude-cli has no URL, so it gets its own "calling" notice (AGT-2460), then the profile-only mode line.
+    expect(lines[0]).toBe("analyst: calling claude-cli (claude -p, which sends the prompt to Anthropic under your Claude login)");
+    expect(lines[1]).toStartWith("analyst · claude-cli · default · profile-only · samples 0 · ");
   });
 
   test("passes --model when configured and rejects a non-conforming result twice", async () => {

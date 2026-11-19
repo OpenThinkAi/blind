@@ -20,6 +20,9 @@
 // - every match of an enabled spec pattern that is not a pseudonym;
 // - in a CSV/TSV table, a column written as licence plates or usernames/handles (the column shapes
 //   the heuristic classifies by, src/engine/shapes.ts), unless the spec keeps, drops or redacts it;
+// - every value whose salted fingerprint is in the spec's `redact` list (engine/redactlist.ts), when
+//   the salt is given: such a value is a secret or card number apply should have written as
+//   REDACTED, so one still there is a leak whatever its shape (AGT-2460);
 // - in an OOXML package, an account name in a path (`C:\Users\avery\`, `/Users/avery/`:
 //   src/formats/paths.ts) that is not a pseudonym, in any attribute and in the
 //   app.xml Template and HyperlinkBase text: the engine replaces every one.
@@ -52,6 +55,7 @@ import { isPlaceholderImage } from "../engine/images.ts";
 import { isPseudonym, nameSafe } from "../engine/pseudonym.ts";
 import { nameWordExcluded, onNameTokens } from "../engine/names.ts";
 import { findPatternSpans, keepDomains, secretSpans, type Span } from "../engine/text.ts";
+import { findRedactValues } from "../engine/redactlist.ts";
 import { nameShaped, recurrenceExclusion, vocabularyForms } from "../engine/recur.ts";
 import { isLabelWord } from "../engine/labels.ts";
 import { keptCells } from "./keptcells.ts";
@@ -393,6 +397,8 @@ interface Context {
   shapes: Patterns;
   /** The values the output keeps whole in `keep` columns, and the placeholders: text the engine leaves as written wherever it stands (shield.ts). */
   shield: Shield;
+  /** The salt `spec.redact` was fingerprinted with; absent, redact entries are not checked (auditTree reports that). */
+  salt?: Uint8Array;
 }
 
 // The same shapes unanchored, for "is this pattern match made only of pseudonyms?": a blinded name
@@ -659,7 +665,10 @@ function scanBytes(sink: PartSink, part: string, bytes: Uint8Array, depth: numbe
       unscanned(sink, part, `${kind} content: raw bytes and text encodings were scanned, but compressed or otherwise encoded content inside it cannot be checked`);
     }
     pushHits(sink, part, "content", scanViews(viewsOf(bytes), ctx));
-    if (kind === null) secretHits(sink, part, bytes, ctx);
+    if (kind === null) {
+      secretHits(sink, part, bytes, ctx);
+      redactHits(sink, part, bytes, ctx);
+    }
     return;
   }
   if (depth >= MAX_ZIP_DEPTH) {
@@ -785,6 +794,41 @@ function secretHits(sink: PartSink, part: string, bytes: Uint8Array, ctx: Contex
       source: "pattern",
       severity: "leak",
       reason: "secret pattern match (a password, key or token shape) that is not the placeholder",
+      byteStart: view.byteAt(a),
+      byteEnd: view.byteAt(b),
+    });
+  }
+  pushHits(sink, part, "content", found);
+}
+
+/**
+ * Values whose salted fingerprint is in `spec.redact` (engine/redactlist.ts) that survive in a part:
+ * read in the part's text as decoded (markup included) and, for an XML member, in its document text
+ * with entities resolved. Each distinct value is a leak, placed at its first occurrence: apply writes
+ * every one as REDACTED, so one left means apply missed it, whatever the shape patterns say.
+ */
+function redactHits(sink: PartSink, part: string, bytes: Uint8Array, ctx: Context) {
+  const entries = ctx.spec.redact ?? [];
+  if (entries.length === 0 || ctx.salt === undefined || bytes.length === 0) return;
+  const name = part === "" ? sink.file : part.slice(part.lastIndexOf("!") + 1);
+  const view = xmlBaseView(bytes);
+  const doc = looksLikeXml(name, view.text) ? xmlDocumentText(view.text) : null;
+  const texts = doc === null ? [view.text] : [view.text, doc.text];
+  const found: PlacedHit[] = [];
+  for (const value of findRedactValues(texts, entries, ctx.salt)) {
+    let a = view.text.indexOf(value);
+    if (a < 0 && doc !== null) a = doc.at[doc.text.indexOf(value)] as number;
+    const b = Math.min(a + value.length, view.text.length);
+    found.push({
+      start: a,
+      end: b,
+      value,
+      encoding: view.encoding,
+      line: lineAt(view.text, undefined, a)[0],
+      class: "redact",
+      source: "spec",
+      severity: "leak",
+      reason: "a value the spec lists to redact (its salted fingerprint is in spec.redact) that is not the placeholder",
       byteStart: view.byteAt(a),
       byteEnd: view.byteAt(b),
     });
@@ -1124,7 +1168,15 @@ export function addLayer(
 }
 
 /** Audit an output tree (every entry under it, paths relative to its root) against the spec and map. */
-export function auditTree(entries: readonly TreeEntry[], spec: Spec, map: BlindMap, keep: readonly string[] = [], placeholders = true): AuditReport {
+export function auditTree(
+  entries: readonly TreeEntry[],
+  spec: Spec,
+  map: BlindMap,
+  keep: readonly string[] = [],
+  placeholders = true,
+  /** .blind/salt, for the `spec.redact` check; without it a spec with redact entries gets a general candidate instead. */
+  salt?: Uint8Array,
+): AuditReport {
   const rulesByFile = new Map<string, ColumnRule[]>();
   for (const r of spec.columns) rulesByFile.set(r.file, [...(rulesByFile.get(r.file) ?? []), r]);
   const ctx: Context = {
@@ -1135,6 +1187,7 @@ export function auditTree(entries: readonly TreeEntry[], spec: Spec, map: BlindM
     keepTerms: new Set(keep.map(fold)),
     shapes: { ...spec.patterns, card: patternOn(spec.patterns, "card"), secret: false },
     shield: shieldOf(entries, spec, map, rulesByFile, placeholders),
+    ...(salt === undefined ? {} : { salt }),
   };
 
   const files: FileAudit[] = [];
@@ -1182,6 +1235,22 @@ export function auditTree(entries: readonly TreeEntry[], spec: Spec, map: BlindM
       reason: `spec question ${JSON.stringify(q.id)} is unanswered`,
       encoding: null,
     }));
+  const redacts = spec.redact?.length ?? 0;
+  if (redacts > 0 && salt === undefined) {
+    general.push({
+      file: "(spec)",
+      part: "",
+      in: "content",
+      offset: null,
+      line: null,
+      class: "redact",
+      source: "spec",
+      severity: "candidate",
+      masked: "",
+      reason: `the spec lists ${redacts} value(s) to redact, but no salt was given, so the output was not checked for them`,
+      encoding: null,
+    });
+  }
   general.sort(compareFindings);
 
   const all = [...files.flatMap((f) => f.findings), ...general];

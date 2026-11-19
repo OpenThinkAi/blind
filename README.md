@@ -124,8 +124,8 @@ documents ------------ engine (deterministic) ---------------+--> blinded docume
 |---|---|
 | CSV, TSV | Delimiter, quoting and line endings kept; a file with an unclosed quote is refused, never truncated; a row with a stray delimiter (wider or narrower than the header, no quoted line break) is accepted, its extra cells scanned as free text of the last column and its original cells and delimiters kept |
 | JSON, JSONL | Edits spliced into the original text |
-| XLSX | Cells, sheet and defined names, formulas, comments (including their legacy VML drawing, scrubbed only inside `<x:ClientData>`), metadata, pivot caches |
-| DOCX | Text across runs, tables, headers, comments, tracked changes, metadata |
+| XLSX | Cells, sheet and defined names, formulas, comments (including their legacy VML drawing, scrubbed only inside `<x:ClientData>`), metadata, pivot caches; document dates and zip timestamps written as constants |
+| DOCX | Text across runs, tables, headers, comments, tracked changes, metadata; document dates and zip timestamps written as constants ([`[metadata]`](docs/policy.md#metadata)) |
 | Text, Markdown, logs | `.txt`, `.md`, `.log`; UTF-8 (with or without BOM) or UTF-16 with BOM. 8-bit text that is not UTF-8 is refused, not written: save it as UTF-8 and run again |
 | VTT, SRT transcripts | Also transcript-shaped text and DOCX files, found by content (a prose DOCX is profiled as a document) |
 
@@ -138,7 +138,8 @@ read (an embedded file, a macro, a custom XML data part with values) is listed a
 
 `blind apply` writes `.blind/map.json` (mode 0600): every pseudonym with the original it stands
 for. With it, `blind reveal ./out` restores the originals into `.blind/revealed/`: file and folder
-names, and the content of CSV, JSON, text, transcript, XLSX and DOCX files. Both forms of a readable
+names, and the content of CSV, JSON, text, transcript, XLSX and DOCX files (not a DOCX's or XLSX's
+own dates, which are written as constants unless `[metadata] keep_dates = true`). Both forms of a readable
 pseudonym (`[Org A #5CF4]` and its name-safe `Org_A_5CF4`) are restored. The map, the salt (`.blind/salt`) and the revealed files all
 contain or unlock the real values: keep them secret and never commit `.blind/`. Applying again
 reuses the map, so earlier pseudonyms do not change. Machines that share a salt produce the same

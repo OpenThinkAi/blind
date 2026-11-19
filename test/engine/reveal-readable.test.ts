@@ -21,7 +21,8 @@ const spec = (columns: ColumnRule[] = []): Spec => ({
   questions: [],
 });
 const blind = (path: string, bytes: Uint8Array, s: Spec): ApplyResult => {
-  const r = applySpec([{ path, bytes }], s, { salt: SALT, pseudonymStyle: "readable" });
+  // Document dates are written as constants one way (AGT-2459); these tests pin the identity round trip.
+  const r = applySpec([{ path, bytes }], s, { salt: SALT, pseudonymStyle: "readable", dates: "keep" });
   expect(r.skipped).toEqual([]);
   return r;
 };

@@ -6,9 +6,12 @@
 // Only selected text nodes and allowlisted attribute values are offered to the
 // callback (see RewriteRules). An unchanged value keeps its original bytes,
 // entity spelling included; a changed value is re-encoded. Members that are not
-// XML are copied raw. Member order, timestamps, flags, extra fields and the
-// compression method are kept from the input, so the output depends only on
-// the input bytes and the callback.
+// XML are copied raw. Member order, flags and the compression method are kept
+// from the input. Timestamps and extra fields are kept too, unless the caller
+// asks for them to be normalised (`normalizeZip`: every DOS time and date set to
+// 1980-01-01 00:00, every extra field and the archive comment dropped,
+// src/formats/metadata.ts).
+// Either way the output depends only on the input bytes and the callback.
 //
 // Fail closed: an unreadable zip throws ZipError; a member that cannot be read
 // or parsed is left untouched and reported with kind "error", never skipped.
@@ -483,7 +486,34 @@ interface Replacement {
   usize: number;
 }
 
-function writeZip(zip: Zip, replaced: Map<Entry, Replacement>): Uint8Array {
+/** The DOS date of 1980-01-01, the earliest a zip can record (day 1, month 1, year 0 = 1980); the time is 00:00:00. */
+export const ZIP_EPOCH_DATE = 0x0021;
+
+/**
+ * A local header (`central` false) or central directory record copied with its DOS time and date
+ * set to the zip epoch and its extra field dropped: extended timestamps (0x5455), NTFS times (0x000a),
+ * Unix owner IDs and the like say when and where the original was written. The name (and a central
+ * record's comment) are kept, and the extra length is written as 0.
+ */
+function normalizedRecord(bytes: Uint8Array, start: number, central: boolean): Uint8Array {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const fixed = central ? 46 : 30;
+  const nameLen = view.getUint16(start + (central ? 28 : 26), true);
+  const extraLen = view.getUint16(start + (central ? 30 : 28), true);
+  const commentLen = central ? view.getUint16(start + 32, true) : 0;
+  const head = fixed + nameLen;
+  const rec = new Uint8Array(head + commentLen);
+  rec.set(bytes.subarray(start, start + head), 0);
+  rec.set(bytes.subarray(start + head + extraLen, start + head + extraLen + commentLen), head);
+  const rv = new DataView(rec.buffer);
+  const timeAt = central ? 12 : 10;
+  rv.setUint16(timeAt, 0, true);
+  rv.setUint16(timeAt + 2, ZIP_EPOCH_DATE, true);
+  rv.setUint16(central ? 30 : 28, 0, true);
+  return rec;
+}
+
+function writeZip(zip: Zip, replaced: Map<Entry, Replacement>, normalize = false): Uint8Array {
   const { bytes } = zip;
   const parts: Uint8Array[] = [];
   const offsets = new Map<Entry, number>();
@@ -502,11 +532,14 @@ function writeZip(zip: Zip, replaced: Map<Entry, Replacement>): Uint8Array {
     offsets.set(e, u32(at, "archive"));
     const r = replaced.get(e);
     if (!r) {
-      push(bytes.subarray(e.local, e.dataEnd + e.descriptor));
+      if (normalize) {
+        push(normalizedRecord(bytes, e.local, false));
+        push(bytes.subarray(e.dataStart, e.dataEnd + e.descriptor));
+      } else push(bytes.subarray(e.local, e.dataEnd + e.descriptor));
       continue;
     }
     sizes.set(e, u32(r.data.length, e.name));
-    const header = bytes.slice(e.local, e.dataStart);
+    const header = normalize ? normalizedRecord(bytes, e.local, false) : bytes.slice(e.local, e.dataStart);
     const hv = new DataView(header.buffer);
     if (!(e.flags & 8)) {
       hv.setUint32(14, r.crc, true);
@@ -529,7 +562,7 @@ function writeZip(zip: Zip, replaced: Map<Entry, Replacement>): Uint8Array {
 
   const cdOffset = u32(at, "archive");
   for (const e of zip.entries) {
-    const rec = bytes.slice(e.central, e.central + e.centralLen);
+    const rec = normalize ? normalizedRecord(bytes, e.central, true) : bytes.slice(e.central, e.central + e.centralLen);
     const rv = new DataView(rec.buffer);
     const r = replaced.get(e);
     if (r) {
@@ -540,8 +573,10 @@ function writeZip(zip: Zip, replaced: Map<Entry, Replacement>): Uint8Array {
     rv.setUint32(42, offsets.get(e)!, true);
     push(rec);
   }
-  const end = bytes.slice(zip.eocd);
+  // Normalised, the archive comment goes too: it is free text the original's writer chose.
+  const end = normalize ? bytes.slice(zip.eocd, zip.eocd + 22) : bytes.slice(zip.eocd);
   const ev = new DataView(end.buffer);
+  if (normalize) ev.setUint16(20, 0, true);
   ev.setUint32(12, u32(at - cdOffset, "central directory"), true);
   ev.setUint32(16, cdOffset, true);
   push(end);
@@ -624,6 +659,8 @@ export function rewriteOoxml(
   rules: RewriteRules | ((member: string) => RewriteRules) = defaultRules,
   /** New bytes for a non-XML member (null keeps it as it is). Part names, order and compression are unchanged. */
   replaceOther?: (member: string) => Uint8Array | null,
+  /** `normalizeZip`: every member's DOS time and date set to the zip epoch, its extra field dropped (normalizedRecord), and the archive comment dropped. */
+  options: { normalizeZip?: boolean } = {},
 ): OoxmlResult {
   const zip = readZip(bytes);
   const replaced = new Map<Entry, Replacement>();
@@ -657,5 +694,5 @@ export function rewriteOoxml(
       members.push({ name: e.name, kind: "error", error: err.message });
     }
   }
-  return { bytes: writeZip(zip, replaced), members };
+  return { bytes: writeZip(zip, replaced, options.normalizeZip === true), members };
 }

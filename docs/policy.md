@@ -62,7 +62,7 @@ style = "readable"
 ```
 
 `[sensitive]`, `[keep]`, `[models.analyst]`, `[profile]` and `[privacy]` must be present.
-`[models.auditor]`, `profile.samples`, `[patterns]`, [`[context]`](#context), [`[defaults]`](#defaults), [`[images]`](#images), [`[pseudonyms]`](#pseudonyms) and [`[[columns]]`](#columns) rules are optional.
+`[models.auditor]`, `profile.samples`, `[patterns]`, [`[context]`](#context), [`[defaults]`](#defaults), [`[images]`](#images), [`[metadata]`](#metadata), [`[pseudonyms]`](#pseudonyms) and [`[[columns]]`](#columns) rules are optional.
 A missing `[pseudonyms]` table means the compact style.
 
 ## `[sensitive]`
@@ -291,6 +291,20 @@ A picture in a format blind has no placeholder for (TIFF, EMF, WMF, ICO, WebP) s
 reported as not written, unless `keep = true`. With `keep = true` the report warns `N images copied
 unchanged (images are not blinded)` and `blind audit` lists each picture as an `unscanned` candidate;
 the placeholders blind writes are not listed.
+
+## `[metadata]`
+
+```toml
+[metadata]
+keep_dates = true
+```
+
+| Key | Values | Default | Meaning |
+|---|---|---|---|
+| `keep_dates` | `true` or `false` | `false` | What happens to the dates a DOCX or XLSX records about itself: when it was created, last saved and last printed (`docProps/core.xml`), how many times it was saved and how long it was edited, when each tracked change and comment was made, and the zip's per-member timestamps and extra fields. By default blind writes each as a constant (`1980-01-01T00:00:00Z`, a revision count of 1, an editing time of 0) and removes the zip extra fields, so the blinded file cannot be matched to its source by them; the full list is in [spec.md](spec.md#document-dates-and-zip-metadata). `true` copies them as the original had them, as blind did before 0.2.0. |
+
+`blind apply` reads it at apply time (no re-plan needed). The constants are fixed, so output stays
+deterministic either way.
 
 ## `[pseudonyms]`
 

@@ -172,9 +172,10 @@ describe("XLSX apply: names, formulas, metadata, comments and pivot caches", () 
     expect(m["docProps/app.xml"]).toContain(`<vt:lpstr>Staff</vt:lpstr><vt:lpstr>${avery}</vt:lpstr><vt:lpstr>Contents</vt:lpstr><vt:lpstr>${avery}_Total</vt:lpstr>`);
   });
 
-  test("docProps core, app and custom metadata are rewritten; dates are not", () => {
+  test("docProps core, app and custom metadata are rewritten; dates become a constant (AGT-2459)", () => {
     expect(m["docProps/core.xml"]).toContain(`<dc:creator>${avery}</dc:creator><cp:lastModifiedBy>${pseudo(r, "Robin Example")}</cp:lastModifiedBy>`);
-    expect(m["docProps/core.xml"]).toContain("2026-01-02T03:04:05Z");
+    expect(m["docProps/core.xml"]).not.toContain("2026-01-02T03:04:05Z");
+    expect(m["docProps/core.xml"]).toContain("1980-01-01T00:00:00Z");
     expect(m["docProps/app.xml"]).toMatch(/<Company>Org_[0-9A-F]{4}<\/Company>/);
     expect(m["docProps/custom.xml"]).toContain(`<vt:lpwstr>${pseudo(r, "Dana Pell")}</vt:lpwstr>`);
   });

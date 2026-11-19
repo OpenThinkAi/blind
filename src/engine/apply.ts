@@ -84,6 +84,7 @@ import { entrySpans, keptSpeakers, planTranscript, shapeParagraphs, speakerForms
 import { unrewrittenSpans } from "./unrewritten.ts";
 import { pseudoCell, pseudoWrite } from "./shapes.ts";
 import { IMAGE, type ImageMode, imageWarning } from "./images.ts";
+import { scrubPackage } from "../formats/metadata.ts";
 import { type Env, planXlsx, prepareXlsx, renderXlsx, settleXlsx, XlsxError, type XlsxPlan, XlsxSpecError, xlsxValues, ZipError } from "./xlsx.ts";
 
 /** XLSX members that are not XML but are copied unchanged and listed as unread. */
@@ -183,6 +184,11 @@ export interface FileReport {
   keptHosts: number;
   /** DOCX and XLSX: identity metadata (authors, initials, creator, company) and account names in paths replaced as a whole. */
   metadataReplacements?: number;
+  /**
+   * DOCX and XLSX: set when the document dates and zip metadata pass rewrote the file (src/formats/metadata.ts):
+   * how many date and edit-history values were written as constants (zip timestamps not counted).
+   */
+  datesScrubbed?: number;
   /** Parts of the file copied without blinding (images), for the report. */
   warnings?: string[];
   /** XLSX only: each worksheet, its header row and its blinded name. */
@@ -262,6 +268,13 @@ export interface ApplyOptions {
    * placeholder of the same format under the same part name; `keep` copies them unchanged, with a warning.
    */
   images?: ImageMode;
+  /**
+   * Document dates and zip metadata in DOCX and XLSX (blind.toml `[metadata] keep_dates`): `scrub` (the
+   * default) writes created, modified and printed dates, edit time, revision counts, revision and
+   * comment dates and every zip timestamp and extra field as constants (src/formats/metadata.ts);
+   * `keep` copies them as the original had them.
+   */
+  dates?: "scrub" | "keep";
   /** Blinded-name shape (blind.toml `[pseudonyms] style`), passed to the Pseudonymizer, which renders it. The CLI forwards it from the policy (AGT-1940). */
   pseudonymStyle?: "readable" | "compact";
 }
@@ -269,6 +282,12 @@ export interface ApplyOptions {
 /** The spec does not fit the inputs (a rule names a column that is not there, or a shape this engine cannot apply). */
 export class ApplyError extends Error {
   override name = "ApplyError";
+}
+
+/** A blinded DOCX or XLSX with its dates and zip metadata scrubbed, unless the policy keeps them (`dates`). */
+function finishPackage(bytes: Uint8Array, dates: ApplyOptions["dates"]): { bytes: Uint8Array; changed: boolean; dates: number } {
+  if (dates === "keep") return { bytes, changed: false, dates: 0 };
+  return scrubPackage(bytes);
 }
 
 /** Code-unit order, never locale order. */
@@ -1351,7 +1370,9 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         skipped.push({ path: p.input.path, reason: `${pictureNote.refusal}; not written` });
         continue;
       }
-      const changed = r.members.some((m) => (m.kind === "xml" && m.changed) || (m.kind === "other" && m.replaced === true));
+      const blinded = r.members.some((m) => (m.kind === "xml" && m.changed) || (m.kind === "other" && m.replaced === true));
+      const out = finishPackage(blinded ? r.bytes : p.input.bytes, opts.dates);
+      const changed = blinded || out.changed;
       const report: FileReport = {
         path: p.input.path,
         outputPath: names.renamePath(p.input.path, pz),
@@ -1366,17 +1387,19 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         ...(r.joinedReplacements > 0 ? { joinedNames: r.joinedReplacements } : {}),
         ...(r.removedReplacements > 0 ? { removedReplacements: r.removedReplacements } : {}),
         ...(r.metadataReplacements > 0 ? { metadataReplacements: r.metadataReplacements } : {}),
+        ...(out.changed ? { datesScrubbed: out.dates } : {}),
         sheets: p.plan.sheets.map((s) => ({ ...s, outputName: r.sheetNames.find((n) => n.from === s.name)?.to ?? s.name })),
         unread: r.members.filter((m) => m.kind === "other" && m.replaced !== true && !m.name.endsWith("/")).map((m) => m.name),
         ...(pictureNote.line !== null ? { warnings: [pictureNote.line] } : {}),
         changed,
       };
-      outputs.push({ path: report.outputPath, bytes: changed ? r.bytes : p.input.bytes });
+      outputs.push({ path: report.outputPath, bytes: out.bytes });
       files.push(report);
       continue;
     }
     if (p.kind === "docx") {
       const r = renderDocx(p.docx, pz, officeIds);
+      const out = finishPackage(r.changed ? r.bytes : p.input.bytes, opts.dates);
       const outputPath = names.renamePath(p.input.path, pz);
       files.push({
         path: p.input.path,
@@ -1389,6 +1412,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         mappedReplacements: r.mappedReplacements,
         keptHosts: r.keptHosts,
         metadataReplacements: r.metadataReplacements,
+        ...(out.changed ? { datesScrubbed: out.dates } : {}),
         warnings: p.docx.warnings,
         ...(p.docx.fonts.length > 0 ? { unread: [...p.docx.fonts] } : {}),
         ...(p.transcript === undefined
@@ -1397,9 +1421,9 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         ...(r.proseReplacements > 0 ? { proseNames: r.proseReplacements } : {}),
         ...(r.joinedReplacements > 0 ? { joinedNames: r.joinedReplacements } : {}),
         ...(r.removedReplacements > 0 ? { removedReplacements: r.removedReplacements } : {}),
-        changed: r.changed,
+        changed: r.changed || out.changed,
       });
-      outputs.push({ path: outputPath, bytes: r.changed ? r.bytes : p.input.bytes });
+      outputs.push({ path: outputPath, bytes: out.bytes });
       continue;
     }
     let text: string;

@@ -212,7 +212,9 @@ describe("DOCX: every location (AC2, AC4)", () => {
     expect(core).toContain(`<dc:creator>${robin}</dc:creator>`);
     expect(core).toContain(`<cp:lastModifiedBy>${jo}</cp:lastModifiedBy>`);
     expect(core).toContain(`<cp:keywords>${acme}, renewal</cp:keywords>`);
-    expect(core).toContain("2026-01-01T00:00:00Z");
+    // Document dates are written as a constant (AGT-2459, test/formats/metadata.test.ts).
+    expect(core).toContain("<dcterms:created xsi:type=\"dcterms:W3CDTF\">1980-01-01T00:00:00Z</dcterms:created>");
+    expect(core).not.toContain("2026-01-01T00:00:00Z");
     const app = out.get("docProps/app.xml") as string;
     expect(app).toContain("<Template>Normal.dotm</Template>");
     expect(app).toMatch(/<Company>Org_[0-9A-F]{4}<\/Company>/);

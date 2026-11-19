@@ -184,6 +184,10 @@ that link, and the match with earlier maps.
 - Files in formats blind does not handle are listed and not written, never passed through.
   Pictures inside a DOCX or XLSX are replaced with 1x1 placeholders by default; with
   `[images] keep = true` they are copied unchanged, unread, and the audit lists each one.
+- A DOCX or XLSX's own dates (created, modified, printed, tracked-change and comment dates, editing
+  time, revision count) and its zip timestamps and extra fields are written as constants by
+  default. `[metadata] keep_dates = true` keeps them, and they can then tie a blinded file to its
+  source.
 
 ## Reporting an issue
 

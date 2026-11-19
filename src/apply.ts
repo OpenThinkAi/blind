@@ -212,6 +212,10 @@ export function renderReport(result: ApplyResult, show = false): string {
     if ((f.metadataReplacements ?? 0) > 0) {
       lines.push(`  metadata: ${f.metadataReplacements} author, creator, company or account-name value${f.metadataReplacements === 1 ? "" : "s"} replaced`);
     }
+    if (f.datesScrubbed !== undefined) {
+      const n = f.datesScrubbed;
+      lines.push(`  document dates: ${n} date or edit-history value${n === 1 ? "" : "s"} and the zip timestamps written as constants ([metadata] keep_dates = true keeps them)`);
+    }
     if ((f.speakerMentions ?? 0) > 0) {
       lines.push(`  ${f.speakerMentions} transcript speaker name${f.speakerMentions === 1 ? "" : "s"} replaced`);
     }
@@ -327,7 +331,7 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
     }
 
     // blind.toml `[pseudonyms] style` drives the blinded-name shape (no policy or no table = compact).
-    const result = applySpec(files, spec, { salt, map, keep, placeholders: policy?.keep.placeholders ?? true, pseudonymStyle: policy?.pseudonyms.style ?? "compact", ...(policy === null || policy === undefined ? {} : { context: policy.context, columns: policy.defaults.columns, images: policy.images.keep ? "keep" as const : "replace" as const }) });
+    const result = applySpec(files, spec, { salt, map, keep, placeholders: policy?.keep.placeholders ?? true, pseudonymStyle: policy?.pseudonyms.style ?? "compact", ...(policy === null || policy === undefined ? {} : { context: policy.context, columns: policy.defaults.columns, images: policy.images.keep ? "keep" as const : "replace" as const, dates: policy.metadata.keepDates ? "keep" as const : "scrub" as const }) });
 
     // Never write through a symbolic link already inside the output tree: it could lead outside it.
     // (The output directory itself is the user's to name, link or not.) Checked before anything is written.

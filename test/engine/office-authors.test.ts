@@ -147,7 +147,8 @@ const XLSX_EXTRA: FixtureEntry[] = [
 
 describe("XLSX: author metadata and account names", () => {
   const input = buildZip(workbookEntries({ extra: XLSX_EXTRA }));
-  const r = applySpec([{ path: "staff.xlsx", bytes: input }], SPEC, { salt: SALT });
+  // Document dates are written as constants one way (AGT-2459); reveal below pins the identity round trip.
+  const r = applySpec([{ path: "staff.xlsx", bytes: input }], SPEC, { salt: SALT, dates: "keep" });
   const out = output(r);
   const text = allText(out);
 

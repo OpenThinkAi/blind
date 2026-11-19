@@ -9,7 +9,8 @@
 // XML are copied raw. Member order, flags and the compression method are kept
 // from the input. Timestamps and extra fields are kept too, unless the caller
 // asks for them to be normalised (`normalizeZip`: every DOS time and date set to
-// 1980-01-01 00:00 and every extra field dropped, src/formats/metadata.ts).
+// 1980-01-01 00:00, every extra field and the archive comment dropped,
+// src/formats/metadata.ts).
 // Either way the output depends only on the input bytes and the callback.
 //
 // Fail closed: an unreadable zip throws ZipError; a member that cannot be read
@@ -572,8 +573,10 @@ function writeZip(zip: Zip, replaced: Map<Entry, Replacement>, normalize = false
     rv.setUint32(42, offsets.get(e)!, true);
     push(rec);
   }
-  const end = bytes.slice(zip.eocd);
+  // Normalised, the archive comment goes too: it is free text the original's writer chose.
+  const end = normalize ? bytes.slice(zip.eocd, zip.eocd + 22) : bytes.slice(zip.eocd);
   const ev = new DataView(end.buffer);
+  if (normalize) ev.setUint16(20, 0, true);
   ev.setUint32(12, u32(at - cdOffset, "central directory"), true);
   ev.setUint32(16, cdOffset, true);
   push(end);
@@ -656,7 +659,7 @@ export function rewriteOoxml(
   rules: RewriteRules | ((member: string) => RewriteRules) = defaultRules,
   /** New bytes for a non-XML member (null keeps it as it is). Part names, order and compression are unchanged. */
   replaceOther?: (member: string) => Uint8Array | null,
-  /** `normalizeZip`: every member's DOS time and date set to the zip epoch and its extra field dropped (normalizedRecord). */
+  /** `normalizeZip`: every member's DOS time and date set to the zip epoch, its extra field dropped (normalizedRecord), and the archive comment dropped. */
   options: { normalizeZip?: boolean } = {},
 ): OoxmlResult {
   const zip = readZip(bytes);

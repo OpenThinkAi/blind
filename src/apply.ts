@@ -212,6 +212,10 @@ export function renderReport(result: ApplyResult, show = false): string {
     if ((f.metadataReplacements ?? 0) > 0) {
       lines.push(`  metadata: ${f.metadataReplacements} author, creator, company or account-name value${f.metadataReplacements === 1 ? "" : "s"} replaced`);
     }
+    if (f.datesScrubbed !== undefined) {
+      const n = f.datesScrubbed;
+      lines.push(`  document dates: ${n} date or edit-history value${n === 1 ? "" : "s"} and the zip timestamps written as constants ([metadata] keep_dates = true keeps them)`);
+    }
     if ((f.speakerMentions ?? 0) > 0) {
       lines.push(`  ${f.speakerMentions} transcript speaker name${f.speakerMentions === 1 ? "" : "s"} replaced`);
     }

@@ -184,6 +184,11 @@ export interface FileReport {
   keptHosts: number;
   /** DOCX and XLSX: identity metadata (authors, initials, creator, company) and account names in paths replaced as a whole. */
   metadataReplacements?: number;
+  /**
+   * DOCX and XLSX: set when the document dates and zip metadata pass rewrote the file (src/formats/metadata.ts):
+   * how many date and edit-history values were written as constants (zip timestamps not counted).
+   */
+  datesScrubbed?: number;
   /** Parts of the file copied without blinding (images), for the report. */
   warnings?: string[];
   /** XLSX only: each worksheet, its header row and its blinded name. */
@@ -280,10 +285,9 @@ export class ApplyError extends Error {
 }
 
 /** A blinded DOCX or XLSX with its dates and zip metadata scrubbed, unless the policy keeps them (`dates`). */
-function finishPackage(bytes: Uint8Array, dates: ApplyOptions["dates"]): { bytes: Uint8Array; changed: boolean } {
-  if (dates === "keep") return { bytes, changed: false };
-  const r = scrubPackage(bytes);
-  return { bytes: r.bytes, changed: r.changed };
+function finishPackage(bytes: Uint8Array, dates: ApplyOptions["dates"]): { bytes: Uint8Array; changed: boolean; dates: number } {
+  if (dates === "keep") return { bytes, changed: false, dates: 0 };
+  return scrubPackage(bytes);
 }
 
 /** Code-unit order, never locale order. */
@@ -1383,6 +1387,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         ...(r.joinedReplacements > 0 ? { joinedNames: r.joinedReplacements } : {}),
         ...(r.removedReplacements > 0 ? { removedReplacements: r.removedReplacements } : {}),
         ...(r.metadataReplacements > 0 ? { metadataReplacements: r.metadataReplacements } : {}),
+        ...(out.changed ? { datesScrubbed: out.dates } : {}),
         sheets: p.plan.sheets.map((s) => ({ ...s, outputName: r.sheetNames.find((n) => n.from === s.name)?.to ?? s.name })),
         unread: r.members.filter((m) => m.kind === "other" && m.replaced !== true && !m.name.endsWith("/")).map((m) => m.name),
         ...(pictureNote.line !== null ? { warnings: [pictureNote.line] } : {}),
@@ -1407,6 +1412,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         mappedReplacements: r.mappedReplacements,
         keptHosts: r.keptHosts,
         metadataReplacements: r.metadataReplacements,
+        ...(out.changed ? { datesScrubbed: out.dates } : {}),
         warnings: p.docx.warnings,
         ...(p.docx.fonts.length > 0 ? { unread: [...p.docx.fonts] } : {}),
         ...(p.transcript === undefined

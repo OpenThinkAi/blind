@@ -17,7 +17,8 @@
 //   cache's `refreshedDate` (a serial day) becomes SCRUBBED_SERIAL and its
 //   `refreshedDateIso` SCRUBBED_DATE.
 // - the zip: every member's DOS time and date become 1980-01-01 00:00 and every
-//   extra field is dropped (ooxml.ts normalizedRecord).
+//   extra field is dropped (ooxml.ts normalizedRecord), and so is the archive
+//   comment.
 //
 // Constants, never a clock, so the output still depends only on the input.
 // blind.toml `[metadata] keep_dates = true` skips this pass and writes the

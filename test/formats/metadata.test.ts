@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { inflateRawSync } from "node:zlib";
 import { type ApplyOptions, type ApplyResult, applySpec } from "../../src/engine/apply.ts";
 import { SCRUBBED_DATE, SCRUBBED_SERIAL, scrubPackage } from "../../src/formats/metadata.ts";
+import { renderReport } from "../../src/apply.ts";
 import { defaultPolicy, parsePolicy, renderPolicy } from "../../src/policy.ts";
 import type { Spec } from "../../src/schema.ts";
 import { workbookEntries } from "./xlsxfixture.ts";
@@ -152,6 +153,14 @@ describe("DOCX: document dates and zip metadata are scrubbed by default", () => 
     expect(out(run("plan.docx", docx()))).toEqual(out(r));
   });
 
+  test("the report counts the dates and says how to keep them", () => {
+    expect(r.files[0]?.datesScrubbed).toBe(8);
+    expect(renderReport(r)).toContain("document dates: 8 date or edit-history values and the zip timestamps written as constants ([metadata] keep_dates = true keeps them)");
+    const kept = run("plan.docx", docx(), { dates: "keep" });
+    expect(kept.files[0]?.datesScrubbed).toBeUndefined();
+    expect(renderReport(kept)).not.toContain("document dates");
+  });
+
   test("a DOCX with nothing to blind is still scrubbed and reported changed", () => {
     const plain = buildZip(stamped([
       { name: "[Content_Types].xml", data: `${DECL}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>` },
@@ -216,6 +225,25 @@ describe("scrubPackage", () => {
     expect(twice.changed).toBe(false);
     expect(twice.dates).toBe(0);
     expect(twice.bytes).toEqual(once.bytes);
+  });
+
+  test("the archive comment is dropped", () => {
+    const bytes = buildZip([{ name: "x/part.xml", data: `${DECL}<root xmlns="urn:example"/>` }], "written on host-17 by avery");
+    const scrubbed = scrubPackage(bytes).bytes;
+    expect(new TextDecoder().decode(scrubbed)).not.toContain("host-17");
+    expect(headers(scrubbed).texts.get("x/part.xml")).toContain("<root");
+  });
+
+  test("strict OOXML namespaces are covered", () => {
+    const bytes = buildZip([
+      { name: "docProps/app.xml", data: `${DECL}<Properties xmlns="http://purl.oclc.org/ooxml/officeDocument/extendedProperties"><TotalTime>12</TotalTime></Properties>` },
+      { name: "word/document.xml", data: `${DECL}<w:document xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main"><w:body><w:ins w:id="1" w:date="2026-03-04T05:06:07Z"/></w:body></w:document>` },
+      { name: "xl/pivotCache/pivotCacheDefinition1.xml", data: `${DECL}<pivotCacheDefinition xmlns="http://purl.oclc.org/ooxml/spreadsheetml/main" refreshedDate="46085.2"/>` },
+    ]);
+    const t = headers(scrubPackage(bytes).bytes).texts;
+    expect(t.get("docProps/app.xml")).toContain("<TotalTime>0</TotalTime>");
+    expect(t.get("word/document.xml")).toContain(`w:date="${SCRUBBED_DATE}"`);
+    expect(t.get("xl/pivotCache/pivotCacheDefinition1.xml")).toContain(`refreshedDate="${SCRUBBED_SERIAL}"`);
   });
 
   test("a date attribute outside a Word namespace is left alone", () => {

@@ -787,6 +787,7 @@ source, so after blinding every written DOCX and XLSX has these written as const
 | XLSX parts | a pivot cache's `refreshedDate` (a serial day) | `29221` (the same day) |
 | the zip | each member's DOS time and date in its local header and central directory record | 1980-01-01 00:00 |
 | the zip | each member's extra fields (extended and NTFS timestamps, Unix owner IDs) | removed |
+| the zip | the archive comment | removed |
 
 The values are constants, not the time of the run, so the output still depends only on the input
 and the same input gives the same bytes every time. A file is reported as changed when only these

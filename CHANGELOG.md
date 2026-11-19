@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.2.0
+
+Hardening from the November 2026 audit.
+
+### Behaviour changes: what you must do
+
+- **Document dates are written as constants.** Every blinded DOCX and XLSX now has its own dates
+  and edit history (`dcterms:created`, `dcterms:modified`, `cp:lastPrinted`, `cp:revision`, app.xml
+  `TotalTime`, `w:date` on tracked changes and comments, threaded-comment and pivot-cache refresh
+  dates) and its zip metadata (each member's DOS time and date, extra fields, the archive comment)
+  written as constants, so a blinded file cannot be matched to its source by them. Output is still
+  deterministic, but its bytes differ from 0.1.0's for the same input, and a file whose only change
+  is its dates is now reported as changed, with a `document dates:` line. `blind reveal` does not
+  restore them. To keep the original dates, set `[metadata] keep_dates = true` in `blind.toml`
+  ([docs/policy.md](docs/policy.md#metadata); the full list is in
+  [docs/spec.md](docs/spec.md#document-dates-and-zip-metadata)).
+- **Non-model credentials are refused as `key_env`.** Well-known credentials for other services
+  (`GITHUB_TOKEN`, `GH_TOKEN`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `NPM_TOKEN`, `STRIPE_*`,
+  `SLACK_*` and the like) are refused although they end in `_TOKEN` or `_KEY`. If one really holds
+  your model's key (GitHub Models with `GITHUB_TOKEN`, say), set `BLIND_ALLOW_KEY_ENV=<name>`.
+- **claude-cli calls are announced.** A `claude-cli` call prints
+  `<role>: calling claude-cli (claude -p, which sends the prompt to Anthropic under your Claude login)`
+  first, even with `--quiet`, as calls to a non-loopback host already did.
+
+### Other changes
+
+- `blind audit` checks the output for every value the spec lists to redact, by its salted
+  fingerprint (it reads `.blind/salt`). One still there is a `leak` of class `redact`, whatever its
+  shape. Without the salt the audit says the redact entries were not checked.
+- `blind init --force` warns when `.blind/spec.json` lists values to redact: under the new salt
+  their fingerprints match nothing, so accept them again after the next audit.
+
 ## 0.1.0
 
 The first release meant for use. 0.0.2 only proved the publishing path, so most of blind's

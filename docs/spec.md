@@ -427,7 +427,8 @@ value of bare digits is never read as a phone by canonicalisation, so numeric ID
 
 **Recurring values.** Once every column is decided, each value a column rule pseudonymised, each XLSX
 or DOCX identity metadata value replaced whole (creator, last modified by, comment and revision
-authors, Manager, Company, user IDs and account names in paths, with their class), and each
+authors, Manager, Company, the person who last refreshed a pivot cache (`refreshedBy`), user IDs
+and account names in paths, with their class), and each
 value an earlier map holds, is replaced with the same pseudonym wherever else it appears: in text
 files, header and preamble rows, cells kept as text or under `keep`, JSON strings and keys, and DOCX free text (matched across runs
 like any other DOCX match). The
@@ -746,7 +747,8 @@ is an error). The column table above applies to every cell, with these workbook 
   threaded comments and people, `docProps/core.xml` (title, subject, creator, keywords,
   description, last modified by, category and the like), `docProps/app.xml` (company, manager,
   application, hyperlink base), `docProps/custom.xml` names and values, pivot caches (strings,
-  field captions; numbers repeat the renumbering of their cells), pivot table captions, chart titles
+  field captions; numbers repeat the renumbering of their cells; `refreshedBy`, who last refreshed
+  the cache, is replaced whole with a `Person` pseudonym like the core creator), pivot table captions, chart titles
   and caches, drawing text and shape names, header and footer text, validation prompts, filter
   values, and the targets of external relationships. Free text, in cells and everywhere else, goes
   through the same corpus-wide scan as CSV and JSON text (patterns, spec entities and recurring

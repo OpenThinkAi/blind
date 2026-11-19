@@ -55,7 +55,8 @@ export type Slot =
   /**
    * Identity metadata, replaced as a whole whatever the spec says (as DOCX does): `dc:creator`,
    * `cp:lastModifiedBy`, app.xml Manager (person) and Company (org), comment authors, threaded-comment
-   * person names and user IDs, the workbook's reserved-by user name. `wholeClass` gives the class.
+   * person names and user IDs, the workbook's reserved-by user name, the pivot cache's `refreshedBy`.
+   * `wholeClass` gives the class.
    */
   | "whole"
   /**
@@ -154,6 +155,8 @@ function classifyPart(member: string, el: Frame, parents: readonly Frame[], attr
       return name === "property" && attr === "name" ? "text" : null;
     case "pivotCacheDefinition":
       if (attr === undefined) return null;
+      // Who last refreshed the cache: a person, like cp:lastModifiedBy.
+      if (name === "pivotCacheDefinition" && attr === "refreshedBy") return "whole";
       if (name === "cacheField") return attr === "name" ? "header" : attr === "caption" ? "text" : attr === "formula" ? "formula" : null;
       if (name === "worksheetSource") return attr === "sheet" ? "sheetRef" : attr === "name" ? "nameRef" : null;
       if (attr === "v") return name === "s" ? "text" : name === "n" ? "number" : null;

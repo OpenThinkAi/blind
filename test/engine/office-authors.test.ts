@@ -190,6 +190,47 @@ describe("XLSX: author metadata and account names", () => {
   });
 });
 
+describe("XLSX: pivot cache refreshedBy (AGT-2534)", () => {
+  // Synthetic names no spec entity lists; "Robin Example" is also the core lastModifiedBy, which used
+  // to make the unrewritten scan refuse the workbook over refreshedBy.
+  const REV = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+  const REVISIONS: FixtureEntry[] = [
+    { name: "xl/revisions/revisionHeaders.xml", data: `${DECL}<headers xmlns="${REV}" guid="{0A1B2C3D-0000-4000-8000-000000000010}"><header guid="{0A1B2C3D-0000-4000-8000-000000000011}" dateTime="2026-02-01T10:00:00" maxSheetId="4" userName="Quinn Ashdown" r:id="rId1" xmlns:r="${REL}"><sheetIdMap count="1"><sheetId val="1"/></sheetIdMap></header></headers>` },
+    { name: "xl/revisions/userNames.xml", data: `${DECL}<users xmlns="${REV}" count="1"><userInfo guid="{0A1B2C3D-0000-4000-8000-000000000012}" name="Marlo Vint" id="1234" dateTime="2026-02-01T10:00:00"/></users>` },
+  ];
+  const workbook = (extra: FixtureEntry[] = []): Uint8Array =>
+    buildZip(workbookEntries({ extra }).map((e) => (e.name === "xl/pivotCache/pivotCacheDefinition1.xml" && typeof e.data === "string" ? { ...e, data: e.data.replace('recordCount="2"', 'recordCount="2" refreshedBy="Robin Example"') } : e)));
+  const input = workbook();
+  const r = applySpec([{ path: "staff.xlsx", bytes: input }], SPEC, { salt: SALT, dates: "keep" });
+  const out = output(r);
+  const m = members(out);
+
+  test("classified as identity metadata", () => {
+    expect(classify("xl/pivotCache/pivotCacheDefinition1.xml", frame("pivotCacheDefinition"), [], "refreshedBy")).toBe("whole");
+    expect(classify("xl/pivotCache/pivotCacheDefinition1.xml", frame("pivotCacheDefinition"), [], "refreshedDate")).toBeNull();
+  });
+
+  test("refreshedBy is a person pseudonym, the same one as the lastModifiedBy it repeats, and the workbook is written", () => {
+    const robin = pseudonymOf(r, "Robin Example");
+    expect(robin).toMatch(/^Person_/);
+    expect(m.get("xl/pivotCache/pivotCacheDefinition1.xml")).toContain(`refreshedBy="${robin}"`);
+    expect(m.get("docProps/core.xml")).toContain(`<cp:lastModifiedBy>${robin}</cp:lastModifiedBy>`);
+    expect(allText(out)).not.toContain("Robin Example");
+  });
+
+  test("reveal restores refreshedBy", () => {
+    const back = members(revealFile("staff.xlsx", out, new Revealer(r.map)).bytes);
+    expect(back.get("xl/pivotCache/pivotCacheDefinition1.xml")).toBe(members(input).get("xl/pivotCache/pivotCacheDefinition1.xml") as string);
+  });
+
+  test("a shared workbook's revision parts are still refused, never written with their user names", () => {
+    // Revision parts carry GUIDs blind does not rewrite, so the workbook stops before any user name is written.
+    const refused = applySpec([{ path: "staff.xlsx", bytes: workbook(REVISIONS) }], SPEC, { salt: SALT, dates: "keep" });
+    expect(refused.outputs).toEqual([]);
+    expect(refused.skipped[0]?.reason).toContain("xl/revisions/revisionHeaders.xml");
+  });
+});
+
 // ---------------------------------------------------------------- DOCX
 
 const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';

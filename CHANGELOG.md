@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1
+
+- **XLSX: a pivot cache's `refreshedBy` is replaced whole.** It names the person who last refreshed
+  the cache. It used to be scanned only, so a name the corpus knew (often the same as the core
+  `lastModifiedBy`) stopped the whole workbook, and any other name was copied unblinded. It is now
+  replaced with a `Person` pseudonym, the same one wherever the name recurs, and `blind reveal`
+  restores it. Nothing to do; a workbook refused for this reason by 0.2.0 is now written.
+
 ## 0.2.0
 
 Hardening from the November 2026 audit.

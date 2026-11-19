@@ -610,7 +610,8 @@ does not keep email addresses. Each file's report counts the hosts kept this way
 `blind.toml` no host is kept; an invalid one is refused (exit 2).
 
 **DOCX.** Column rules do not apply (a rule naming a DOCX file is an error). Every part is
-rewritten at the XML level, so everything not blinded is copied byte for byte:
+rewritten at the XML level, so everything not blinded is copied byte for byte, except the document
+dates and zip metadata below ([Document dates and zip metadata](#document-dates-and-zip-metadata)):
 
 - Text is free text, matched per paragraph across runs: Word splits `Acme Corp` into runs such as
   `Ac` + `me Corp`, and the match is still found. Its pseudonym goes into the run where the match
@@ -770,6 +771,28 @@ is an error). The column table above applies to every cell, with these workbook 
   true`); any other (an embedded file or workbook, a macro, an ActiveX part) stops the workbook
   (listed and not written, exit 1), as in a DOCX. So does a saved thumbnail
   (`docProps/thumbnail.*`), a picture of the original sheet.
+
+<a id="document-dates-and-zip-metadata"></a>**Document dates and zip metadata.** A DOCX or XLSX records
+when it was made and edited. None of it names anyone, but it can tie a blinded file back to its
+source, so after blinding every written DOCX and XLSX has these written as constants:
+
+| Where | What | Written as |
+|---|---|---|
+| `docProps/core.xml` | `dcterms:created`, `dcterms:modified`, `cp:lastPrinted` | `1980-01-01T00:00:00Z` |
+| `docProps/core.xml` | `cp:revision` (how many times it was saved) | `1` |
+| `docProps/app.xml` | `TotalTime` (minutes of editing) | `0` |
+| DOCX parts | `w:date` on tracked changes and comments, and any other `date` or `dateUtc` attribute in a Word namespace (`w16cex:dateUtc` in `commentsExtensible.xml`) | `1980-01-01T00:00:00Z` |
+| XLSX parts | a threaded comment's `dT`; a pivot cache's `refreshedDateIso` | `1980-01-01T00:00:00Z` |
+| XLSX parts | a pivot cache's `refreshedDate` (a serial day) | `29221` (the same day) |
+| the zip | each member's DOS time and date in its local header and central directory record | 1980-01-01 00:00 |
+| the zip | each member's extra fields (extended and NTFS timestamps, Unix owner IDs) | removed |
+
+The values are constants, not the time of the run, so the output still depends only on the input
+and the same input gives the same bytes every time. A file is reported as changed when only these
+were rewritten. `blind reveal` cannot restore them. Dates in the document's own text, in cells and
+in custom properties are content, not package metadata, and are left as they are. To keep the
+original dates and zip metadata, set `[metadata] keep_dates = true` in `blind.toml` (see
+[`[metadata]`](policy.md#metadata)).
 
 **Office structural IDs.** Word and Excel write IDs of their own into a package. They name no
 person, but two kinds are treated differently:

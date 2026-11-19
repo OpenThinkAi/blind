@@ -98,12 +98,14 @@ describe("determinism", () => {
   // (src/engine/words.ts), which the profiler imports.
   const SHARED = [
     "node:crypto", "node:fs", "../schema.ts", "../profile/table.ts", "../formats/ooxml.ts", "../formats/xlsx.ts",
-    "../formats/officeids.ts", "../formats/paths.ts", "../formats/structural.ts",
+    "../formats/officeids.ts", "../formats/paths.ts", "../formats/structural.ts", "../formats/metadata.ts",
   ];
   const SHARED_IMPORTS: Record<string, string[]> = {
     "../formats/ooxml.ts": ["node:zlib"],
     "../formats/xlsx.ts": ["./ooxml.ts", "./officeids.ts", "./paths.ts"],
     "../formats/paths.ts": [],
+    // Document dates and zip metadata written as constants (AGT-2459).
+    "../formats/metadata.ts": ["./ooxml.ts"],
     // The value shapes of structural attributes, shared with the audit so both exempt the same values (AGT-1999).
     "../formats/structural.ts": [],
     "../formats/officeids.ts": ["./ooxml.ts"],

@@ -109,6 +109,12 @@ export interface Policy {
    * placeholder of the same format; true copies them unchanged, with a warning and an audit candidate.
    */
   images: { keep: boolean };
+  /**
+   * `[metadata] keep_dates`: false (the default) writes a DOCX or XLSX's own dates (created, modified,
+   * printed, revision and comment dates, edit time, revision count) and its zip timestamps and extra
+   * fields as constants; true keeps them as the original had them.
+   */
+  metadata: { keepDates: boolean };
   /** `[pseudonyms] style`: `readable` writes `[Client A #7F3A]`; `compact` writes `Person_7F3A`. No table means compact. */
   pseudonyms: { style: PseudonymStyle };
 }
@@ -154,6 +160,7 @@ export function defaultPolicy(): Policy {
     context: { enabled: true, triggers: [] },
     defaults: { columns: "fallback" },
     images: { keep: false },
+    metadata: { keepDates: false },
     pseudonyms: { style: "readable" },
   };
 }
@@ -288,6 +295,12 @@ export function renderPolicy(p: Policy): string {
     "# cannot read them. By default each is replaced with a neutral placeholder of the same format. keep = true",
     "# copies them unchanged (the apply report warns and the audit lists them as unscanned).",
     p.images.keep ? "keep = true" : "# keep = false",
+    "",
+    "[metadata]",
+    "# A DOCX or XLSX records when it was created, saved and printed, how long it was edited, when each tracked",
+    "# change and comment was made, and zip timestamps. By default blind writes all of these as constants so the",
+    "# blinded file cannot be matched to its source by them. keep_dates = true copies them as the original had them.",
+    p.metadata.keepDates ? "keep_dates = true" : "# keep_dates = false",
     "",
     "# Blinded names: readable is [Client A #7F3A] (role and letters, easy to read); compact is Person_7F3A.",
     "# Without this table the style is compact.",
@@ -446,7 +459,7 @@ export function parsePolicy(text: string, source = POLICY_FILE): Policy {
   }
   if (!isTable(doc)) throw new PolicyError(`${source}: not a TOML table`);
   const r = new Reader(source);
-  r.noExtra(doc, "", ["sensitive", "keep", "models", "profile", "privacy", "patterns", "columns", "context", "defaults", "images", "pseudonyms"]);
+  r.noExtra(doc, "", ["sensitive", "keep", "models", "profile", "privacy", "patterns", "columns", "context", "defaults", "images", "metadata", "pseudonyms"]);
 
   const sensitive = r.table(doc, "sensitive", "sensitive", ["classes", "description", "examples"]);
   const classes = r.strings(sensitive, "classes", "sensitive.classes");
@@ -488,6 +501,7 @@ export function parsePolicy(text: string, source = POLICY_FILE): Policy {
     context: readContext(r, doc),
     defaults: readDefaults(r, doc),
     images: readImages(r, doc),
+    metadata: readMetadata(r, doc),
     pseudonyms: readPseudonyms(r, doc),
   };
 }
@@ -504,6 +518,13 @@ function readImages(r: Reader, doc: Table): Policy["images"] {
   if (doc.images === undefined) return { keep: false };
   const t = r.table(doc, "images", "images", ["keep"]);
   return { keep: t.keep === undefined ? false : r.boolean(t, "keep", "images.keep") };
+}
+
+/** `[metadata]` is optional, and so is its one key. */
+function readMetadata(r: Reader, doc: Table): Policy["metadata"] {
+  if (doc.metadata === undefined) return { keepDates: false };
+  const t = r.table(doc, "metadata", "metadata", ["keep_dates"]);
+  return { keepDates: t.keep_dates === undefined ? false : r.boolean(t, "keep_dates", "metadata.keep_dates") };
 }
 
 /** `[defaults]` is optional, and so is its one key. */

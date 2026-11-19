@@ -11,6 +11,10 @@ export interface FixtureEntry {
   method?: 0 | 8;
   /** Write sizes in a trailing data descriptor (flag bit 3), with or without its signature. */
   descriptor?: "signed" | "unsigned";
+  /** DOS time and date for this member instead of the fixed 1980-01-01 00:00. */
+  dos?: { time: number; date: number };
+  /** An extra field written in both the local header and the central record (none by default). */
+  extra?: Uint8Array;
 }
 
 const DOS_TIME = 0x0000;
@@ -29,18 +33,21 @@ export function buildZip(entries: FixtureEntry[], comment = ""): Uint8Array {
     const crc = crc32(plain);
     const flags = 0x0800 | (e.descriptor ? 8 : 0);
     const offset = local.length;
-    u32(local, 0x04034b50); u16(local, 20); u16(local, flags); u16(local, method); u16(local, DOS_TIME); u16(local, DOS_DATE);
+    const time = e.dos?.time ?? DOS_TIME;
+    const date = e.dos?.date ?? DOS_DATE;
+    const extra = e.extra ?? new Uint8Array(0);
+    u32(local, 0x04034b50); u16(local, 20); u16(local, flags); u16(local, method); u16(local, time); u16(local, date);
     u32(local, e.descriptor ? 0 : crc); u32(local, e.descriptor ? 0 : data.length); u32(local, e.descriptor ? 0 : plain.length);
-    u16(local, name.length); u16(local, 0);
-    local.push(...name, ...data);
+    u16(local, name.length); u16(local, extra.length);
+    local.push(...name, ...extra, ...data);
     if (e.descriptor) {
       if (e.descriptor === "signed") u32(local, 0x08074b50);
       u32(local, crc); u32(local, data.length); u32(local, plain.length);
     }
-    u32(central, 0x02014b50); u16(central, 20); u16(central, 20); u16(central, flags); u16(central, method); u16(central, DOS_TIME); u16(central, DOS_DATE);
+    u32(central, 0x02014b50); u16(central, 20); u16(central, 20); u16(central, flags); u16(central, method); u16(central, time); u16(central, date);
     u32(central, crc); u32(central, data.length); u32(central, plain.length);
-    u16(central, name.length); u16(central, 0); u16(central, 0); u16(central, 0); u16(central, 0); u32(central, 0); u32(central, offset);
-    central.push(...name);
+    u16(central, name.length); u16(central, extra.length); u16(central, 0); u16(central, 0); u16(central, 0); u32(central, 0); u32(central, offset);
+    central.push(...name, ...extra);
   }
   const c = new TextEncoder().encode(comment);
   const end: number[] = [];

@@ -341,7 +341,7 @@ four keys, all required in the table:
 | `backend` | `"claude-cli"`, `"anthropic"` or `"openai-compatible"` | How to reach the model. |
 | `url` | string | The server's base URL. Empty means the backend's default (`https://api.anthropic.com` for `anthropic`; `http://127.0.0.1:11434/v1` for `openai-compatible`). Ignored by `claude-cli`. |
 | `model` | string | The model name. Empty means "not set": `openai-compatible` then asks the server which models it has and uses the first (a request that carries no document data); `claude-cli` uses its own default; `anthropic` refuses to run. |
-| `key_env` | string | The **name** of the environment variable that holds the API key, never the key. Empty means no key. A value that is not a valid variable name (a pasted key) is refused without being printed. A name that does not end in `_API_KEY`, `_TOKEN` or `_KEY` (any case) is refused too, since a `blind.toml` from someone else could otherwise send any variable (`DATABASE_URL`, say) as a bearer token; to use such a name anyway, set `BLIND_ALLOW_KEY_ENV` to it in your environment (`BLIND_ALLOW_KEY_ENV=MY_CREDENTIAL`). |
+| `key_env` | string | The **name** of the environment variable that holds the API key, never the key. Empty means no key. A value that is not a valid variable name (a pasted key) is refused without being printed. A name that does not end in `_API_KEY`, `_TOKEN` or `_KEY` (any case) is refused too, since a `blind.toml` from someone else could otherwise send any variable (`DATABASE_URL`, say) as a bearer token; to use such a name anyway, set `BLIND_ALLOW_KEY_ENV` to it in your environment (`BLIND_ALLOW_KEY_ENV=MY_CREDENTIAL`). Well-known credentials for services that are not model endpoints are refused the same way although they have the shape: `GITHUB_TOKEN`, `GH_TOKEN`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `NODE_AUTH_TOKEN`, `PYPI_TOKEN`, `VAULT_TOKEN`, `SENTRY_AUTH_TOKEN` and the like, and any key variable starting `STRIPE_`, `SLACK_`, `NPM_`, `GITLAB_`, `TWILIO_`, `SENDGRID_`, `CLOUDFLARE_`, `VERCEL_`, `NETLIFY_`, `RAILWAY_`, `HEROKU_` or `DIGITALOCEAN_` (any case). `BLIND_ALLOW_KEY_ENV` set to the name lets one through. |
 
 The backends:
 
@@ -405,7 +405,9 @@ pieces of at most 120 characters. The things you write cannot be cut for you: a 
 Each call prints a line to stderr first: `role · backend · model · mode · [samples k ·] N bytes
 sent`. `--quiet` hides it, except under `profile-only`. A call to a host that is not loopback is
 also preceded, whatever `--quiet` says, by where it goes and which variable's value is sent:
-`analyst: calling api.anthropic.com with the API key in ANTHROPIC_API_KEY`.
+`analyst: calling api.anthropic.com with the API key in ANTHROPIC_API_KEY`. A `claude-cli` call has
+no URL, so it is preceded by
+`analyst: calling claude-cli (claude -p, which sends the prompt to Anthropic under your Claude login)`.
 
 Under `profile-only`, the policy's `description` and `examples` are sent as written. When one of
 them holds, as whole words in any case, a value from the map, a spec entity form or a `[keep]`
@@ -667,7 +669,9 @@ class = "id"
   Enter takes the default. `--defaults`, or input that is not a terminal, writes the defaults.
 - An existing `blind.toml` is kept. An existing salt makes `init` refuse (exit 1): a new salt gives
   every value a different pseudonym, so it breaks the match with earlier runs and with the map.
-  `--force` replaces both files, and the old pseudonyms no longer match.
+  `--force` replaces both files, and the old pseudonyms no longer match. When `.blind/spec.json`
+  has [`redact`](spec.md#redact) entries, `--force` warns that they no longer match anything
+  under the new salt; accept each value again as redact after the next audit.
 - `[sensitive] description` and `examples` get the defaults above; edit them to say what matters
   for your documents.
 - `blind init` writes `[pseudonyms] style = "readable"`. A `blind.toml` without that table stays

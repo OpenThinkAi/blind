@@ -11,6 +11,7 @@ import {
   assertNoProxy,
   knownValues,
   modelsEnabled,
+  nonModelKeyEnv,
   policyOverlap,
   profilePayload,
   splitText,
@@ -239,6 +240,26 @@ describe("profile-only", () => {
     expect(events.some((e) => e.startsWith("fetch "))).toBe(true);
     for (const ok of ["OPENAI_API_KEY", "HF_TOKEN", "MY_KEY"]) {
       await ask("analyst", "s", { task: "t", data: payload() }, SCHEMA, { ...opts({ [ok]: "x" }), policy: policyWith("profile-only", { ...REMOTE, key_env: ok }), fetch: recorder([], []) });
+    }
+  });
+
+  test("a well-known non-model credential is refused although it has the key shape, unless BLIND_ALLOW_KEY_ENV names it (AGT-2460)", async () => {
+    const opts = (name: string, env: Record<string, string>) => ({ policy: policyWith("profile-only", { ...REMOTE, key_env: name }), env, fetch: noFetch, stderr: () => {} });
+    for (const name of ["GITHUB_TOKEN", "GH_TOKEN", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "NPM_TOKEN", "STRIPE_SECRET_KEY", "SLACK_BOT_TOKEN", "github_token"]) {
+      const msg = await refusal(ask("analyst", "s", { task: "t", data: payload() }, SCHEMA, opts(name, { [name]: "synthetic-credential-value" })));
+      expect(msg).toContain(`names ${name}, a well-known credential for a service that is not a model endpoint`);
+      expect(msg).toContain(`BLIND_ALLOW_KEY_ENV=${name}`);
+      expect(msg).not.toContain("synthetic-credential-value");
+    }
+    const events: string[] = [];
+    await ask("analyst", "s", { task: "t", data: payload() }, SCHEMA, {
+      ...opts("GITHUB_TOKEN", { GITHUB_TOKEN: "x", BLIND_ALLOW_KEY_ENV: "GITHUB_TOKEN" }),
+      fetch: recorder(events, []),
+    });
+    expect(events.some((e) => e.startsWith("fetch "))).toBe(true);
+    // Model keys with a similar shape are not caught.
+    for (const ok of ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENROUTER_API_KEY", "HF_TOKEN"]) {
+      expect(nonModelKeyEnv(ok)).toBe(false);
     }
   });
 

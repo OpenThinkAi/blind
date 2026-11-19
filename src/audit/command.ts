@@ -10,7 +10,7 @@ import { basename, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { MAP_FILE, SPEC_FILE } from "../apply.ts";
 import { type BlindMap, MapError, readMap } from "../engine/map.ts";
-import { BLIND_DIR } from "../init.ts";
+import { BLIND_DIR, SALT_FILE } from "../init.ts";
 import { isTerminal, maskQuoted } from "../mask.ts";
 import { type AskOptions, knownValues, ModelRefusal, modelsEnabled } from "../model.ts";
 import { loadPolicy, type Policy, POLICY_FILE, PolicyError, withPolicyPatterns } from "../policy.ts";
@@ -37,8 +37,9 @@ const AUDIT_HELP = [
   "and the map. Every file is read as raw bytes, in Latin-1, UTF-8 and UTF-16, with XML, percent",
   "and backslash escapes undone; zip members (xlsx, docx, nested archives) are opened recursively;",
   "file, directory and member names are checked too. It looks for every spec entity, every original",
-  "value in the map and every enabled pattern match that is not a pseudonym. Host names under a",
-  "domain in the blind.toml keep list are not reported: the policy keeps them.",
+  "value in the map, every enabled pattern match that is not a pseudonym, and every value the spec",
+  "lists to redact (by its salted fingerprint, read with .blind/salt). Host names under a domain in",
+  "the blind.toml keep list are not reported: the policy keeps them.",
   "",
   "Then the semantic layer, which does not rely on the spec: identifier-shaped tokens (hex of 6 or",
   "more, 4 or more digits mixed with letters, runs of 10 or more digits), Title-Case phrases of two",
@@ -255,7 +256,10 @@ export async function runAudit(argv: string[], io: AuditIO): Promise<number> {
     const spec = withPolicyPatterns(saved, policy?.patterns ?? {});
     // Hosts the engine kept under a keep-list domain are policy, not leaks.
     const keep = policy?.keep.terms ?? [];
-    let report = addSemanticLayer(auditTree(entries, spec, map, keep, policy?.keep.placeholders ?? true), entries, spec, map, { keep });
+    // The salt the spec's redact fingerprints were made with: the audit checks the output for those values too.
+    const saltPath = join(io.cwd, BLIND_DIR, SALT_FILE);
+    const salt = (spec.redact?.length ?? 0) > 0 && existsSync(saltPath) ? new Uint8Array(readFileSync(saltPath)) : undefined;
+    let report = addSemanticLayer(auditTree(entries, spec, map, keep, policy?.keep.placeholders ?? true, salt), entries, spec, map, { keep });
     const skip = noModelReason(values["no-model"], policy);
     if (skip !== null) io.err.write(`blind audit: ${skip}\n`);
     if (skip !== null || values["no-model"]) {

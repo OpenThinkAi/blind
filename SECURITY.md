@@ -55,9 +55,14 @@ these with hostile document content and a fake model that obeys any instruction 
   to stderr before it is sent; under `profile-only` it is printed even with `--quiet`. A call to a
   host that is not loopback is also preceded, even with `--quiet`, by the host and the variable
   whose value is sent (`analyst: calling api.anthropic.com with the API key in ANTHROPIC_API_KEY`).
+  A `claude-cli` call, which has no URL, is preceded the same way by
+  `analyst: calling claude-cli (claude -p, which sends the prompt to Anthropic under your Claude login)`.
 - **Key variables.** `key_env` must name a variable ending in `_API_KEY`, `_TOKEN` or `_KEY`, so a
-  `blind.toml` from someone else cannot send `DATABASE_URL` or the like as a bearer token. To use
-  another name, set `BLIND_ALLOW_KEY_ENV` to it in your environment.
+  `blind.toml` from someone else cannot send `DATABASE_URL` or the like as a bearer token.
+  Well-known credentials for other services (`GITHUB_TOKEN`, `GH_TOKEN`, `AWS_SECRET_ACCESS_KEY`,
+  `AWS_SESSION_TOKEN`, `NPM_TOKEN`, `STRIPE_*`, `SLACK_*` and the like; the list is in
+  [docs/policy.md](docs/policy.md)) are refused too, although they have the shape. To use another
+  name, or one of those, set `BLIND_ALLOW_KEY_ENV` to it in your environment.
 
 ## What leaves the machine under profile-only
 
@@ -169,7 +174,9 @@ write beside blinded output. The map may not sit inside the output or an input.
 
 Machines that share a salt produce the same pseudonym for the same value, so a pseudonym
 is linkable across everything blinded with that salt. A new salt (`blind init --force`) breaks
-that link, and the match with earlier maps.
+that link, and the match with earlier maps. It also makes the spec's `redact` fingerprints match
+nothing, so those values are no longer redacted until you accept them again; `init --force` warns
+when the spec has any.
 
 ## What blind does not promise
 

@@ -28,8 +28,10 @@
 //   - API keys come only from the environment variable `key_env` names, go only into
 //     request headers, and never appear in a message. blind.toml may come from someone else, so a
 //     `key_env` that does not look like a key variable (*_API_KEY, *_TOKEN, *_KEY) is refused unless
-//     BLIND_ALLOW_KEY_ENV names it, and the endpoint host and variable name are printed before every
-//     call to a non-loopback host.
+//     BLIND_ALLOW_KEY_ENV names it. A well-known credential for something other than a model
+//     (GITHUB_TOKEN, AWS_SECRET_ACCESS_KEY, NPM_TOKEN, STRIPE_*, SLACK_*: NON_MODEL_KEY_ENV) is refused
+//     the same way even though it has the shape. The endpoint host and variable name are printed
+//     before every call to a non-loopback host, and a claude-cli call is announced too.
 //   - under profile-only, a policy description or example that holds a value from the map, the spec
 //     or the keep terms is warned about (AskOptions.known): the policy goes to the model as written.
 //   - a reply must be exactly one JSON value matching the caller's schema (after a leading
@@ -413,6 +415,36 @@ const KEY_ENV_SHAPE = /(?:_API_KEY|_TOKEN|_KEY)$/i;
 /** The environment variable a user sets to the one `key_env` name blind.toml may use although it does not look like a key variable. */
 export const ALLOW_KEY_ENV = "BLIND_ALLOW_KEY_ENV";
 
+/**
+ * Well-known credentials for services that are not model endpoints: source hosting, cloud, package
+ * registries, CI, payments and chat. They have the key shape, so KEY_ENV_SHAPE alone would let a
+ * blind.toml from someone else send one as a bearer token. Matched case-insensitively.
+ */
+const NON_MODEL_KEY_ENV = new Set([
+  // Source hosting and CI.
+  "GITHUB_TOKEN", "GH_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GITHUB_PAT", "HOMEBREW_GITHUB_API_TOKEN",
+  "BITBUCKET_TOKEN", "CIRCLE_TOKEN", "CIRCLECI_TOKEN", "BUILDKITE_AGENT_TOKEN", "CODECOV_TOKEN", "SONAR_TOKEN", "SNYK_TOKEN",
+  // Cloud and hosting.
+  "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_SECURITY_TOKEN", "AZURE_STORAGE_KEY", "FLY_API_TOKEN",
+  "FIREBASE_TOKEN", "SUPABASE_ACCESS_TOKEN", "SUPABASE_SERVICE_ROLE_KEY", "DOCKER_TOKEN", "DOCKERHUB_TOKEN",
+  // Package registries.
+  "NODE_AUTH_TOKEN", "PYPI_TOKEN", "PYPI_API_TOKEN", "CARGO_REGISTRY_TOKEN", "GEM_HOST_API_KEY", "NUGET_API_KEY",
+  // Secrets managers, monitoring and work tracking.
+  "VAULT_TOKEN", "CONSUL_HTTP_TOKEN", "DOPPLER_TOKEN", "OP_SERVICE_ACCOUNT_TOKEN", "SENTRY_AUTH_TOKEN",
+  "DATADOG_API_KEY", "DD_API_KEY", "DD_APP_KEY", "JIRA_API_TOKEN", "ATLASSIAN_API_TOKEN",
+]);
+/** Prefixes whose every key-shaped variable is a non-model credential (STRIPE_SECRET_KEY, SLACK_BOT_TOKEN, NPM_TOKEN, ...). */
+const NON_MODEL_KEY_PREFIXES = [
+  "STRIPE_", "SLACK_", "NPM_", "GITLAB_", "CI_JOB_", "ACTIONS_", "TWILIO_", "SENDGRID_", "TF_TOKEN_",
+  "CLOUDFLARE_", "CF_API_", "VERCEL_", "NETLIFY_", "RAILWAY_", "HEROKU_", "DIGITALOCEAN_",
+];
+
+/** Whether `name` is a well-known credential for something other than a model (NON_MODEL_KEY_ENV). */
+export function nonModelKeyEnv(name: string): boolean {
+  const upper = name.toUpperCase();
+  return NON_MODEL_KEY_ENV.has(upper) || NON_MODEL_KEY_PREFIXES.some((p) => upper.startsWith(p));
+}
+
 function readKey(role: Role, cfg: ModelConfig, env: Record<string, string | undefined>): string | undefined {
   if (cfg.backend === "claude-cli") return undefined;
   const name = cfg.key_env;
@@ -431,6 +463,14 @@ function readKey(role: Role, cfg: ModelConfig, env: Record<string, string | unde
     throw new ModelRefusal(
       `models.${role}.key_env names ${name}, which does not look like an API key variable (*_API_KEY, *_TOKEN, *_KEY); ` +
         `blind.toml may come from someone else, so to send it anyway set ${ALLOW_KEY_ENV}=${name} in your environment`,
+    );
+  }
+  // A real credential for something else (source hosting, cloud, a registry, payments, chat) never goes to a model by default.
+  if (nonModelKeyEnv(name) && env[ALLOW_KEY_ENV] !== name) {
+    throw new ModelRefusal(
+      `models.${role}.key_env names ${name}, a well-known credential for a service that is not a model endpoint; ` +
+        `blind will not send it as a model's API key. Name the variable holding the model's key instead, or, if ${name} ` +
+        `really is that key, set ${ALLOW_KEY_ENV}=${name} in your environment`,
     );
   }
   const key = env[name];
@@ -750,6 +790,8 @@ export async function ask<T>(role: Role, system: string, prompt: Prompt, schema:
   if (url !== null && !isLoopback(url)) {
     write(`${role}: calling ${url.host}${key === undefined ? " with no API key" : ` with the API key in ${cfg.key_env}`}`);
   }
+  // claude-cli has no URL: the claude command sends the prompt to Anthropic under your Claude login. Said for the same reason.
+  if (cfg.backend === "claude-cli") write(`${role}: calling claude-cli (claude -p, which sends the prompt to Anthropic under your Claude login)`);
   const transport = cfg.backend === "claude-cli" ? callClaude : cfg.backend === "anthropic" ? callAnthropic : callOpenAI;
   const timeoutMs = opts.timeoutMs ?? CALL_TIMEOUT_MS;
 

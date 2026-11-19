@@ -8,6 +8,7 @@ import { defaultPolicy, renderPolicy } from "../../src/policy.ts";
 import { runAudit } from "../../src/audit/command.ts";
 import { helpText } from "../../src/cli.ts";
 import { makeZip } from "./zipfixture.ts";
+import { redactEntry } from "../../src/engine/redactlist.ts";
 
 // Synthetic corpus only.
 const SPEC = {
@@ -164,5 +165,48 @@ describe("blind audit", () => {
 
   test("audit is listed as implemented", () => {
     expect(helpText()).toMatch(/audit <out>\s+Independently audit a blinded output tree\n/);
+  });
+});
+
+describe("blind audit: spec.redact fingerprints (AGT-2460)", () => {
+  // A synthetic credential-like value with no secret shape, so only the fingerprint check can find it.
+  const VALUE = "plain words kept here";
+  const SALT = Buffer.from(Array.from({ length: 32 }, (_, i) => i + 5));
+
+  test("a surviving value whose salted fingerprint is in spec.redact is a leak, masked", async () => {
+    writeFileSync(join(dir, ".blind", "spec.json"), JSON.stringify({ ...SPEC, redact: [redactEntry(SALT, VALUE)] }));
+    writeFileSync(join(dir, "out", "extra.md"), `Left behind: ${VALUE}.\n`);
+    const r = await audit("out", "--json");
+    expect(r.code).toBe(2);
+    const report = JSON.parse(r.out);
+    const hits = report.files.flatMap((f: { findings: { class: string; severity: string; masked: string; file: string }[] }) => f.findings).filter((f: { class: string }) => f.class === "redact");
+    expect(hits).toHaveLength(1);
+    expect(hits[0].severity).toBe("leak");
+    expect(hits[0].file).toBe("extra.md");
+    expect(hits[0].masked).toBe(`pl***${VALUE.length}`);
+    expect(r.out).not.toContain(VALUE);
+  });
+
+  test("inside a DOCX member too", async () => {
+    writeFileSync(join(dir, ".blind", "spec.json"), JSON.stringify({ ...SPEC, redact: [redactEntry(SALT, VALUE)] }));
+    writeFileSync(join(dir, "out", "memo.docx"), makeZip([{ name: "word/document.xml", data: `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Code: ${VALUE.replace(/ /g, "&#32;")}</w:t></w:r></w:p></w:body></w:document>` }]));
+    const report = JSON.parse((await audit("out", "--json")).out);
+    const hits = report.files.flatMap((f: { findings: { class: string; part: string }[] }) => f.findings).filter((f: { class: string }) => f.class === "redact");
+    expect(hits.map((h: { part: string }) => h.part)).toEqual(["word/document.xml"]);
+  });
+
+  test("the REDACTED placeholder and a value under another salt are not reported", async () => {
+    writeFileSync(join(dir, ".blind", "spec.json"), JSON.stringify({ ...SPEC, redact: [redactEntry(new Uint8Array(32), VALUE)] }));
+    writeFileSync(join(dir, "out", "extra.md"), `Left behind: ${VALUE}. Code: REDACTED\n`);
+    const r = await audit("out");
+    expect(r.code).toBe(0);
+    expect(r.out).not.toContain("redact");
+  });
+
+  test("without the salt, a spec with redact entries gets a candidate saying they were not checked", async () => {
+    writeFileSync(join(dir, ".blind", "spec.json"), JSON.stringify({ ...SPEC, redact: [redactEntry(SALT, VALUE)] }));
+    rmSync(join(dir, ".blind", "salt"));
+    const report = JSON.parse((await audit("out", "--json")).out);
+    expect(report.general.map((g: { reason: string }) => g.reason)).toContain("the spec lists 1 value(s) to redact, but no salt was given, so the output was not checked for them");
   });
 });

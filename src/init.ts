@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { closeSync, lstatSync, mkdirSync, openSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
@@ -38,7 +38,8 @@ const INIT_HELP = [
   "",
   "Options:",
   "  --defaults  Write the default policy without prompting",
-  "  --force     Overwrite an existing blind.toml and replace an existing .blind/salt",
+  "  --force     Overwrite an existing blind.toml and replace an existing .blind/salt (warns when the",
+  "              spec lists values to redact: their fingerprints no longer match under a new salt)",
   "  -h, --help  Show this help",
   "",
   "Exit status: 0 written; 1 refused or failed (the salt already exists and --force is not given, the prompts",
@@ -54,6 +55,22 @@ const exists = (path: string): boolean => {
     return false;
   }
 };
+
+/** The spec file in .blind/; the same name src/apply.ts reads (not imported, so init stays free of the engine). */
+const SPEC_FILE_NAME = "spec.json";
+
+/**
+ * How many `redact` fingerprints .blind/spec.json holds; 0 when there is no spec or it cannot be read
+ * (the warning is advice, so an unreadable spec is left for the commands that load it to report).
+ */
+function redactCount(dir: string): number {
+  try {
+    const spec = JSON.parse(readFileSync(join(dir, BLIND_DIR, SPEC_FILE_NAME), "utf8")) as { redact?: unknown };
+    return Array.isArray(spec.redact) ? spec.redact.length : 0;
+  } catch {
+    return 0;
+  }
+}
 
 /**
  * Write a fresh salt. The file is created with mode 0600 in the same open call, never chmod-ed afterwards.
@@ -185,6 +202,7 @@ export async function runInit(argv: string[], io: InitIO): Promise<number> {
     return 1;
   }
   const keepPolicy = !force && exists(policyPath);
+  const replacing = force && exists(saltPath);
 
   let policy = defaultPolicy();
   if (!keepPolicy && !values.defaults) {
@@ -216,6 +234,15 @@ export async function runInit(argv: string[], io: InitIO): Promise<number> {
 
   io.output.write(keepPolicy ? `kept existing ${policyPath}\n` : `wrote ${policyPath}\n`);
   io.output.write(`wrote ${saltPath} (mode 0600; keep it secret, never commit it)\n`);
+  // The spec's redact entries are fingerprints under the old salt: under the new one they match nothing (AGT-2460).
+  const redacts = replacing ? redactCount(dir) : 0;
+  if (redacts > 0) {
+    io.err.write(
+      `blind init: warning: ${join(dir, BLIND_DIR, SPEC_FILE_NAME)} lists ${redacts} value(s) to redact, fingerprinted with the old salt; ` +
+        "with the new salt they match nothing, so apply will no longer redact them. Run blind run (or apply, then audit) " +
+        "and accept each one again as redact (blind plan --from-audit, or --accept cN=redact).\n",
+    );
+  }
   if (!keepPolicy) io.output.write(`next: describe what sensitive means for you in ${policyPath}\n`);
   return 0;
 }

@@ -17,6 +17,9 @@ blind plan ./in             # profile, analyst, spec: review .blind/spec.json
 blind apply ./in -o ./out   # blind the files; writes .blind/map.json
 blind audit ./out           # exit 0 clean, 1 candidates to review, 2 leak
 blind run ./in -o ./out     # plan, apply and audit in one go
+blind reveal ./out          # restore the originals into .blind/revealed/
+blind forget "Avery Quill"  # remove one subject from .blind/ (map, spec, profile, revealed)
+blind purge                 # remove the map, profile, run record and revealed files
 ```
 
 Run the commands in the directory that holds `blind.toml`. Once its `[keep] terms` hold real
@@ -145,6 +148,14 @@ contain or unlock the real values: keep them secret and never commit `.blind/`. 
 reuses the map, so earlier pseudonyms do not change. Machines that share a salt produce the same
 pseudonyms for the same values. Every file under `.blind/` that holds values, and how to delete it,
 is listed in [SECURITY.md](SECURITY.md#what-stays-on-disk).
+
+`blind forget <value...>` removes one data subject: their map entries, the spec entity (with its
+aliases and the name parts no one else shares), the profile samples that mention them, and the
+whole `.blind/revealed/` tree (reveal again and they stay pseudonymised). `blind purge` removes the
+map, profile, run record and revealed files, after which nothing blinded so far can be revealed;
+the salt and the spec are kept. Both list what they would remove and need `--yes` (or `yes` typed
+at a terminal). Neither changes blinded output already shared. Details in
+[docs/spec.md](docs/spec.md#how-blind-forget-and-blind-purge-remove-what-blind-keeps).
 
 ## Documentation
 

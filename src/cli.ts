@@ -3,6 +3,7 @@ import { processPlanIO, runPlan } from "./analyst/plan.ts";
 import { processApplyIO, runApply } from "./apply.ts";
 import { processAuditIO, runAudit } from "./audit/command.ts";
 import { processBenchIO, runBench } from "./bench/command.ts";
+import { processEraseIO, runForget, runPurge } from "./forget.ts";
 import { processIO, runInit } from "./init.ts";
 import { runProfile } from "./profile/command.ts";
 import { processRevealIO, runReveal } from "./reveal.ts";
@@ -16,6 +17,8 @@ export const COMMANDS = [
   { name: "audit", usage: "audit <out>", summary: "Independently audit a blinded output tree" },
   { name: "run", usage: "run <inputs> -o <out>", summary: "plan, apply and audit in one pass" },
   { name: "reveal", usage: "reveal <path> [--map <map.json>]", summary: "Reverse a blinded file or tree with its map" },
+  { name: "forget", usage: "forget <value...>", summary: "Remove a subject from the map, spec, profile and revealed files" },
+  { name: "purge", usage: "purge", summary: "Remove the map, profile, run record and revealed files" },
   { name: "bench", usage: "bench <kit>", summary: "Score apply and audit against a kit's oracle" },
 ] as const;
 
@@ -28,6 +31,8 @@ const HANDLERS: Record<(typeof COMMANDS)[number]["name"], (args: string[]) => Pr
   audit: (args) => runAudit(args, processAuditIO()),
   run: (args) => runRun(args, processRunIO()),
   reveal: (args) => runReveal(args, processRevealIO()),
+  forget: (args) => runForget(args, processEraseIO()),
+  purge: (args) => runPurge(args, processEraseIO()),
   bench: (args) => runBench(args, processBenchIO()),
 };
 

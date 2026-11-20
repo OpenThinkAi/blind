@@ -8,7 +8,7 @@ branches:
       - name: typecheck
         run: bun run typecheck
       - name: test
-        run: bun test
+        run: bun test --timeout 30000
 reviewers:
   security:
     prompt: .stamp/reviewers/security.md

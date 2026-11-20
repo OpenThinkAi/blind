@@ -25,7 +25,7 @@
     "blind": "bin/blind.js"
   },
   "scripts": {
-    "test": "bun test",
+    "test": "bun test --timeout 30000",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

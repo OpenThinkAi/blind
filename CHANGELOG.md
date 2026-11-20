@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.0
+
+- **`blind forget <value...>`** removes one data subject from what blind keeps under `.blind/`:
+  the map entries that record the value, the spec entity it names (with its aliases and the name
+  parts no other entity uses), the profile samples, sentences, lines and speakers that mention it,
+  `.blind/run.json` when a real path carries it, and the whole `.blind/revealed/` tree (reveal again
+  and the subject stays pseudonymised). It says when the value is still in the spec outside the
+  entities, for you to edit by hand.
+- **`blind purge`** removes the map, the profile, the run record and the revealed files. The salt
+  and the spec are kept. Afterwards `blind reveal` has no map and refuses; the next `blind apply`
+  starts a new one.
+- Both list what they would remove and go ahead only with `--yes` or `yes` typed at a terminal.
+  There is no encryption at rest and no expiry setting: run `blind purge` when a project ends. See
+  [docs/spec.md](docs/spec.md#how-blind-forget-and-blind-purge-remove-what-blind-keeps) and
+  [SECURITY.md](SECURITY.md#what-stays-on-disk). Nothing to do on upgrade.
+
 ## 0.2.1
 
 - **XLSX: a pivot cache's `refreshedBy` is replaced whole.** It names the person who last refreshed

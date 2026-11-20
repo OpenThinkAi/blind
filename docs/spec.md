@@ -928,6 +928,69 @@ the same code as the commands themselves.
 - **Exit status.** 0 everything revealed; 1 some files not revealed (listed); 2 refused (usage
   error, a missing or invalid map, a destination rule above), nothing written.
 
+## How `blind forget` and `blind purge` remove what blind keeps
+
+`.blind/` accumulates originals: the map records every value blinded, the spec names entities, the
+profile carries sample values, and `.blind/revealed/` holds whole revealed files. Two commands
+remove them. Neither encrypts anything or sets an expiry; neither prints a value.
+
+`blind forget <value...> [--map <map.json>] [--yes]` removes one data subject. Each value is a
+written form (a name, an email, an ID); values are compared after Unicode NFKC folding, ignoring
+case and runs of white space. For the values given, forget:
+
+- **Spec.** Removes every entity in `.blind/spec.json` whose `canonical` or one of whose `aliases`
+  is a value. Its canonical form, its aliases, and each of its `parts` that no remaining entity
+  uses (a shared surname stays) are forgotten with it. Column rules, questions, `seen` and
+  `redact` are not edited (a `redact` entry is a salted fingerprint and holds no value). When a
+  value given is still somewhere in the rewritten spec (a column's file name, a question, another
+  entity's alias), forget says so (by position, not by value) and exits 1: edit it by hand. A spec
+  that does not validate stops forget (exit 2) before anything changes.
+- **Map.** Removes every entry of the map (`.blind/map.json`, or `--map`) that records any of
+  those forms, by written or canonical form, and the host-label and email-local entries only the
+  removed hosts and emails used. `blind reveal` then leaves the subject's pseudonyms in place.
+- **Profile.** Removes every sample value, sample sentence, sample line, outline heading and speaker
+  in `.blind/profile.json` that contains any of those forms. When a file path, sheet name, column
+  header or key path in it contains one, the whole profile is deleted instead (those names are its
+  structure); the next `blind profile` or `blind plan` writes it again.
+- **Run record.** Deletes `.blind/run.json` when an input path in it contains one of those forms.
+- **Revealed files.** When anything above matched, deletes the whole `.blind/revealed/` tree.
+  When nothing did, the tree is kept: `blind reveal` restores map entries only, so a value nothing
+  records was never revealed, and a mistyped value deletes nothing. Revealed files are full
+  originals, and finding every mention of a subject in them is the job blinding does, not one to
+  approximate here. Run `blind reveal` again afterwards: with the forgotten entries gone, the
+  subject stays pseudonymised in the new revealed copies. Files revealed elsewhere with
+  `blind reveal -o` are not known to blind: delete them yourself.
+
+Rewritten files are written through a fresh 0600 temp file and a rename. Every file is read and
+checked before any is changed, and the spec is changed last: if a write fails part-way (exit 2,
+saying some files may have changed), the same command run again still finds the entity and every
+form. If the inputs still contain the subject, the next `plan` or `apply`
+records it again, so remove it from the inputs first. The salt is not changed: pseudonyms stay the
+same, and whoever holds `.blind/salt` can still test a guessed value against one (`blind init
+--force` replaces the salt, at the cost described under [`redact`](#redact)). Blinded output
+already shared is not changed by anything blind does.
+
+`blind purge [--map <map.json>] [--yes]` removes every file that holds originals or reverses
+pseudonyms: the map (`.blind/map.json`, or `--map`, which must parse as a map so a mistyped path
+never deletes another file), `.blind/profile.json`, `.blind/run.json`, `.blind/revealed/`, and
+the temp copies of the map, profile, run record and spec an interrupted write left in `.blind/`. It
+keeps `blind.toml`, `.blind/salt` and `.blind/spec.json` (use `forget` to take a subject out of
+the spec, or delete it and plan again). Afterwards `blind reveal` finds no map and refuses (exit
+2), so nothing blinded so far can be reversed with blind, and `blind audit` needs `--map` with
+some other map. The next `blind apply` starts a new map: with the same salt, compact pseudonyms
+come out the same, and readable ones keep their `#tag` but may be given other letters. With
+nothing to remove, purge says so and exits 0.
+
+Both commands first print what they would remove (file names and counts). They go ahead with
+`--yes`, or when a person at a terminal types `yes`; otherwise nothing changes and they exit 2.
+
+- **Exit status (forget).** 0 forgotten; 1 nothing under `.blind/` recorded the values (nothing
+  changed, revealed files kept; a value still in the spec is said too), or a value is still in the
+  spec; 2 refused (usage, an empty value, not confirmed, an unreadable map, spec or profile),
+  nothing changed, or a write failed part-way (said so).
+- **Exit status (purge).** 0 removed, or nothing to remove; 2 refused (usage, not confirmed,
+  `--map` not a map), nothing removed.
+
 ## How `blind audit` checks the output
 
 `blind audit <out>` reads `.blind/spec.json` and the map (`.blind/map.json`, or `--map <path>`)

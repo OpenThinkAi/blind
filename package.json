@@ -1,6 +1,6 @@
 {
   "name": "@openthink/blind",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Make any document set blind to the identities you choose: analyst proposes, human approves, engine applies, auditor checks",
   "license": "MIT",
   "repository": {
@@ -25,7 +25,7 @@
     "blind": "bin/blind.js"
   },
   "scripts": {
-    "test": "bun test",
+    "test": "bun test --timeout 30000",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

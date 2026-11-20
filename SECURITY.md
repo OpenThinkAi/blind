@@ -158,15 +158,26 @@ Everything blind keeps is under `.blind/` in the corpus directory. The files are
 
 | File | Holds | Sensitivity | Delete with |
 |---|---|---|---|
-| `.blind/map.json` | Every pseudonym and its original value (`blind apply`). | Originals. Enough on its own for `blind reveal`. | `rm .blind/map.json` |
-| `.blind/revealed/` | Originals of the files `blind reveal` wrote, under their real names. | Originals in full. | `rm -r .blind/revealed` |
-| `.blind/profile.json` | File, folder, sheet and column names, statistics, and sample values (none under `profile-only`). | Real names and, outside `profile-only`, sample values. | `rm .blind/profile.json` (the next `blind profile` or `blind plan` rewrites it) |
-| `.blind/spec.json` | The reviewed spec: entity names and aliases, column rules, patterns, and salted fingerprints (never the values) of secrets and card numbers to redact. | Names of people, organisations and hosts. | `rm .blind/spec.json` (the next `blind plan` proposes it again) |
-| `.blind/run.json` | Each input's real path and where it was written (`blind run`). | Real paths, which can carry names. | `rm .blind/run.json` |
+| `.blind/map.json` | Every pseudonym and its original value (`blind apply`). | Originals. Enough on its own for `blind reveal`. | `blind purge`; one subject: `blind forget <value>` |
+| `.blind/revealed/` | Originals of the files `blind reveal` wrote, under their real names. | Originals in full. | `blind purge` (also `blind forget`, which deletes the whole tree) |
+| `.blind/profile.json` | File, folder, sheet and column names, statistics, and sample values (none under `profile-only`). | Real names and, outside `profile-only`, sample values. | `blind purge` (the next `blind profile` or `blind plan` rewrites it); one subject's samples: `blind forget <value>` |
+| `.blind/spec.json` | The reviewed spec: entity names and aliases, column rules, patterns, and salted fingerprints (never the values) of secrets and card numbers to redact. | Names of people, organisations and hosts. | One subject's entity: `blind forget <value>`; all: `rm .blind/spec.json` (the next `blind plan` proposes it again) |
+| `.blind/run.json` | Each input's real path and where it was written (`blind run`). | Real paths, which can carry names. | `blind purge` |
 | `.blind/salt` | 32 random bytes. Pseudonyms are HMACs of the value under it. | Holds no value, but with a guessed value it confirms a match. Needed by `blind apply`. | `rm .blind/salt`, then `blind init` for a new one (breaks the link, see below) |
 
+Erasure. `blind forget <value...>` removes one data subject from the map, the spec's entities,
+the profile's samples and the run record, and deletes `.blind/revealed/` whole (blind does not
+edit revealed originals; reveal again and the subject stays pseudonymised). `blind purge` removes
+the map, profile, run record and revealed files. Both need `--yes` or a typed `yes`. Neither
+reaches revealed files written elsewhere with `reveal -o`, backups or copies of `.blind/`, or
+blinded output already shared, and neither changes the salt, so whoever holds `.blind/salt` can
+still test a guessed value against a pseudonym. There is no encryption at rest and no expiry:
+run `purge` when a project ends. The rules are in
+[docs/spec.md](docs/spec.md#how-blind-forget-and-blind-purge-remove-what-blind-keeps).
+
 `blind reveal` needs only the map. An interrupted run can leave `*.tmp` copies of these files;
-delete those too. `rm` removes the name, not the data blocks, so on a shared or unencrypted disk
+`blind purge` removes those of the map, profile, run record and spec, and any others must be
+deleted by hand. `rm` removes the name, not the data blocks, so on a shared or unencrypted disk
 use full-disk encryption.
 
 Keep `.blind/` out of version control and out of anything you share. `blind reveal` refuses to

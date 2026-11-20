@@ -3,7 +3,7 @@
 // logged. A reloaded map reproduces every pseudonym it records without the
 // salt.
 
-import { closeSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, openSync, readFileSync, renameSync, rmSync, unlinkSync, writeSync } from "node:fs";
 import { canonicalize, PSEUDO_CLASSES } from "./canonical.ts";
 
 /** Components of shaped pseudonyms are recorded too, so hosts and emails rebuild without the salt. */
@@ -103,15 +103,15 @@ export function parseMap(text: string, source = "map.json"): BlindMap {
 }
 
 /**
- * Write the map atomically: a temp file is created exclusively with mode 0600
- * (so there is no window where it is readable by others), then renamed over
- * the target.
+ * Write `text` atomically and privately: a temp file is created exclusively with mode 0600 (so
+ * there is no window where it is readable by others), then renamed over the target.
  */
-export function writeMap(path: string, map: BlindMap): void {
+export function writePrivateText(path: string, text: string): void {
   const tmp = `${path}.tmp-${process.pid}`;
+  rmSync(tmp, { force: true });
   const fd = openSync(tmp, "wx", 0o600);
   try {
-    writeSync(fd, serializeMap(map));
+    writeSync(fd, text);
   } catch (err) {
     closeSync(fd);
     unlinkSync(tmp);
@@ -124,6 +124,11 @@ export function writeMap(path: string, map: BlindMap): void {
     unlinkSync(tmp);
     throw err;
   }
+}
+
+/** Write the map atomically, mode 0600 (writePrivateText). */
+export function writeMap(path: string, map: BlindMap): void {
+  writePrivateText(path, serializeMap(map));
 }
 
 export function readMap(path: string): BlindMap {

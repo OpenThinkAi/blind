@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -24,7 +24,7 @@ const SPEC = {
   questions: [],
 };
 const STAFF = "Owner,Box\nAvery Quill,app01.corp.example.com\nRobin Quill,192.0.2.10\n";
-const NOTE = "Avery Quill met Robin Quill at app01.corp.example.com.\n";
+const NOTE = "Avery Quill met Robin Quill at app01.corp.example.com. Quill signed.\n";
 const PROFILE = {
   version: 1,
   sampleCount: 3,
@@ -103,7 +103,8 @@ test("forget removes the subject from map, spec and profile, keeps shared parts,
   expect(values).not.toContain("Avery Quill");
   expect(values).not.toContain("Avery");
   expect(values).toContain("Robin Quill");
-  // "Quill" is still a part of Robin Quill, so its entry (if recorded) is kept.
+  // "Quill" is still a part of Robin Quill, so its entry stays; "Avery" was only Avery Quill's.
+  expect(values).toContain("Quill");
   expect(statSync(blind("map.json")).mode & 0o777).toBe(0o600);
 
   const profile = JSON.parse(readFileSync(blind("profile.json"), "utf8"));
@@ -116,6 +117,10 @@ test("forget removes the subject from map, spec and profile, keeps shared parts,
   const note = readFileSync(blind("revealed", "note.md"), "utf8");
   expect(note).toContain("Robin Quill");
   expect(note).not.toContain("Avery");
+});
+
+test("the shared part is recorded before forget, so keeping it is a real check", () => {
+  expect(mapValues()).toContain("Quill");
 });
 
 test("forget by alias removes the whole entity", async () => {
@@ -153,7 +158,8 @@ test("forget a value nothing records: exit 1, nothing changed, revealed files ke
   const before = ["spec.json", "map.json", "profile.json"].map((f) => readFileSync(blind(f), "utf8"));
   const r = await call(runForget, ["Sam Placeholder", "--yes"]);
   expect(r.code).toBe(1);
-  expect(["spec.json", "map.json", "profile.json"].map((f) => readFileSync(blind(f), "utf8"))).toEqual(before);  expect(existsSync(blind("revealed"))).toBe(true);
+  expect(["spec.json", "map.json", "profile.json"].map((f) => readFileSync(blind(f), "utf8"))).toEqual(before);
+  expect(existsSync(blind("revealed"))).toBe(true);
 });
 
 test("forget refuses an empty value and an invalid spec without changing anything", async () => {
@@ -224,4 +230,36 @@ test("purge --map refuses a file that is not a map", async () => {
 test("purge refuses positional arguments", async () => {
   expect((await call(runPurge, ["out", "--yes"])).code).toBe(2);
   expect(existsSync(blind("map.json"))).toBe(true);
+});
+
+test("a value only in the spec outside entities: forget says it is still there (exit 1), nothing changed", async () => {
+  const spec = { ...SPEC, questions: [{ id: "q1", text: "Is Sam Placeholder a person?", options: ["blind", "keep"], answer: null }] };
+  writeFileSync(blind("spec.json"), JSON.stringify(spec));
+  const before = readFileSync(blind("spec.json"), "utf8");
+  const r = await call(runForget, ["Sam Placeholder", "--yes"]);
+  expect(r.code).toBe(1);
+  expect(r.err).toContain("value 1 is still in");
+  expect(r.err).not.toContain("Sam");
+  expect(readFileSync(blind("spec.json"), "utf8")).toBe(before);
+  expect(existsSync(blind("revealed"))).toBe(true);
+});
+
+test("a run.json that is not JSON is searched as text and deleted when it names the value", async () => {
+  writeFileSync(blind("run.json"), "{ broken Avery Quill");
+  expect((await call(runForget, ["Avery Quill", "--yes"])).code).toBe(0);
+  expect(existsSync(blind("run.json"))).toBe(false);
+});
+
+test("purge also removes temp copies an interrupted write left, and does not follow a revealed symlink", async () => {
+  writeFileSync(blind("map.json.tmp-123"), "{}");
+  writeFileSync(blind("profile.json.tmp"), "{}");
+  rmSync(blind("revealed"), { recursive: true });
+  mkdirSync(join(dir, "elsewhere"));
+  writeFileSync(join(dir, "elsewhere", "keep.txt"), "x");
+  symlinkSync(join(dir, "elsewhere"), blind("revealed"));
+  expect((await call(runPurge, ["--yes"])).code).toBe(0);
+  expect(existsSync(blind("map.json.tmp-123"))).toBe(false);
+  expect(existsSync(blind("profile.json.tmp"))).toBe(false);
+  expect(existsSync(blind("revealed"))).toBe(false);
+  expect(readFileSync(join(dir, "elsewhere", "keep.txt"), "utf8")).toBe("x");
 });

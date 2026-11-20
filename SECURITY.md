@@ -176,7 +176,8 @@ run `purge` when a project ends. The rules are in
 [docs/spec.md](docs/spec.md#how-blind-forget-and-blind-purge-remove-what-blind-keeps).
 
 `blind reveal` needs only the map. An interrupted run can leave `*.tmp` copies of these files;
-delete those too. `rm` removes the name, not the data blocks, so on a shared or unencrypted disk
+`blind purge` removes those of the map, profile, run record and spec, and any others must be
+deleted by hand. `rm` removes the name, not the data blocks, so on a shared or unencrypted disk
 use full-disk encryption.
 
 Keep `.blind/` out of version control and out of anything you share. `blind reveal` refuses to

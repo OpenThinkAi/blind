@@ -7,16 +7,16 @@
 // .blind/revealed/. Both rewrite or delete files only after every input has been read and checked,
 // and only after confirmation (--yes, or "yes" typed at a terminal). Neither prints a value.
 
-import { closeSync, lstatSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { MAP_FILE, SPEC_FILE } from "./apply.ts";
-import { type BlindMap, foldText, MapError, readMap, withoutValues, writeMap } from "./engine/map.ts";
+import { type BlindMap, foldText, MapError, readMap, withoutValues, writeMap, writePrivateText } from "./engine/map.ts";
 import { BLIND_DIR } from "./init.ts";
 import { PROFILE_FILE } from "./profile/command.ts";
 import { REVEALED_DIR } from "./reveal.ts";
 import { RUN_FILE } from "./runmanifest.ts";
-import type { Entity } from "./schema.ts";
+import type { Entities, Entity } from "./schema.ts";
 import { oneLine, terminalStream, terminalText } from "./terminal.ts";
 import { parseProfile, parseSpec, SchemaError } from "./validate.ts";
 
@@ -62,7 +62,8 @@ const FORGET_HELP = [
   "",
   "Exit status: 0 forgotten; 1 nothing records the values (nothing changed, revealed files kept),",
   "or a value is still in spec.json (said which);",
-  "2 refused (usage, not confirmed, an unreadable map, spec or profile), nothing changed.",
+  "2 refused (usage, not confirmed, an unreadable map, spec or profile), nothing changed; or a",
+  "write failed part-way (said so; run the same command again).",
   "",
 ].join("\n");
 
@@ -70,7 +71,8 @@ const PURGE_HELP = [
   "Usage: blind purge [--map <map.json>] [--yes]",
   "",
   "Removes every file under .blind/ that holds original values or reverses pseudonyms:",
-  "  .blind/map.json (or --map), .blind/profile.json, .blind/run.json and the .blind/revealed/ tree.",
+  "  .blind/map.json (or --map), .blind/profile.json, .blind/run.json, the .blind/revealed/ tree,",
+  "  and temp copies of the map, profile, run record and spec an interrupted write left in .blind/.",
   "Kept: blind.toml, .blind/salt and .blind/spec.json (the reviewed spec, which names entities; use",
   "`blind forget` to remove a subject from it, or delete it and plan again).",
   "",
@@ -116,27 +118,6 @@ function countFiles(dir: string): number {
   return n;
 }
 
-/** Exclusive 0600 temp file, then a rename: the rewritten file is never readable by others. */
-function writePrivateText(dest: string, text: string): void {
-  const tmp = `${dest}.tmp-${process.pid}`;
-  rmSync(tmp, { force: true });
-  const fd = openSync(tmp, "wx", 0o600);
-  try {
-    writeSync(fd, text);
-  } catch (e) {
-    closeSync(fd);
-    rmSync(tmp, { force: true });
-    throw e;
-  }
-  closeSync(fd);
-  try {
-    renameSync(tmp, dest);
-  } catch (e) {
-    rmSync(tmp, { force: true });
-    throw e;
-  }
-}
-
 /** --yes, or "yes" typed at a terminal. Without either the command refuses. */
 async function confirmed(yes: boolean, io: EraseIO, cmd: string, question: string): Promise<boolean> {
   if (yes) return true;
@@ -172,7 +153,11 @@ function loadMapIfAny(path: string): BlindMap | undefined {
   return readMap(path);
 }
 
-const ENTITY_CLASSES = ["person", "org", "host", "email", "id", "location", "vocabulary"] as const;
+// Every entity class; `satisfies` plus the exhaustiveness check below make a new class a type error here.
+const ENTITY_CLASSES = ["person", "org", "host", "email", "id", "location", "vocabulary"] as const satisfies readonly (keyof Entities)[];
+type Missing = Exclude<keyof Entities, (typeof ENTITY_CLASSES)[number]>;
+const allClasses: [Missing] extends [never] ? true : never = true;
+void allClasses;
 
 interface ForgetPlan {
   forms: string[];
@@ -208,8 +193,9 @@ function planForget(values: string[], mapPath: string, cwd: string): ForgetPlan 
     } catch {
       throw new Refusal(`${relative(cwd, specPath)}: cannot read it`);
     }
-    parseSpec(text, relative(cwd, specPath)); // a spec that does not validate is never rewritten
-    const raw = JSON.parse(text) as { entities: Partial<Record<string, Entity[]>> };
+    // A spec that does not validate is never rewritten. The validated spec is written back as parsed
+    // (validation adds and drops nothing), with only its entity lists changed.
+    const raw = parseSpec(text, relative(cwd, specPath));
     const named = (e: Entity): boolean => [e.canonical, ...e.aliases].some((f) => wanted.has(foldText(f)));
     const gone: Entity[] = [];
     const kept: Entity[] = [];
@@ -326,6 +312,9 @@ function describeForget(p: ForgetPlan, cwd: string): string[] {
   return lines;
 }
 
+const stillLine = (positions: number[]): string =>
+  `blind forget: value ${positions.join(", ")} is still in ${join(BLIND_DIR, SPEC_FILE)} (a column rule, a question, or another entity's form); edit it by hand\n`;
+
 export async function runForget(argv: string[], io: EraseIO): Promise<number> {
   const parsed = parse(argv, FORGET_HELP, "forget", io);
   if (parsed === undefined) return 2;
@@ -361,14 +350,15 @@ export async function runForget(argv: string[], io: EraseIO): Promise<number> {
   // A value nothing records was never restored by reveal (it restores map entries only), so the
   // revealed tree is left alone: a mistyped value must not delete it.
   if (!matched) {
-    io.err.write(`blind forget: nothing under ${BLIND_DIR}/ records ${positionals.length === 1 ? "that value" : "those values"}; nothing changed\n`);
+    io.err.write(`blind forget: nothing under ${BLIND_DIR}/ records ${positionals.length === 1 ? "that value" : "those values"} for forget to remove; nothing changed\n`);
+    if (plan.specStill.length > 0) io.err.write(stillLine(plan.specStill));
     return 1;
   }
   io.out.write(`blind forget will remove:\n${lines.map((l) => `  ${l}\n`).join("")}`);
   if (!(await confirmed(values.yes, io, "forget", "Type yes to remove them: "))) return 2;
 
+  // The spec goes last: while its entity is still there, a re-run after a failure finds every form again.
   try {
-    if (plan.spec) writePrivateText(plan.spec.path, plan.spec.text);
     if (plan.map) writeMap(plan.map.path, plan.map.map);
     if (plan.profile) {
       if (plan.profile.text === undefined) rmSync(plan.profile.path, { force: true });
@@ -376,16 +366,18 @@ export async function runForget(argv: string[], io: EraseIO): Promise<number> {
     }
     if (plan.runJson) rmSync(plan.runJson, { force: true });
     if (plan.revealed > 0) rmSync(join(io.cwd, BLIND_DIR, REVEALED_DIR), { recursive: true, force: true });
+    if (plan.spec) writePrivateText(plan.spec.path, plan.spec.text);
   } catch (e) {
-    io.err.write(`blind forget: removing failed part-way (${(e as NodeJS.ErrnoException).code ?? "error"}); run it again\n`);
+    io.err.write(
+      `blind forget: removing failed part-way (${(e as NodeJS.ErrnoException).code ?? "error"}); some files above may already be changed. ` +
+        "Run the same command again: the spec is changed last, so it still finds every form\n",
+    );
     return 2;
   }
 
   io.out.write("done\n");
   if (plan.specStill.length > 0) {
-    io.err.write(
-      `blind forget: value ${plan.specStill.join(", ")} is still in ${join(BLIND_DIR, SPEC_FILE)} (a column rule, a question, or another entity's form); edit it by hand\n`,
-    );
+    io.err.write(stillLine(plan.specStill));
     return 1;
   }
   return 0;
@@ -421,6 +413,10 @@ export async function runPurge(argv: string[], io: EraseIO): Promise<number> {
     const p = join(blind, name);
     if (exists(p)) targets.push({ path: p, label: rel(p) });
   }
+  // Temp copies an interrupted write left behind hold the same originals.
+  const tmpOf = [MAP_FILE, PROFILE_FILE, RUN_FILE, SPEC_FILE].map((n) => `${n}.tmp`);
+  const leftovers = exists(blind) ? readdirSync(blind).filter((n) => tmpOf.some((t) => n.startsWith(t))).sort() : [];
+  for (const n of leftovers) targets.push({ path: join(blind, n), label: rel(join(blind, n)) });
   const revealedDir = join(blind, REVEALED_DIR);
   if (exists(revealedDir)) targets.push({ path: revealedDir, label: `${rel(revealedDir)}/ (${plural(countFiles(revealedDir), "file")})` });
 

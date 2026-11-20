@@ -962,7 +962,9 @@ case and runs of white space. For the values given, forget:
   `blind reveal -o` are not known to blind: delete them yourself.
 
 Rewritten files are written through a fresh 0600 temp file and a rename. Every file is read and
-checked before any is changed. If the inputs still contain the subject, the next `plan` or `apply`
+checked before any is changed, and the spec is changed last: if a write fails part-way (exit 2,
+saying some files may have changed), the same command run again still finds the entity and every
+form. If the inputs still contain the subject, the next `plan` or `apply`
 records it again, so remove it from the inputs first. The salt is not changed: pseudonyms stay the
 same, and whoever holds `.blind/salt` can still test a guessed value against one (`blind init
 --force` replaces the salt, at the cost described under [`redact`](#redact)). Blinded output
@@ -970,7 +972,8 @@ already shared is not changed by anything blind does.
 
 `blind purge [--map <map.json>] [--yes]` removes every file that holds originals or reverses
 pseudonyms: the map (`.blind/map.json`, or `--map`, which must parse as a map so a mistyped path
-never deletes another file), `.blind/profile.json`, `.blind/run.json` and `.blind/revealed/`. It
+never deletes another file), `.blind/profile.json`, `.blind/run.json`, `.blind/revealed/`, and
+the temp copies of the map, profile, run record and spec an interrupted write left in `.blind/`. It
 keeps `blind.toml`, `.blind/salt` and `.blind/spec.json` (use `forget` to take a subject out of
 the spec, or delete it and plan again). Afterwards `blind reveal` finds no map and refuses (exit
 2), so nothing blinded so far can be reversed with blind, and `blind audit` needs `--map` with
@@ -982,8 +985,9 @@ Both commands first print what they would remove (file names and counts). They g
 `--yes`, or when a person at a terminal types `yes`; otherwise nothing changes and they exit 2.
 
 - **Exit status (forget).** 0 forgotten; 1 nothing under `.blind/` recorded the values (nothing
-  changed, revealed files kept), or a value is still in the spec; 2 refused (usage,
-  an empty value, not confirmed, an unreadable map, spec or profile), nothing changed.
+  changed, revealed files kept; a value still in the spec is said too), or a value is still in the
+  spec; 2 refused (usage, an empty value, not confirmed, an unreadable map, spec or profile),
+  nothing changed, or a write failed part-way (said so).
 - **Exit status (purge).** 0 removed, or nothing to remove; 2 refused (usage, not confirmed,
   `--map` not a map), nothing removed.
 

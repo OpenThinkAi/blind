@@ -115,11 +115,11 @@ export interface Policy {
    * fields as constants; true keeps them as the original had them.
    */
   metadata: { keepDates: boolean };
-  /** `[pseudonyms] style`: `readable` writes `[Client A #7F3A]`; `compact` writes `Person_7F3A`. No table means compact. */
+  /** `[pseudonyms] style`: `readable` writes `[Client A #7F3A]`; `letters` writes `Client KQZTB`; `compact` writes `Person_7F3A`. No table means compact. */
   pseudonyms: { style: PseudonymStyle };
 }
 
-export const PSEUDONYM_STYLES = ["readable", "compact"] as const;
+export const PSEUDONYM_STYLES = ["readable", "compact", "letters"] as const;
 export type PseudonymStyle = (typeof PSEUDONYM_STYLES)[number];
 
 /** The spec with blind.toml's `[patterns]` switches laid over its own: the patterns apply and audit use. */
@@ -302,7 +302,8 @@ export function renderPolicy(p: Policy): string {
     "# blinded file cannot be matched to its source by them. keep_dates = true copies them as the original had them.",
     p.metadata.keepDates ? "keep_dates = true" : "# keep_dates = false",
     "",
-    "# Blinded names: readable is [Client A #7F3A] (role and letters, easy to read); compact is Person_7F3A.",
+    "# Blinded names: readable is [Client A #7F3A] (role and letters, easy to read); compact is Person_7F3A;",
+    "# letters is Client KQZTB (role and five consonants, no digits).",
     "# Without this table the style is compact.",
     "[pseudonyms]",
     `style = ${str(p.pseudonyms.style)}`,

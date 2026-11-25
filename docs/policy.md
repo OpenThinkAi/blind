@@ -315,20 +315,39 @@ style = "readable"
 
 | Key | Values | Default | Meaning |
 |---|---|---|---|
-| `style` | `"readable"` or `"compact"` | `"compact"` when the table is missing | The shape of every blinded name. `readable` writes `[Label LETTERS #HEX4]`, such as `[Counterparty Label C #8481]` or `[Owner A #F884]`, with the role from the column header where there is one. `compact` writes `Org_8481` or `Person_F884`. The grammar, the letters and the role labels are in [spec.md](spec.md#pseudonym-styles). |
+| `style` | `"readable"`, `"compact"` or `"letters"` | `"compact"` when the table is missing | The shape of every blinded name. `readable` writes `[Label LETTERS #HEX4]`, such as `[Counterparty Label C #8481]` or `[Owner A #F884]`, with the role from the column header where there is one. `compact` writes `Org_8481` or `Person_F884`. `letters` writes the role label, a space and five consonants, such as `Staff KQZTB` or `Org MRDHX`, with no digit in it. The grammar, the letters and the role labels are in [spec.md](spec.md#pseudonym-styles). |
 
 - `blind init` writes `style = "readable"`. A `blind.toml` without the table (one written before the
   setting existed) is **compact**, so its output does not change.
 - Any other value is refused and the message names the key: `pseudonyms.style must be one of
-  "readable", "compact"` (`blind apply` exits 2).
+  "readable", "compact", "letters"` (`blind apply` exits 2).
+- **`letters`, for consumers that read digits or cut names to fit narrow tables.** Every person, org,
+  location, id and value stand-in is `<Label> <FIVE>`: the role label (the column's header label as the
+  readable style takes it, else the class word `Person`, `Org`, `Place`, `Id`, `Value` or `Host`), one
+  space, then five letters from `BCDFGHJKLMNPQRSTVWXZ` (no vowels, so it cannot spell a word). It
+  matches `^[A-Za-z][A-Za-z -]* [BCDFGHJKLMNPQRSTVWXZ]{5}$`; a label that would hold a digit falls back to
+  the class word. The letters come from the same HMAC as the other styles (the label is not part of it),
+  so the same value, salt and label give the same stand-in on every run, and two values whose letters
+  collide get the next candidate (the HMAC with a counter appended); the five letters are unique within
+  one upload, whatever the label. Where a slot cannot hold a space (file and folder names, sheet and
+  defined names, URLs, Office IDs) the name-safe twin `Staff_KQZTB` is written.
+- **The exception: shaped stand-ins keep their shape, digits included, in every style.** Email
+  addresses (`user_7a8b@host-9c0d.com`), host names and bare host labels (`host-1a2b`), IPv4 addresses
+  in the documentation ranges (`192.0.2.x`), GUIDs, and numeric IDs and phones written as digits only
+  (same length, digits) are not letters stand-ins. A phone written with separators is an `Id` stand-in
+  (`Id KQZTB`). `REDACTED` stays `REDACTED`.
 - The style sets the shape of new pseudonyms. A value already in `.blind/map.json` keeps the pseudonym
   it was given, so switching a corpus from readable to compact and applying again leaves the readable
   forms the map holds; only values the map does not hold take the new style.
 - What reads it: `blind apply` writes the chosen style. `blind audit` uses it only to pick the example
-  pseudonyms in the model auditor's instructions; its rule-based checks recognise both styles.
-  `blind reveal` does not read it: it restores both forms from the map.
+  pseudonyms in the model auditor's instructions; its rule-based checks recognise every style (a
+  letters stand-in, or its name-safe twin, counts as a pseudonym when the map issued it).
+  `blind reveal` does not read it: it restores every form from the map, in prose too (`Staff KQZTB's`,
+  `Staff KQZTB,` and `Staff KQZTB.` all come back).
 - Under `readable`, `blind apply` refuses input that already holds readable-shaped text (exit 2, nothing
-  written), naming the file and line. Compact does not refuse. See [spec.md](spec.md#pseudonym-styles).
+  written), naming the file and line. Compact and letters do not refuse. See [spec.md](spec.md#pseudonym-styles).
+- A library caller picks the style with the `pseudonymStyle` option of `applySpec`
+  (`{ salt, pseudonymStyle: "letters" }`); the `Pseudonymizer` takes it as `style`.
 
 ## `[models.analyst]` and `[models.auditor]`
 

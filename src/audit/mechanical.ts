@@ -52,7 +52,7 @@ import { inDateContext, isDateWord } from "../engine/datecontext.ts";
 import { decode, EncodingError, isEightBit } from "../engine/encoding.ts";
 import type { BlindMap } from "../engine/map.ts";
 import { isPlaceholderImage } from "../engine/images.ts";
-import { isPseudonym, nameSafe } from "../engine/pseudonym.ts";
+import { isPseudonym, LETTERS_RE, nameSafe } from "../engine/pseudonym.ts";
 import { nameWordExcluded, onNameTokens } from "../engine/names.ts";
 import { findPatternSpans, keepDomains, secretSpans, type Span } from "../engine/text.ts";
 import { findRedactValues } from "../engine/redactlist.ts";
@@ -338,19 +338,31 @@ export const SHAPED_RE =
 const nameSafeCache = new WeakMap<BlindMap, string[]>();
 
 /**
- * The name-safe twins (`Client_A_7F3A`) of the readable pseudonyms in the map, and where they stand in
- * text. A twin with a role label cannot be told from an ordinary identifier by shape, so the map is
- * what says it is one. Only whole runs count: not inside a longer letter or digit run.
+ * The name-safe twins (`Client_A_7F3A`, `Front_Desk_KQZTB`) of the readable and letters pseudonyms in
+ * the map, the letters pseudonyms themselves (`Front Desk KQZTB`), and where they stand in text. A form
+ * with a role label cannot be told from ordinary words or an identifier by shape, so the map is what
+ * says it is one. Only whole runs count: not inside a longer letter or digit run.
  */
 export function nameSafeSpans(text: string, map: BlindMap): [number, number][] {
   let twins = nameSafeCache.get(map);
   if (twins === undefined) {
-    twins = [...new Set(map.entries.filter((e) => e.pseudonym.startsWith("[")).map((e) => nameSafe(e.pseudonym)))].filter((t) => t !== "" && !t.startsWith("["));
+    const forms = new Set<string>();
+    for (const e of map.entries) {
+      if (e.pseudonym.startsWith("[")) forms.add(nameSafe(e.pseudonym));
+      else if (LETTERS_RE.test(e.pseudonym)) {
+        forms.add(e.pseudonym);
+        forms.add(nameSafe(e.pseudonym));
+      }
+    }
+    twins = [...forms].filter((t) => t !== "" && !t.startsWith("["));
     nameSafeCache.set(map, twins);
   }
   const out: [number, number][] = [];
-  if (!text.includes("_")) return out;
+  const underscore = text.includes("_");
+  const space = text.includes(" ");
+  if (!underscore && !space) return out;
   for (const t of twins) {
+    if (!(t.includes("_") ? underscore : space)) continue;
     for (let at = text.indexOf(t); at !== -1; at = text.indexOf(t, at + 1)) {
       const end = at + t.length;
       if (at > 0 && /[A-Za-z0-9]/.test(text[at - 1] as string)) continue;

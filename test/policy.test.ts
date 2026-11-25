@@ -189,6 +189,10 @@ describe("[pseudonyms]", () => {
     expect(parsePolicy(`${withoutTable()}\n[pseudonyms]\nstyle = "readable"\n`).pseudonyms).toEqual({ style: "readable" });
   });
 
+  test("style = letters parses", () => {
+    expect(parsePolicy(`${withoutTable()}\n[pseudonyms]\nstyle = "letters"\n`).pseudonyms).toEqual({ style: "letters" });
+  });
+
   test("style = compact parses", () => {
     expect(parsePolicy(`${withoutTable()}\n[pseudonyms]\nstyle = "compact"\n`).pseudonyms).toEqual({ style: "compact" });
   });

@@ -33,7 +33,7 @@
 // of their recorded value, so a map written before titles were stripped
 // ("dr. jo sample") still pins "Jo Sample".
 
-import { createHmac } from "node:crypto";
+import { hmacSha256, toHex, utf8 } from "./sha256.ts";
 import { canonicalize, cardDigits, guidCore, PSEUDO_CLASSES, type PseudoClass, type RealPseudoClass } from "./canonical.ts";
 import { REDACTED_VALUE } from "../schema.ts";
 import { type BlindMap, MAP_VERSION, type MapEntry, type MapKind, sortEntries } from "./map.ts";
@@ -233,29 +233,29 @@ function isHostname(c: string): boolean {
 /** Deterministic byte stream: HMAC blocks over the same message, extended by block index. */
 class ByteStream {
   private block = 0;
-  private buf: Buffer;
+  private buf: Uint8Array;
   private pos = 0;
   constructor(
     private readonly salt: Uint8Array,
     private readonly msg: string,
   ) {
-    this.buf = createHmac("sha256", salt).update(msg, "utf8").digest();
+    this.buf = hmacSha256(salt, utf8(msg));
   }
   next(): number {
     if (this.pos >= this.buf.length) {
       this.block += 1;
-      this.buf = createHmac("sha256", this.salt).update(`${this.msg}\0#${this.block}`, "utf8").digest();
+      this.buf = hmacSha256(this.salt, utf8(`${this.msg}\0#${this.block}`));
       this.pos = 0;
     }
     return this.buf[this.pos++] as number;
   }
-  take(n: number): Buffer {
-    return Buffer.from(Array.from({ length: n }, () => this.next()));
+  take(n: number): Uint8Array {
+    return Uint8Array.from({ length: n }, () => this.next());
   }
 }
 
 function hex4(bytes: ByteStream): string {
-  return bytes.take(2).toString("hex");
+  return toHex(bytes.take(2));
 }
 
 function renderIpv4(bytes: ByteStream): string {
@@ -267,7 +267,7 @@ function renderGuid(bytes: ByteStream): string {
   const b = bytes.take(16);
   b[6] = ((b[6] as number) & 0x0f) | 0x40; // version 4
   b[8] = ((b[8] as number) & 0x3f) | 0x80; // RFC 4122 variant
-  const h = b.toString("hex");
+  const h = toHex(b);
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 

@@ -8,14 +8,14 @@
 // fingerprinting every stretch of the corpus text of a listed length that starts and ends at a word
 // edge (the same edges `plan --from-audit` reads a candidate to), and redacts the ones that match.
 
-import { createHmac } from "node:crypto";
+import { hmacSha256, toHex, utf8 } from "./sha256.ts";
 
 const DOMAIN = "blind-redact\u0000";
 const WORD_CHAR = /[\p{L}\p{N}]/u;
 
 /** The spec `redact` entry for `value` under `salt`. */
 export function redactEntry(salt: Uint8Array, value: string): string {
-  const mac = createHmac("sha256", salt).update(DOMAIN + value, "utf8").digest("hex").slice(0, 32);
+  const mac = toHex(hmacSha256(salt, utf8(DOMAIN + value))).slice(0, 32);
   return `${value.length}:${mac}`;
 }
 

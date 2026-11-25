@@ -98,7 +98,8 @@ describe("letters form", () => {
     expect(isPseudonym("Front Desk KQZTB", map)).toBe(true);
     expect(isPseudonym("Front_Desk_KQZTB", map)).toBe(true);
     expect(isPseudonym("Front Desk KQZTC", map)).toBe(false);
-    expect(isPseudonym("Person KQZTB")).toBe(true);
+    // Never by shape alone: words like "Org HTTPS" read the same way, so only a map says it is one.
+    expect(isPseudonym("Person KQZTB")).toBe(false);
   });
 });
 

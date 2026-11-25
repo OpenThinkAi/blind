@@ -105,8 +105,6 @@ export const LETTERS_ALPHABET = "BCDFGHJKLMNPQRSTVWXZ";
 export const LETTERS_RE = /^([A-Za-z][A-Za-z -]*) ([BCDFGHJKLMNPQRSTVWXZ]{5})$/;
 /** The name-safe twin of a letters form: spaces in the label become `_` (`Front_Desk_KQZTB`). */
 const LETTERS_NAME_SAFE_RE = /^([A-Za-z][A-Za-z_-]*)_([BCDFGHJKLMNPQRSTVWXZ]{5})$/;
-/** A letters form with a class word as its label, recognisable by shape alone (like NAME_SAFE_CLASS_RE). */
-const LETTERS_CLASS_RE = /^(?:Person|Org|Host|Id|Value|Place)[ _][BCDFGHJKLMNPQRSTVWXZ]{5}$/;
 /** The name-safe twin of a readable form: spaces in the label become `_`, brackets and `#` are dropped. */
 const CLASS_LABELS = ["Person", "Org", "Host", "Id", "Value", "Place"];
 const NAME_SAFE_CLASS_RE = new RegExp(`^(?:${CLASS_LABELS.join("|")})_[A-Z]+_[0-9A-F]{4}$`);
@@ -197,7 +195,6 @@ const TLD_RE = /^[a-z]{2,63}$/;
  */
 function isShapedPseudonym(s: string, nameSafeShape = true): boolean {
   if (PREFIXED_RE.test(s) || READABLE_RE.test(s) || (nameSafeShape && NAME_SAFE_CLASS_RE.test(s)) || HOST_RE.test(s) || EMAIL_RE.test(s)) return true;
-  if (LETTERS_CLASS_RE.test(s) && (nameSafeShape || s.includes(" "))) return true;
   const ip = DOC_IPV4_RE.exec(s);
   if (!ip) return false;
   const last = Number(ip[1]);

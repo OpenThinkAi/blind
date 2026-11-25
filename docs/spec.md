@@ -300,8 +300,8 @@ same blinded output tree. No model is called.
 `[pseudonyms] style` in `blind.toml` sets the shape of every blinded name (see
 [policy.md](policy.md#pseudonyms)). `blind init` writes `readable`; a `blind.toml` without the table is
 `compact`; `letters` ([below](#letters-form)) is the third, with no digits. Readable and compact come from
-the same HMAC, so one value has the same tag in each. The two rows below are one CSV, blinded under each
-style with the same salt:
+the same HMAC, so one value has the same tag in each. The two rows below are one CSV, blinded under the
+readable and compact styles with the same salt:
 
 ```text
 readable  5580,[Counterparty Label C #8481],[Client Scope Code AR #A888],[Ledger Ref AX #5763],[Owner A #F884],host-ee89.host-470e.example

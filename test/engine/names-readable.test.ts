@@ -104,7 +104,7 @@ describe("name-safe pseudonyms in name slots", () => {
   });
 
   test("replaceAccounts and rewriteOfficeId return name-safe forms", () => {
-    for (const p of ["[Account Owner A #19C0]", "[Client AB #7F3A]", "Person_7F3A", "plain"]) {
+    for (const p of ["[Account Owner A #19C0]", "[Client AB #7F3A]", "Front Desk KQZTB", "Person KQZTB", "Person_7F3A", "plain"]) {
       expect(replaceAccounts("/Users/x/f", () => p)).toBe(`/Users/${nameSafe(p)}/f`);
     }
     const readable = "[Account Owner A #19C0]";

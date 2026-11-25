@@ -16,7 +16,7 @@ import { runAudit } from "../../src/audit/command.ts";
 import type { AuditReport } from "../../src/audit/mechanical.ts";
 import { generateKit, kitFileBytes, writeKit } from "../../src/bench/synth.ts";
 import { type ApplyResult, applySpec, type InputFile } from "../../src/engine/apply.ts";
-import { writeMap } from "../../src/engine/map.ts";
+import { writeMap } from "../../src/mapfile.ts";
 import { Revealer, revealFile } from "../../src/engine/reveal.ts";
 import { BLIND_DIR } from "../../src/init.ts";
 import { defaultPolicy, POLICY_FILE, renderPolicy } from "../../src/policy.ts";

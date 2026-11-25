@@ -8,7 +8,8 @@ import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, write
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { MAP_FILE, SPEC_FILE } from "../apply.ts";
-import { MapError, readMap } from "../engine/map.ts";
+import { MapError } from "../engine/map.ts";
+import { readMap } from "../mapfile.ts";
 import { isTerminal, maskQuoted, maskValue, shownValue } from "../mask.ts";
 import { BLIND_DIR, SALT_FILE } from "../init.ts";
 import { type AskOptions, knownValues, ModelError, modelsEnabled } from "../model.ts";

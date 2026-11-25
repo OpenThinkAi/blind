@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type BlindMap, MapError, type MapEntry, parseMap, readMap, serializeMap, writeMap } from "../../src/engine/map.ts";
+import { type BlindMap, MapError, type MapEntry, parseMap, serializeMap } from "../../src/engine/map.ts";
+import { readMap, writeMap } from "../../src/mapfile.ts";
 import { type PseudoClass, PseudonymError, Pseudonymizer } from "../../src/engine/pseudonym.ts";
 
 const SALT = Uint8Array.from({ length: 32 }, (_, i) => i + 1);
@@ -174,5 +175,13 @@ describe("parseMap", () => {
     const path = join(dir, "broken.json");
     writeFileSync(path, "{}");
     expect(() => readMap(path)).toThrow(path);
+  });
+});
+
+describe("map format module", () => {
+  test("imports no node: module, so it bundles for a browser (D-24)", () => {
+    const src = readFileSync(join(import.meta.dir, "../../src/engine/map.ts"), "utf8");
+    expect(src).not.toMatch(/from\s+["']node:/);
+    expect(src).not.toMatch(/(?:import|require)\s*\(\s*["']node:/);
   });
 });

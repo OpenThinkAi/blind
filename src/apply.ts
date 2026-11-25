@@ -7,7 +7,8 @@ import { lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { type ApplyResult, ApplyError, applySpec, type FileReport, type InputFile, type SkippedFile } from "./engine/apply.ts";
-import { type BlindMap, MapError, readMap, writeMap } from "./engine/map.ts";
+import { type BlindMap, MapError } from "./engine/map.ts";
+import { readMap, writeMap } from "./mapfile.ts";
 import { NameError } from "./engine/names.ts";
 import { MIN_SALT_BYTES, PseudonymError } from "./engine/pseudonym.ts";
 import { BLIND_DIR, SALT_FILE } from "./init.ts";

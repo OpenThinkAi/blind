@@ -78,7 +78,7 @@ import { proseNamesWithTitles } from "./prose.ts";
 import { isHonorificOrRole } from "./honorifics.ts";
 import { isLabelCell, isLabelColumn } from "./labels.ts";
 import { personAliases } from "./identity.ts";
-import { commonNamePartCount, keepForms, keptWords, nameParts, personPartForms, personValues, proseForms, recurrenceExclusion, recurrenceForms, TextScanner, vocabularyForms } from "./recur.ts";
+import { commonNamePartCount, keepForms, keptWords, nameParts, personPartForms, personValues, proseForms, hostLabelForms, recurrenceExclusion, recurrenceForms, TextScanner, vocabularyForms } from "./recur.ts";
 import { EntityMatcher, type ExtraForm, keepDomains, type Span } from "./text.ts";
 import { entrySpans, keptSpeakers, planTranscript, shapeParagraphs, speakerForms, speakersOf, type TranscriptPlan, transcriptSpans } from "./transcript.ts";
 import { unrewrittenSpans } from "./unrewritten.ts";
@@ -1102,6 +1102,17 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   const recurOpts = { keep: opts.keep, speakers: others, aliases, keptWords: shield };
   const pseudoParts = personPartForms(mapped, priorMap, vocabularySet, recurOpts);
   const pseudoForms = recurrenceForms(mapped, spec.entities, priorMap, recurOpts).map(asRemoved);
+  // A digit-bearing host label recurs bare, in prose beside the host (AGT-2082); a form a value already holds stays theirs.
+  const hostLabels = hostLabelForms(
+    read.free,
+    spec.patterns,
+    keep,
+    mapped.filter((f) => f.cls === "host").map((f) => f.value),
+    priorMap,
+    vocabularySet,
+  ).filter((f) => !pseudoForms.some((g) => (g.form ?? g.value).toLowerCase() === f.value));
+  pseudoForms.push(...hostLabels);
+  const bareLabels = hostLabels.map((f) => f.value);
   // A removed form whose text a pseudonymised form also matches is that pseudonym's, never the placeholder.
   const pseudoTexts = new Set([...pseudoForms, ...pseudoParts, ...voices].filter((f) => f.cls !== "redact").map((f) => textKey(f.form ?? f.value)));
   const redactable = (f: ExtraForm): boolean => f.cls !== "redact" || !pseudoTexts.has(textKey(f.form ?? f.value));
@@ -1223,6 +1234,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     if (cls !== "vocabulary" && list !== undefined) entities[cls as PseudoClass] = list;
   }
   const pz = new Pseudonymizer({ salt: opts.salt, map: priorMap, entities, avoid, personAliases: aliases, redactCards: patternOn(spec.patterns, "card"), style: opts.pseudonymStyle });
+  pz.recurBare(bareLabels);
   const officeIds = new OfficeIds(opts.salt);
 
   // Pass 1 ends here: derive every pseudonym in sorted order.

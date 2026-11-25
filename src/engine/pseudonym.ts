@@ -313,6 +313,8 @@ export class Pseudonymizer {
   private readonly salt: Uint8Array | undefined;
   private readonly entries = new Map<string, MapEntry>();
   private readonly issued = new Set<string>();
+  /** Host labels (canonical) the corpus also writes bare: a host value that is one of them takes the label's pseudonym. */
+  private readonly bareLabels = new Set<string>();
   private readonly avoid = new Set<string>();
   private readonly index = new Map<PseudoClass, Map<string, Resolved>>();
   private readonly ambiguousKeys: { cls: PseudoClass; key: string }[] = [];
@@ -474,6 +476,11 @@ export class Pseudonymizer {
     return pseudo;
   }
 
+  /** Host labels that recur bare in the corpus (recur.ts hostLabelForms): as host values they get the label's pseudonym. */
+  recurBare(labels: Iterable<string>): void {
+    for (const l of labels) this.bareLabels.add(l);
+  }
+
   private label(label: string): string {
     return this.derive("host-label", label, label, (b) => `host-${hex4(b)}`);
   }
@@ -532,6 +539,8 @@ export class Pseudonymizer {
       case "host":
         if (IPV4_RE.test(c)) return this.derive("host", c, surface, renderIpv4);
         if (isHostname(c)) return this.compose("host", c, surface, () => this.hostLabels(c));
+        // A lone digit-bearing label ("211785071536", "web01") is the piece a hostname's pseudonym uses (AGT-2082).
+        if (this.bareLabels.has(c)) return this.label(c);
         return this.prefixed(cls, c, surface, label);
       case "email": {
         const m = EMAIL_SHAPE_RE.exec(c);

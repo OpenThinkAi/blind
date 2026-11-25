@@ -244,6 +244,32 @@ export function recurrenceForms(values: Iterable<ExtraForm>, entities: Entities,
   return [...out.values()].sort((a, b) => cmp(a.cls, b.cls) || cmp(a.form as string, b.form as string) || cmp(a.value, b.value));
 }
 
+/**
+ * A hostname's digit-bearing label ("211785071536" of "211785071536.dkr.registry.example", "web01") is a
+ * known original once a host is blinded, so the same token stands alone in prose gets the label's
+ * pseudonym too (AGT-2082). Only labels with a digit: "registry" or "example" are words, not values.
+ * The labels come from the hosts the host pattern finds in `texts`, the hosts column rules
+ * pseudonymised (`hosts`), and an earlier map's host-label entries.
+ */
+export function hostLabelForms(texts: Iterable<string>, patterns: Patterns, keep: readonly string[], hosts: Iterable<string>, map: BlindMap | undefined, vocabulary: ReadonlySet<string>): ExtraForm[] {
+  const labels = new Set<string>();
+  const addHost = (h: string): void => {
+    for (const l of h.toLowerCase().split(".")) labels.add(l);
+  };
+  for (const h of hosts) addHost(h);
+  for (const t of texts) {
+    for (const s of findPatternSpans(t, patterns, keep)) if (s.cls === "host" && s.pattern === "host") addHost(s.value);
+  }
+  for (const e of map?.entries ?? []) if (e.kind === "host-label") labels.add(e.canonical);
+  const out: ExtraForm[] = [];
+  for (const l of [...labels].sort(cmp)) {
+    if (!/^[a-z0-9_-]+$/.test(l) || !/\d/.test(l) || /^\d{1,3}$/.test(l)) continue;
+    if (recurrenceExclusion(l, vocabulary) !== null) continue;
+    out.push({ cls: "host", value: l, form: l });
+  }
+  return out;
+}
+
 export interface RecurrenceOptions {
   /** The policy keep list: a name part equal to a keep term is not matched alone. */
   keep?: readonly string[];

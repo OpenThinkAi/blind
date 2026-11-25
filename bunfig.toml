@@ -1,0 +1,3 @@
+[test]
+# Library code has no zip codec of its own (D-24); tests run with the CLI's node:zlib codec installed.
+preload = ["./test/preload.ts"]

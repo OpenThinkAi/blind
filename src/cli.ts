@@ -5,6 +5,7 @@ import { processAuditIO, runAudit } from "./audit/command.ts";
 import { processBenchIO, runBench } from "./bench/command.ts";
 import { processEraseIO, runForget, runPurge } from "./forget.ts";
 import { processIO, runInit } from "./init.ts";
+import { installNodeZipCodec } from "./nodezip.ts";
 import { runProfile } from "./profile/command.ts";
 import { processRevealIO, runReveal } from "./reveal.ts";
 import { processRunIO, runRun } from "./run.ts";
@@ -57,6 +58,8 @@ export function helpText(): string {
 }
 
 export async function main(argv: string[]): Promise<number> {
+  // Word and Excel files need a zip codec; the library leaves it to its caller (D-24), the CLI uses node:zlib.
+  installNodeZipCodec();
   const [cmd] = argv;
   if (cmd === undefined || cmd === "-h" || cmd === "--help" || cmd === "help") {
     process.stdout.write(helpText());

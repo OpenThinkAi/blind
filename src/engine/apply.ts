@@ -67,6 +67,7 @@ import { isJsonNumber, type JsonFormat, JsonError, type JsonToken, jsonCuts, quo
 import { type BlindMap, foldText, withoutValues } from "./map.ts";
 import { type EntityEntry, NAME_SAFE_SHAPE_RE, Pseudonymizer, READABLE_SHAPE_RE } from "./pseudonym.ts";
 import { cellText, readWorkbook } from "../formats/xlsx.ts";
+import { NO_ZIP_CODEC_REASON, zipCodec } from "../formats/zipcodec.ts";
 import { lastKey } from "./birthdate.ts";
 import { type ColumnDefault, type ColumnOutcome, decide, holdsWhole, isFallback, removedForms } from "./columns.ts";
 import { type ContextOptions, type ContextTriggerSpec, pairCells } from "./context.ts";
@@ -874,6 +875,8 @@ function refuseShaped(inputs: readonly InputFile[]): void {
     const file = masked(input.path);
     if (shaped(input.path)) refuse(file, "the file name");
     const format = engineFormat(input.path);
+    // With no zip codec an Office file is skipped by the planning pass below; it is not read here either.
+    if ((format === "docx" || format === "xlsx") && zipCodec() === null) continue;
     try {
       if (format === "xlsx") {
         const wb = readWorkbook(input.bytes);
@@ -917,6 +920,11 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     const format = engineFormat(input.path);
     if (format === null) {
       skipped.push({ path: input.path, reason: "format not supported by this engine yet; not written" });
+      continue;
+    }
+    if ((format === "docx" || format === "xlsx") && zipCodec() === null) {
+      // A build with no zip codec (D-24) refuses Office files outright rather than reading their stored members only.
+      skipped.push({ path: input.path, reason: NO_ZIP_CODEC_REASON });
       continue;
     }
     const rules = rulesByFile.get(input.path) ?? [];

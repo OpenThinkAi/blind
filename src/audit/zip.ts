@@ -3,7 +3,7 @@
 // writes, never follows paths and never throws on a bad member: a member it
 // cannot decode is returned with the reason, so the audit can say so.
 
-import { inflateRawSync } from "node:zlib";
+import { NO_ZIP_CODEC_REASON, zipCodec } from "../formats/zipcodec.ts";
 
 /** Largest decompressed member the audit inflates; anything bigger is reported, not read. */
 export const MAX_MEMBER_BYTES = 256 * 1024 * 1024;
@@ -115,8 +115,13 @@ export function readZip(bytes: Uint8Array, budget: ZipBudget = zipBudget()): Zip
         member.error = `decompressing it would pass the ${MAX_INFLATE_BYTES}-byte limit for one file, not decoded`;
         continue;
       }
+      const codec = zipCodec();
+      if (codec === null) {
+        member.error = `${NO_ZIP_CODEC_REASON} (no zip codec installed), not decoded`;
+        continue;
+      }
       try {
-        member.bytes = inflateRawSync(data, { maxOutputLength: Math.min(MAX_MEMBER_BYTES, budget.left) });
+        member.bytes = codec.inflateRaw(data, Math.min(MAX_MEMBER_BYTES, budget.left));
         // Charge the larger of the declared and actual sizes: a member may under-declare.
         budget.left -= Math.max(size, member.bytes.length);
       } catch {

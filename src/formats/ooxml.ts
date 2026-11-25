@@ -19,7 +19,7 @@
 // archive past MAX_ARCHIVE_BYTES decompressed: sizes come from the archive, so
 // they are checked before anything is inflated (a zip bomb is reported, not read).
 
-import { deflateRawSync, inflateRawSync } from "node:zlib";
+import { NO_ZIP_CODEC_REASON, zipCodec } from "./zipcodec.ts";
 
 export class ZipError extends Error {
   override name = "ZipError";
@@ -468,9 +468,11 @@ function memberData(zip: Zip, e: Entry): Uint8Array {
     // The recorded size bounds the inflate below, so checking it first bounds the memory used.
     if (e.usize > MAX_MEMBER_BYTES) throw new ZipError(`recorded size ${e.usize} bytes exceeds the ${MAX_MEMBER_BYTES}-byte member limit`);
     if (zip.inflated + e.usize > MAX_ARCHIVE_BYTES) throw new ZipError(`archive decompresses to more than the ${MAX_ARCHIVE_BYTES}-byte limit`);
+    const codec = zipCodec();
+    if (codec === null) throw new ZipError(NO_ZIP_CODEC_REASON);
     zip.inflated += e.usize;
     try {
-      data = inflateRawSync(raw, { maxOutputLength: Math.max(e.usize, 1) });
+      data = codec.inflateRaw(raw, Math.max(e.usize, 1));
     } catch (err) {
       throw new ZipError(`cannot inflate: ${(err as Error).message}`);
     }
@@ -478,6 +480,13 @@ function memberData(zip: Zip, e: Entry): Uint8Array {
   if (data.length !== e.usize) throw new ZipError(`size ${data.length} differs from the recorded ${e.usize}`);
   if (crc32(data) !== e.crc) throw new ZipError("CRC mismatch");
   return data;
+}
+
+/** Deflates with the installed codec; with none, throws ZipError (an Office file is not written in such a build). */
+function deflate(data: Uint8Array): Uint8Array {
+  const codec = zipCodec();
+  if (codec === null) throw new ZipError(NO_ZIP_CODEC_REASON);
+  return codec.deflateRaw(data);
 }
 
 interface Replacement {
@@ -673,7 +682,7 @@ export function rewriteOoxml(
         members.push({ name: e.name, kind: "other" });
         continue;
       }
-      const stored = e.method === 0 ? swap : deflateRawSync(swap, { level: 6 });
+      const stored = e.method === 0 ? swap : deflate(swap);
       replaced.set(e, { data: stored, crc: crc32(swap), usize: swap.length });
       members.push({ name: e.name, kind: "other", replaced: true });
       continue;
@@ -686,7 +695,7 @@ export function rewriteOoxml(
         continue;
       }
       const plain = new TextEncoder().encode(out);
-      const stored = e.method === 0 ? plain : deflateRawSync(plain, { level: 6 });
+      const stored = e.method === 0 ? plain : deflate(plain);
       replaced.set(e, { data: stored, crc: crc32(plain), usize: plain.length });
       members.push({ name: e.name, kind: "xml", changed: true });
     } catch (err) {

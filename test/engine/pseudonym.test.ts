@@ -99,9 +99,12 @@ describe("determinism", () => {
   const SHARED = [
     "node:crypto", "node:fs", "../schema.ts", "../profile/table.ts", "../formats/ooxml.ts", "../formats/xlsx.ts",
     "../formats/officeids.ts", "../formats/paths.ts", "../formats/structural.ts", "../formats/metadata.ts",
+    "../formats/zipcodec.ts",
   ];
   const SHARED_IMPORTS: Record<string, string[]> = {
-    "../formats/ooxml.ts": ["node:zlib"],
+    // The zip codec is injected by the caller (D-24, AGT-2733): no compression library is imported.
+    "../formats/ooxml.ts": ["./zipcodec.ts"],
+    "../formats/zipcodec.ts": [],
     "../formats/xlsx.ts": ["./ooxml.ts", "./officeids.ts", "./paths.ts"],
     "../formats/paths.ts": [],
     // Document dates and zip metadata written as constants (AGT-2459).

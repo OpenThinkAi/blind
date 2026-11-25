@@ -97,7 +97,8 @@ describe("determinism", () => {
   // reader), so the two agree on what a header and a sheet are. The word list is the engine's own
   // (src/engine/words.ts), which the profiler imports.
   const SHARED = [
-    "node:crypto", "node:fs", "../schema.ts", "../profile/table.ts", "../formats/ooxml.ts", "../formats/xlsx.ts",
+    // No node:crypto: the engine's HMAC is its own (src/engine/sha256.ts, AGT-2731).
+    "node:fs", "../schema.ts", "../profile/table.ts", "../formats/ooxml.ts", "../formats/xlsx.ts",
     "../formats/officeids.ts", "../formats/paths.ts", "../formats/structural.ts", "../formats/metadata.ts",
   ];
   const SHARED_IMPORTS: Record<string, string[]> = {
@@ -114,13 +115,13 @@ describe("determinism", () => {
     "../profile/stats.ts": ["../schema.ts", "../engine/words.ts", "../engine/epoch.ts", "../engine/address.ts", "../engine/shapes.ts", "../engine/text.ts"],
   };
 
-  test("engine modules import only node:crypto, node:fs, each other and shared deterministic leaves", () => {
+  test("engine modules import only node:fs, each other and shared deterministic leaves", () => {
     const dir = join(import.meta.dir, "../../src/engine");
     for (const f of readdirSync(dir).sort()) {
       const src = readFileSync(join(dir, f), "utf8");
       for (const m of src.matchAll(/from\s+"([^"]+)"/g)) {
         const spec = m[1] as string;
-        expect(SHARED.includes(spec) || /^\.\/[a-z]+\.ts$/.test(spec)).toBe(true);
+        expect(SHARED.includes(spec) || /^\.\/[a-z0-9]+\.ts$/.test(spec)).toBe(true);
       }
     }
     // The shared modules reach only each other and the spec types, which import nothing.

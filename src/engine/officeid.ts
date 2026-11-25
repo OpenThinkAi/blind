@@ -15,10 +15,10 @@
 // parts (a comment's paragraph id, a list's id, a content control's data store) still resolve.
 // Deterministic: HMAC only, values derived in sorted order before rendering.
 
-import { createHmac } from "node:crypto";
 import { guidCore, type PseudoClass } from "./canonical.ts";
 import type { LinkShape } from "../formats/officeids.ts";
 import { nameSafe } from "./pseudonym.ts";
+import { hmacSha256, toHex, utf8 } from "./sha256.ts";
 
 export interface IdNamer {
   pseudonym(cls: PseudoClass, value: string): string;
@@ -58,7 +58,7 @@ export class OfficeIds implements HexNamer {
     const n = key.length;
     const below = n === 8 && Number.parseInt(key[0] as string, 16) < 8;
     for (let counter = 0; counter < MAX_ATTEMPTS; counter++) {
-      const digest = createHmac("sha256", this.salt).update(`office-id\0${key}\0${counter}`, "utf8").digest("hex");
+      const digest = toHex(hmacSha256(this.salt, utf8(`office-id\0${key}\0${counter}`)));
       let c = digest.slice(0, n);
       if (below) c = (Number.parseInt(c[0] as string, 16) & 7).toString(16) + c.slice(1);
       if (c === key || this.issued.has(c)) continue;

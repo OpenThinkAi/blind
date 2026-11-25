@@ -1,9 +1,9 @@
 // map.json: the reversal map. It holds original values, so it is a secret on
-// a par with the salt: created mode 0600 (never chmod'ed afterwards), never
-// logged. A reloaded map reproduces every pseudonym it records without the
-// salt.
+// a par with the salt: never logged. A reloaded map reproduces every pseudonym
+// it records without the salt. This module is the format only (no file
+// system, so it bundles for a browser); reading and writing the file, mode
+// 0600, live in src/mapfile.ts.
 
-import { closeSync, openSync, readFileSync, renameSync, rmSync, unlinkSync, writeSync } from "node:fs";
 import { canonicalize, PSEUDO_CLASSES } from "./canonical.ts";
 
 /** Components of shaped pseudonyms are recorded too, so hosts and emails rebuild without the salt. */
@@ -100,39 +100,6 @@ export function parseMap(text: string, source = "map.json"): BlindMap {
     return { kind: entry.kind, canonical: entry.canonical, value: entry.value, pseudonym: entry.pseudonym };
   });
   return { version: MAP_VERSION, entries };
-}
-
-/**
- * Write `text` atomically and privately: a temp file is created exclusively with mode 0600 (so
- * there is no window where it is readable by others), then renamed over the target.
- */
-export function writePrivateText(path: string, text: string): void {
-  const tmp = `${path}.tmp-${process.pid}`;
-  rmSync(tmp, { force: true });
-  const fd = openSync(tmp, "wx", 0o600);
-  try {
-    writeSync(fd, text);
-  } catch (err) {
-    closeSync(fd);
-    unlinkSync(tmp);
-    throw err;
-  }
-  closeSync(fd);
-  try {
-    renameSync(tmp, path);
-  } catch (err) {
-    unlinkSync(tmp);
-    throw err;
-  }
-}
-
-/** Write the map atomically, mode 0600 (writePrivateText). */
-export function writeMap(path: string, map: BlindMap): void {
-  writePrivateText(path, serializeMap(map));
-}
-
-export function readMap(path: string): BlindMap {
-  return parseMap(readFileSync(path, "utf8"), path);
 }
 
 export const foldText = (s: string): string => s.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();

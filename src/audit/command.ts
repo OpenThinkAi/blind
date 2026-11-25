@@ -9,7 +9,8 @@ import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync } from "
 import { basename, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { MAP_FILE, SPEC_FILE } from "../apply.ts";
-import { type BlindMap, MapError, readMap } from "../engine/map.ts";
+import { type BlindMap, MapError } from "../engine/map.ts";
+import { readMap } from "../mapfile.ts";
 import { BLIND_DIR, SALT_FILE } from "../init.ts";
 import { isTerminal, maskQuoted } from "../mask.ts";
 import { type AskOptions, knownValues, ModelRefusal, modelsEnabled } from "../model.ts";

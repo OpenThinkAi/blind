@@ -12,7 +12,7 @@ import { dirname, join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import { type PlanIO, runPlan } from "../src/analyst/plan.ts";
 import { runApply } from "../src/apply.ts";
-import { writeMap } from "../src/engine/map.ts";
+import { writeMap } from "../src/mapfile.ts";
 import { runAudit } from "../src/audit/command.ts";
 import { AUDITOR_SYSTEM } from "../src/audit/auditor.ts";
 import { runRun } from "../src/run.ts";

@@ -12,7 +12,8 @@ import { closeSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, r
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { MAP_FILE } from "./apply.ts";
-import { type BlindMap, MapError, readMap } from "./engine/map.ts";
+import { type BlindMap, MapError } from "./engine/map.ts";
+import { readMap } from "./mapfile.ts";
 import { RevealError, revealFile, Revealer } from "./engine/reveal.ts";
 import { BLIND_DIR } from "./init.ts";
 import { oneLine, terminalStream } from "./terminal.ts";

@@ -60,7 +60,7 @@ One rule per table column or JSON key path. An array, possibly empty. Each rule:
 | `header` | string | one of `header` / `jsonPath` | Column header text. May be `""` for a blank header. Example: `"Owner"`. |
 | `jsonPath` | string, non-empty | one of `header` / `jsonPath` | Key path, for JSON and JSONL. Example: `"$.items[*].ref_code"`. |
 | `class` | `person` \| `org` \| `host` \| `email` \| `id` \| `location` \| `vocabulary` \| `secret` \| `unknown` | yes | What the values are. `vocabulary` means ordinary words that identify no one. `secret` means passwords, keys or tokens: under `blind` every non-empty value is written as `REDACTED`, as `redact` does, and the model analyst may not propose it with `blind` or `keep` (a reply that does is rejected). `unknown` means nobody could decide. |
-| `treatment` | `blind` \| `keep` \| `value` \| `drop` \| `redact` \| `scan` | yes | `blind`: replace with a class-labelled pseudonym (`Person_BCF6` compact, `[Person A #BCF6]` readable; see [pseudonym styles](#pseudonym-styles)). `keep`: leave unchanged. `value`: replace with a neutral `Value` pseudonym. `scan`: keep the cell as written except for what the free-text scanner finds in it. `drop`: remove the column or key from the output. `redact`: write `REDACTED` in place of every non-empty value. Neither `drop` nor `redact` is recorded in the map, so neither can be revealed. The model analyst may not use `drop`, `redact` or `scan`: they come from `blind.toml` ([policy.md](policy.md#columns)) or from you. A column rule in the analyst's reply with one of them is dropped, not the reply: `blind plan` prints a note per dropped rule and that column is ruled as if the analyst had left it out (heuristic, then your `[[columns]]` rules, which may set them). The analyst also may not `keep` (or class `vocabulary`) an identifying column (an email, host, ID, address, phone or a column of names): that rule is dropped and noted the same way, and it may not turn a pattern off that the policy's classes call sensitive (it is turned back on and noted); `blind.toml` or you can do either. |
+| `treatment` | `blind` \| `keep` \| `value` \| `drop` \| `redact` \| `scan` | yes | `blind`: replace with a class-labelled pseudonym (`Person_BCF6` compact, `[Person A #BCF6]` readable; see [pseudonym styles](#pseudonym-styles)). `keep`: leave as written, apart from values blinded or removed elsewhere that recur in it (never a digits-only one in a kept number, amount or date; see [recurring values](#how-blind-apply-uses-the-spec)). `value`: replace with a neutral `Value` pseudonym. `scan`: keep the cell as written except for what the free-text scanner finds in it. `drop`: remove the column or key from the output. `redact`: write `REDACTED` in place of every non-empty value. Neither `drop` nor `redact` is recorded in the map, so neither can be revealed. The model analyst may not use `drop`, `redact` or `scan`: they come from `blind.toml` ([policy.md](policy.md#columns)) or from you. A column rule in the analyst's reply with one of them is dropped, not the reply: `blind plan` prints a note per dropped rule and that column is ruled as if the analyst had left it out (heuristic, then your `[[columns]]` rules, which may set them). The analyst also may not `keep` (or class `vocabulary`) an identifying column (an email, host, ID, address, phone or a column of names): that rule is dropped and noted the same way, and it may not turn a pattern off that the policy's classes call sensitive (it is turned back on and noted); `blind.toml` or you can do either. |
 | `confidence` | number, 0 to 1 | yes | How sure the author of the rule was. Example: `0.95`. |
 | `source` | `analyst` \| `human` \| `heuristic` \| `policy` | yes | Who wrote the rule: the model analyst, you, the built-in heuristics, or `blind plan` from a `[[columns]]` rule or `[keep]` term in `blind.toml`. |
 
@@ -424,7 +424,7 @@ and not written (exit 1). Transcripts are found by content, not by name (see
 
 | Rule | Result |
 |---|---|
-| `treatment: keep` (any class) | Byte-identical, except that a value blinded elsewhere is replaced (see recurring values below). Cells that contain a spec entity or pattern match are left alone and reported as a warning that names `scan` as the fix. |
+| `treatment: keep` (any class) | Byte-identical, except that a value blinded elsewhere is replaced (see recurring values below), never a digits-only one in a cell that reads as a number, amount or date (see numbers stay whole below). Cells that contain a spec entity or pattern match are left alone and reported as a warning that names `scan` as the fix. |
 | `treatment: scan` (any class) | Kept as written except for what the free-text scanner finds, exactly as in a text file: pattern matches, spec entities, recurring values, people named only in prose and the value after a context keyword. CSV/TSV cells, JSON string values and XLSX text cells alike. Reported as `scanned`. |
 | `treatment: blind`, class `person`/`org`/`host`/`email`/`id`/`location` | Every non-empty cell gets that class's pseudonym. |
 | `treatment: blind` with `unknown`/`vocabulary`, or `value` with any other class | Every non-empty cell gets a `Value` pseudonym. |
@@ -470,6 +470,19 @@ values made only of dictionary or field-label words (`open`, `Main Office`, `Car
 columns classed `vocabulary`, the email local parts of a blinded email, and the host labels of a
 blinded host that hold no digit (`registry`, `example`). `blind audit` still reports any of these
 that survive, and spellings the case rules leave, so add them to the spec as entities if they must go.
+
+**Numbers stay whole.** A recurring value written only in digits (`1048`, `2026`), from a blinded
+or removed column or an earlier map, is never matched inside a longer number: not right after a
+digit and a `.` or `,` (`3.1048`, `1,048`), nor right before a `.` or `,` and a digit (`1048.93`,
+`1048,50`). Sentence punctuation still ends it, so `check 1048.` and `1048, then` are replaced. And a
+cell under `keep` (or a JSON value under a `keep` path) whose whole value reads as a number, a
+currency amount (sign, currency symbol, accounting parentheses, thousands separators, decimals,
+percent) or a date, date-time or time never takes a digits-only value at all, so a kept `1048`,
+`-1048.93`, `$1,048.00`, `(1048.93)` or `2026-01-05` comes through as written. Names, emails and
+values with letters (`A1048`) still recur into kept cells, and a digits-only value still recurs into a
+kept cell of free text (`see invoice 1048`). `blind audit` reports a blinded digits-only value left
+inside a longer number as a candidate (`inside a longer number`), and one left in a kept CSV/TSV cell
+as a candidate kept by rule.
 
 **Bare host labels.** A host label with a digit in it is a known original once its host is blinded:
 the `123456789012` of `123456789012.registry.example`, or `web01` of `web01.corp.example`. Written

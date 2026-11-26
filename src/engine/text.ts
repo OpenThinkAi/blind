@@ -301,6 +301,8 @@ interface Form {
   lead: number;
   /** A surname part of a known person (ExtraForm.surname). */
   surname: boolean;
+  /** A recurring value (not a spec entity) written only in digits: never matched inside a longer number (AGT-2783). */
+  digits: boolean;
 }
 
 const WORDCHAR_RE = /[\p{L}\p{N}]/u;
@@ -378,6 +380,7 @@ export class EntityMatcher {
         datePart: datePart && words.length === 1 && isDateWord(raw.trim()),
         lead,
         surname: surname && words.length === 1 && lead === 0,
+        digits: source !== "entity" && words.length === 1 && DIGITS_RE.test(words[0] as string),
       };
       const first = (words[0] as string)[0]?.toLowerCase() as string;
       const list = this.byFirst.get(first) ?? [];
@@ -451,6 +454,7 @@ export class EntityMatcher {
         const end = this.matchAt(text, pos, form, caseless, starts);
         if (end < 0 || (block !== undefined && end > block.start)) continue;
         if (form.datePart && inDateContext(text, pos, end)) continue;
+        if (form.digits && insideNumber(text, pos, end)) continue;
         out.push({ start: starts[form.lead] as number, end, cls: form.cls, value: form.value, source: form.source, ...(form.surname ? { surname: true as const } : {}) });
         pos = end;
         matched = true;
@@ -464,6 +468,20 @@ export class EntityMatcher {
 }
 
 const URL_ESCAPE_BEFORE_RE = /%[0-9A-Fa-f]{2}$/;
+
+/** A value written only in ASCII digits ("1048", "2026"). */
+export const DIGITS_RE = /^[0-9]+$/;
+
+/**
+ * Whether the digits at text[s, e) are part of a longer number (AGT-2783): a digit and a decimal or
+ * thousands separator ("." or ",") right before them ("3.1048", "1,048"), or such a separator and a
+ * digit right after ("1048.93", "1048,50"). A dropped 1048 is not in a kept -1048.93. Sentence
+ * punctuation has no digit beyond it, so "check 1048." and "1048, then" still match. Only "." and ","
+ * are separators here: a space or apostrophe grouping ("1 048", "1'048") is not read as one number.
+ */
+export function insideNumber(text: string, s: number, e: number): boolean {
+  return /[0-9][.,]$/.test(text.slice(Math.max(0, s - 2), s)) || /^[.,][0-9]/.test(text.slice(e, e + 2));
+}
 // What may stand between two parts of one person's name for them to be read as one name.
 const JOINER_RE = /^(?:[ \t\u00a0]+|[ \t\u00a0]*,[ \t\u00a0]*|,?\+|[._-]|%20|%2[Cc](?:%20|\+)?)$/;
 const nameWords = (s: string): string[] => s.normalize("NFKC").toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];

@@ -91,6 +91,19 @@ export function isMeasure(value: string, delimiter?: string): boolean {
   return MEASURE_RES.some((re) => re.test(value)) || isWordDate(value);
 }
 
+/**
+ * Whether a whole (trimmed) value reads as a number, an amount or a date (AGT-2783): a plain integer
+ * ("1048", "-12"), anything isMeasure accepts (decimals, grouped numbers, currency, percent, dates,
+ * date-times, times), or one of those in accounting parentheses ("(1048.93)", "($1,048.00)"). A
+ * digits-only recurring value is never written into a kept cell that does.
+ */
+export function readsAsNumber(value: string): boolean {
+  const v = value.trim();
+  const ok = (x: string): boolean => /^[-+−]?\d+$/.test(x) || isMeasure(x);
+  const inner = /^\((.+)\)$/.exec(v)?.[1]?.trim();
+  return ok(v) || (inner !== undefined && ok(inner));
+}
+
 // Lowercase joining words allowed inside a Title-Case name ("Bank of Example").
 const CONNECTORS = new Set(["of", "and", "the", "for", "de", "da", "del", "di", "du", "la", "le", "van", "von", "&"]);
 const CAPITALISED_RE = /^\p{Lu}[\p{Ll}\p{M}'’.-]*\p{Ll}[\p{Ll}\p{Lu}\p{M}'’.-]*$|^\p{Lu}\.?$/u;

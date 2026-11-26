@@ -11,7 +11,8 @@
 //
 // Column treatments (design decision 4, fail closed):
 // - `keep` (any class, `vocabulary` included): byte-identical, apart from
-//   recurring values (below).
+//   recurring values (below), and never a digits-only one in a cell that reads as a
+//   number, amount or date (AGT-2783).
 // - `blind` with a sensitive class: every non-empty cell gets that class's pseudonym.
 // - `blind` with `unknown`/`vocabulary`, or `value` with a sensitive class: a `Value_` pseudonym.
 // - `scan` (any class): kept as written apart from what the free-text scanner
@@ -42,7 +43,11 @@
 // names in paths), and every value an earlier map holds, is replaced wherever else it appears: in free text, in
 // cells kept as text or under `keep`, and in JSON strings and keys. A `keep`
 // cell changes only for such a value; spec entities and patterns in it are
-// still left as written and reported.
+// still left as written and reported. A value written only in digits is never
+// matched inside a longer number anywhere ("1048" in "-1048.93", text.ts
+// insideNumber), and never replaced in a `keep` cell whose whole value reads as
+// a number, amount or date ("2026" in "2026-01-05", recur.ts TextScanner.kept;
+// AGT-2783): a dropped or blinded figure must not corrupt a kept one.
 //
 // Transcripts (src/engine/transcript.ts) are detected by content: a text file
 // (or a .vtt or .srt) that reads as WebVTT, SRT or timestamped speaker turns,

@@ -51,7 +51,8 @@ import { NAME_TOKEN_RE, ORG_WORDS, splitPeople } from "./people.ts";
 import type { BlindMap } from "./map.ts";
 import type { ContextOptions } from "./context.ts";
 import type { Shield } from "./shield.ts";
-import { EntityMatcher, type ExtraForm, findPatternSpans, findSpans, type JoinOptions, type Span } from "./text.ts";
+import { DIGITS_RE, EntityMatcher, type ExtraForm, findPatternSpans, findSpans, type JoinOptions, type Span } from "./text.ts";
+import { readsAsNumber } from "./stats.ts";
 
 /** A recurring value needs at least this many letters and digits; the audit's MIN_LEAK_LENGTH agrees. */
 export const MIN_RECUR_LENGTH = 3;
@@ -450,10 +451,16 @@ export class TextScanner {
    * A cell under `keep`: only recurring values (and transcript speakers' names) are replaced. Spec entities still shield their text
    * (and stay as written, reported by `flagged`), as do hosts under a keep-list domain; other pattern
    * matches do not, so a blinded email kept in a notes column is still replaced.
+   * A cell that reads whole as a number, an amount or a date (stats.ts readsAsNumber) never takes a
+   * digits-only recurring value (AGT-2783): a kept 1048 or 2026-01-05 stays as written though 1048 and
+   * 2026 were dropped or blinded elsewhere. Names, emails and ids with letters still recur into it.
    */
   kept(text: string): Span[] {
     const shields = findPatternSpans(text, this.patterns, this.keep).filter((s) => s.cls === null);
-    const spans = this.all.find(text, shields).filter((s) => s.source === "map" || s.source === "removed" || s.source === "speaker");
+    const numeric = readsAsNumber(text);
+    const spans = this.all
+      .find(text, shields)
+      .filter((s) => (s.source === "map" || s.source === "removed" || s.source === "speaker") && !(numeric && DIGITS_RE.test(text.slice(s.start, s.end))));
     return this.shield === undefined ? spans : this.shield.filter(text, spans);
   }
 

@@ -351,7 +351,8 @@ style = "readable"
 - **The exception: shaped stand-ins keep their shape, digits included, in every style.** Email
   addresses (`user_7a8b@host-9c0d.com`), host names and bare host labels (`host-1a2b`), IPv4 addresses
   in the documentation ranges (`192.0.2.x`), GUIDs, and numeric IDs and phones written as digits only
-  (same length, digits) are not letters stand-ins. A phone written with separators is an `Id` stand-in
+  (digits, the same length unless that width is full: then one or more digits wider, see
+  [spec.md](spec.md#pseudonym-styles)) are not letters stand-ins. A phone written with separators is an `Id` stand-in
   (`Id KQZTB`). `REDACTED` stays `REDACTED`.
 - The style sets the shape of new pseudonyms. A value already in `.blind/map.json` keeps the pseudonym
   it was given, so switching a corpus from readable to compact and applying again leaves the readable

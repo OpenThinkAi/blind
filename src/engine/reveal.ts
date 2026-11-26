@@ -329,15 +329,16 @@ function revealXlsx(bytes: Uint8Array, rv: Revealer): RevealedFile {
   const text = (v: string): string => count(rv.text(v));
   const definedName = (v: string): string => count(restoreName("definedName", v, rv));
   // A renumbered number: its digits (without sign, point or exponent) are an `id` pseudonym of the
-  // same length, the original digits put back around the decimal point where it was.
+  // same length or a widened one (AGT-2786), the original digits put back with the fraction's length.
   const number = (v: string): string => {
     const m = NUMBER.exec(v);
     if (m === null) return v;
     const [, sign, int, frac = "", exp = ""] = m as unknown as [string, string, string, string?, string?];
     const orig = rv.exact(int + frac);
-    if (orig === undefined || !/^\d+$/.test(orig) || orig.length !== int.length + frac.length) return v;
+    if (orig === undefined || !/^\d+$/.test(orig) || orig.length > int.length + frac.length || orig.length <= frac.length) return v;
     restored++;
-    return `${sign}${orig.slice(0, int.length)}${frac === "" ? "" : `.${orig.slice(int.length)}`}${exp}`;
+    const cut = orig.length - frac.length;
+    return `${sign}${orig.slice(0, cut)}${frac === "" ? "" : `.${orig.slice(cut)}`}${exp}`;
   };
   // The first sheet of a 3-D reference (Sheet1:Sheet3!A1) is a bare name; the whole reference
   // would need quoting if its restored name did, which is not written.

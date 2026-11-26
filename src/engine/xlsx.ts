@@ -517,11 +517,16 @@ function digitsOf(v: string): { sign: string; int: string; frac: string; exp: st
   return { sign: m[1] as string, int: m[2] as string, frac: m[3] ?? "", exp: m[4] ?? "" };
 }
 
-/** A number with its digits pseudonymised as an `id`, same length, the decimal point where it was. */
+/**
+ * A number with its digits pseudonymised as an `id`, the decimal point where it was. The stand-in has
+ * the same length unless it was widened (AGT-2786); the extra digits then go to the integer part, so
+ * the fraction keeps its length.
+ */
 function renumber(v: string, pz: Namer): string {
   const { sign, int, frac, exp } = digitsOf(v);
   const d = pz.pseudonym("id", int + frac);
-  return `${sign}${d.slice(0, int.length)}${frac === "" ? "" : `.${d.slice(int.length)}`}${exp}`;
+  const cut = d.length - frac.length;
+  return `${sign}${d.slice(0, cut)}${frac === "" ? "" : `.${d.slice(cut)}`}${exp}`;
 }
 
 function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer, ids: HexNamer, render: boolean, images: ImageMode): Rendered {

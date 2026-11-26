@@ -309,3 +309,41 @@ describe("blind apply", () => {
     expect(line).not.toContain("not implemented");
   });
 });
+
+describe("blind apply: numeric ids in a crowded width (AGT-2786)", () => {
+  const rule = (file: string, header: string, cls: string, treatment: string) => ({ file, header, class: cls, treatment, confidence: 1, source: "human" });
+
+  test("three-digit ids beside every three-digit number widen and are written", async () => {
+    mkdirSync(join(dir, "ids"));
+    writeFileSync(join(dir, "ids", "staff.csv"), `Employee ID,Job Title\n${Array.from({ length: 11 }, (_, i) => `${101 + i},Server`).join("\n")}\n`);
+    writeFileSync(join(dir, "ids", "sales.csv"), `Date,Transactions\n${Array.from({ length: 900 }, (_, i) => `2026-01-05,${100 + i}`).join("\n")}\n`);
+    const columns = [
+      rule("staff.csv", "Employee ID", "id", "blind"),
+      rule("staff.csv", "Job Title", "vocabulary", "keep"),
+      rule("sales.csv", "Date", "vocabulary", "keep"),
+      rule("sales.csv", "Transactions", "vocabulary", "keep"),
+    ];
+    writeFileSync(join(dir, ".blind", "spec.json"), JSON.stringify({ ...SPEC, columns, entities: {} }));
+    const r = await apply("ids", "-o", "out");
+    expect(r.code).toBe(0);
+    const got = read("out", "staff.csv").trimEnd().split("\n").slice(1).map((l) => l.split(",")[0]);
+    expect(new Set(got).size).toBe(11);
+    for (const g of got) expect(g).toMatch(/^[1-9]\d{3}$/);
+    expect(existsSync(join(dir, "out", "sales.csv"))).toBe(true);
+  });
+
+  test("a stand-in space that runs out names the file and column, masked unless --show-values", async () => {
+    mkdirSync(join(dir, "ips"));
+    const rows = Array.from({ length: 763 }, (_, i) => `10.${Math.floor(i / 250)}.${i % 250}.1`);
+    writeFileSync(join(dir, "ips", "hosts.csv"), `Address\n${rows.join("\n")}\n`);
+    writeFileSync(join(dir, ".blind", "spec.json"), JSON.stringify({ ...SPEC, columns: [rule("hosts.csv", "Address", "host", "blind")], entities: {} }));
+    const err = new PassThrough();
+    let e = "";
+    err.on("data", (d) => (e += d));
+    const code = await runApply(["ips", "-o", "out"], { out: new PassThrough(), err, cwd: dir });
+    expect(code).toBe(2);
+    expect(e).toMatch(/^blind apply: hosts\.csv, column \S+: no free host pseudonym for an IPv4 address after 10000 attempts: .*\nnothing was written\n$/);
+    expect(e).not.toContain('"Address"');
+    expect(existsSync(join(dir, "out"))).toBe(false);
+  });
+});

@@ -10,8 +10,10 @@
 // - each value as written, and its canonical form when that differs by more
 //   than case (an org without "Inc.", a person as "first last");
 // - every person/org/host/email/id/location/value entry of an earlier map, the
-//   same way. Host labels and email local parts are pieces of a blinded value,
-//   not values, and never recur on their own;
+//   same way. Email local parts and host labels are pieces of a blinded value,
+//   not values, and do not recur through here; the one exception is a host
+//   label with a digit in it ("211785071536", "web01"), which recurs bare with
+//   the label's pseudonym (hostLabelForms below, AGT-2082);
 // - not a value with fewer than MIN_RECUR_LENGTH letters and digits: the audit
 //   only ever calls a survivor that short a candidate, and "42" or "N/A"
 //   would otherwise be rewritten in every sentence;

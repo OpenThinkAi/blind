@@ -467,9 +467,20 @@ all-capitals code only exactly, a single capitalised word only where the text is
 anything else in any case. The longest form wins at each position, and a spec entity wins a tie. Left
 out, so ordinary prose is not rewritten: values with fewer than 3 letters and digits (`42`, `N/A`),
 values made only of dictionary or field-label words (`open`, `Main Office`, `Card`), spec vocabulary forms, values from
-columns classed `vocabulary`, and the host labels and email local parts of a blinded host or email.
-`blind audit` still reports any of these that survive, and spellings the case rules leave, so add
-them to the spec as entities if they must go.
+columns classed `vocabulary`, the email local parts of a blinded email, and the host labels of a
+blinded host that hold no digit (`registry`, `example`). `blind audit` still reports any of these
+that survive, and spellings the case rules leave, so add them to the spec as entities if they must go.
+
+**Bare host labels.** A host label with a digit in it is a known original once its host is blinded:
+the `123456789012` of `123456789012.registry.example`, or `web01` of `web01.corp.example`. Written
+alone elsewhere (the account number on its own in a sentence, in any file of the run), it gets the
+label's pseudonym, the same `host-` label the host's pseudonym uses (`host-1a2b`), whether the bare
+token comes before or after the host. The labels come from hosts a column rule pseudonymised, hosts
+the `host` pattern finds in free text, and an earlier map's host labels. The usual exclusions still
+apply, so these do not recur bare: a label of fewer than 3 letters and digits (`s3`, `a1`), a label
+of one to three digits only (`443`), a dictionary or field-label word, and a spec vocabulary form.
+`blind audit` reports a surviving one as a candidate (a host label of a blinded value). Output
+written before 0.4.0-rc.1 can still hold such a label: apply again from the originals to replace it.
 
 **Values of `drop` and `redact` columns** (and a `blind` column of class `secret`, which redacts) recur too, but as `REDACTED`, never as a pseudonym: they are not recorded in `map.json` (nor any name part or canonical form of them), so `blind reveal` has nothing to restore. If some other column pseudonymises the same value, that pseudonym wins. A fail-closed (unruled) cell that holds one inside a longer text is scanned as text, not pseudonymised whole, so the map never holds the text. An earlier `map.json` that holds such entries loses them on the next `blind apply`, which warns with the count (never the values).
 

@@ -63,6 +63,11 @@ these with hostile document content and a fake model that obeys any instruction 
   `AWS_SESSION_TOKEN`, `NPM_TOKEN`, `STRIPE_*`, `SLACK_*` and the like; the list is in
   [docs/policy.md](docs/policy.md)) are refused too, although they have the shape. To use another
   name, or one of those, set `BLIND_ALLOW_KEY_ENV` to it in your environment.
+- **The library calls no model.** `@openthink/blind` and `@openthink/blind/browser` (README, "Use
+  as a library") contain no model or network code: `proposeSpec` and `explainProposal` use the
+  built-in detectors and the policy only, as `blind plan --no-model` does, and `auditOutputs` runs
+  only the rule-based layers, as `blind audit --no-model` does. Nothing in this section applies to
+  them, because nothing they are given leaves the process.
 
 ## What leaves the machine under profile-only
 
@@ -182,6 +187,10 @@ use full-disk encryption.
 
 Keep `.blind/` out of version control and out of anything you share. `blind reveal` refuses to
 write beside blinded output. The map may not sit inside the output or an input.
+
+The library writes nothing to disk. `applySpec` returns the map and the caller passes in the salt,
+so where those two are kept, and how they are deleted, is the calling application's job; they are
+as sensitive as `.blind/map.json` and `.blind/salt` above.
 
 Machines that share a salt produce the same pseudonym for the same value, so a pseudonym
 is linkable across everything blinded with that salt. A new salt (`blind init --force`) breaks

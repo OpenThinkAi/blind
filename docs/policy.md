@@ -19,7 +19,9 @@ are not). Write invented examples, never real values.
 
 ## A complete file
 
-This is what `blind init --defaults` writes, minus the comments. Every key shown is read.
+This is what `blind init --defaults` writes, minus most comments, with two example keep terms
+filled in (init writes `terms = []`) and `[profile] samples` written out at its `local-only`
+default (init leaves it commented out). Every key shown is read.
 
 ```toml
 [sensitive]
@@ -361,8 +363,9 @@ style = "readable"
   `Staff KQZTB,` and `Staff KQZTB.` all come back).
 - Under `readable`, `blind apply` refuses input that already holds readable-shaped text (exit 2, nothing
   written), naming the file and line. Compact and letters do not refuse. See [spec.md](spec.md#pseudonym-styles).
-- A library caller picks the style with the `pseudonymStyle` option of `applySpec`
-  (`{ salt, pseudonymStyle: "letters" }`); the `Pseudonymizer` takes it as `style`.
+- A library caller picks the style in the policy object it passes to `applySpec`, as in `blind.toml`:
+  `applySpec(inputs, spec, { salt, policy: { pseudonyms: { style: "letters" } } })`. Without it the
+  style is compact, as for a `blind.toml` without the table.
 
 ## `[models.analyst]` and `[models.auditor]`
 

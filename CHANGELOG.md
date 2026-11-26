@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0-rc.1
 
 - **Use blind as a library.** `import ... from "@openthink/blind"` gives the engine as functions over
   files held in memory: `profileInputs`, `proposeSpec` and `explainProposal` (built-in detectors and

@@ -406,10 +406,11 @@ export function speakerForms(
 ): ExtraForm[] {
   const names = [...new Set([...speakers].map(normName))].filter((n) => n !== "").sort(cmp);
   const out = new Map<string, ExtraForm>();
-  const add = (form: string, value: string, datePart = false) => {
-    if (!out.has(form)) out.set(form, { cls: "person", value, form, source: "speaker", ...(datePart ? { datePart } : {}) });
+  const add = (form: string, value: string, datePart = false, part = true) => {
+    if (!out.has(form)) out.set(form, { cls: "person", value, form, source: "speaker", ...(part ? { part } : {}), ...(datePart ? { datePart } : {}) });
   };
-  for (const name of names) if (recurrenceExclusion(name, vocabulary) === null) add(name, name);
+  // A speaker's whole name is not a part; its parts and their misspellings are (AGT-2785).
+  for (const name of names) if (recurrenceExclusion(name, vocabulary) === null) add(name, name, false, false);
   // "Speaker 2" has only the dictionary word "Speaker" as a part, which is excluded.
   const parts = nameParts(names, others, vocabulary, keep, aliases);
   for (const p of parts) if (p.exclusion === null) add(p.form, p.value, isDateWord(p.form));

@@ -68,6 +68,12 @@ export interface Span {
   joined?: true;
   /** Internal to find(): the span is a lone surname part of a known person. Never present in its result. */
   surname?: true;
+  /**
+   * The span is one word of a person's name matched on its own (ExtraForm.part): a detected header
+   * cell or a JSON structural key is never rewritten for one (AGT-2785). A span joined with another
+   * word of the name, or with an initial or a given name before it, is not a lone part any more.
+   */
+  part?: true;
   /** For a shape-pattern match (findPatternSpans): which pattern found it, so the audit names it even when only the context made it one. */
   pattern?: PatternName;
 }
@@ -303,6 +309,8 @@ interface Form {
   surname: boolean;
   /** A recurring value (not a spec entity) written only in digits: never matched inside a longer number (AGT-2783). */
   digits: boolean;
+  /** One word of a person's name, matched alone (ExtraForm.part). */
+  part: boolean;
 }
 
 const WORDCHAR_RE = /[\p{L}\p{N}]/u;
@@ -341,6 +349,12 @@ export interface ExtraForm {
    * before it makes a different person's full name, not the known person's lone surname (AGT-1854).
    */
   surname?: boolean;
+  /**
+   * One word of a person's name, matched alone (recur.ts nameParts: a column, map, prose or speaker
+   * person's part, a part two people share, or a removed column's): its spans are marked `part`, so
+   * a detected header cell or a JSON structural key keeps its text (AGT-2785). A whole value never is.
+   */
+  part?: boolean;
 }
 
 /** What a joined given name may not be: the policy's keep terms and the spec's vocabulary forms, folded. */
@@ -360,13 +374,20 @@ export class EntityMatcher {
    * lengths tie. Of two extras with the same class and form, the first is kept: pass them sorted.
    */
   constructor(entities: Entities, extra: readonly ExtraForm[] = [], private readonly joinOpts: JoinOptions = {}) {
-    const seen = new Set<string>();
-    const add = (key: string, cls: PseudoClass | null, raw: string, value: string, rank: number, source: Form["source"], datePart = false, lead = 0, surname = false): void => {
+    const seen = new Map<string, Form>();
+    const add = (key: string, cls: PseudoClass | null, raw: string, value: string, rank: number, source: Form["source"], datePart = false, lead = 0, surname = false, part = false): void => {
       const words = raw.trim().split(/\s+/).filter((w) => w !== "");
       if (words.length === 0 || lead >= words.length) return;
       const dedupe = `${key}\0${lead}\0${words.join(" ")}`;
-      if (seen.has(dedupe)) return;
-      seen.add(dedupe);
+      const prior = seen.get(dedupe);
+      if (prior !== undefined) {
+        // A whole value with the text of a lone name part keeps that value's form (recurrenceForms):
+        // fail closed, so a header cell equal to it is still replaced (AGT-2785).
+        if (prior.part && !part) {
+          Object.assign(prior, { value, rank, source, datePart: false, surname: false, part: false, digits: source !== "entity" && words.length === 1 && DIGITS_RE.test(words[0] as string) });
+        }
+        return;
+      }
       const form: Form = {
         words,
         folded: words.map((w) => w.toLowerCase()),
@@ -381,7 +402,9 @@ export class EntityMatcher {
         lead,
         surname: surname && words.length === 1 && lead === 0,
         digits: source !== "entity" && words.length === 1 && DIGITS_RE.test(words[0] as string),
+        part: part && words.length === 1 && lead === 0,
       };
+      seen.set(dedupe, form);
       const first = (words[0] as string)[0]?.toLowerCase() as string;
       const list = this.byFirst.get(first) ?? [];
       list.push(form);
@@ -393,13 +416,15 @@ export class EntityMatcher {
         for (const raw of [e.canonical, ...e.aliases, ...e.parts]) add(key, cls, raw, raw, rank, "entity");
       }
     }
-    for (const x of extra) add(`extra:${x.cls}`, x.cls, x.form ?? x.value, x.value, ENTITY_CLASSES.length + PSEUDO_CLASSES.indexOf(x.cls as RealPseudoClass), x.source ?? "map", x.datePart === true, x.lead ?? 0, x.surname === true);
+    for (const x of extra) add(`extra:${x.cls}`, x.cls, x.form ?? x.value, x.value, ENTITY_CLASSES.length + PSEUDO_CLASSES.indexOf(x.cls as RealPseudoClass), x.source ?? "map", x.datePart === true, x.lead ?? 0, x.surname === true, x.part === true);
     // Longest first; at equal length a vocabulary form wins (so "SAM" listed as vocabulary is not
-    // taken for the person part "Sam"); then class order, then text, so the scan is order-independent.
+    // taken for the person part "Sam"), then a whole value over a lone name part (AGT-2785: a header
+    // cell equal to a blinded value is replaced even when it is someone's name part too); then class
+    // order, then text, so the scan is order-independent.
     for (const list of this.byFirst.values()) {
       list.sort(
         (a, b) =>
-          b.length - a.length || Number(b.shield) - Number(a.shield) || a.rank - b.rank || cmp(a.value, b.value),
+          b.length - a.length || Number(b.shield) - Number(a.shield) || Number(a.part) - Number(b.part) || a.rank - b.rank || cmp(a.value, b.value),
       );
     }
     this.empty = this.byFirst.size === 0;
@@ -455,7 +480,7 @@ export class EntityMatcher {
         if (end < 0 || (block !== undefined && end > block.start)) continue;
         if (form.datePart && inDateContext(text, pos, end)) continue;
         if (form.digits && insideNumber(text, pos, end)) continue;
-        out.push({ start: starts[form.lead] as number, end, cls: form.cls, value: form.value, source: form.source, ...(form.surname ? { surname: true as const } : {}) });
+        out.push({ start: starts[form.lead] as number, end, cls: form.cls, value: form.value, source: form.source, ...(form.surname ? { surname: true as const } : {}), ...(form.part ? { part: true as const } : {}) });
         pos = end;
         matched = true;
         break;
@@ -532,7 +557,8 @@ function joinGivenNames(text: string, spans: Span[], taken: readonly Span[], opt
         if (eligible) {
           const start = lo + m.index;
           const full = text.slice(start, s.end).replace(/[ \t\u00a0]+/g, " ");
-          out.push({ ...s, start, value: full, joined: true });
+          const { part: _part, ...rest } = s;
+          out.push({ ...rest, start, value: full, joined: true });
           prevEnd = s.end;
           continue;
         }
@@ -563,6 +589,7 @@ function joinPersonSpans(text: string, spans: Span[], taken: readonly Span[]): S
       own.every((w) => !words.has(w))
     ) {
       prev.end = s.end;
+      delete prev.part;
       for (const w of own) words.add(w);
       continue;
     }
@@ -582,10 +609,14 @@ function joinPersonSpans(text: string, spans: Span[], taken: readonly Span[]): S
     const after = /^,?[ \t\u00a0]+(\p{Lu})\.(?![\p{L}\p{N}])/u.exec(text.slice(s.end, upper));
     if (after !== null && initials.has((after[1] as string).toLowerCase()) && free(s.end, s.end + after[0].length)) {
       s.end += after[0].length;
+      delete s.part;
       continue;
     }
     const before = /(?<![\p{L}\p{N}.])(\p{Lu})\.[ \t\u00a0]+$/u.exec(text.slice(lower, s.start));
-    if (before !== null && initials.has((before[1] as string).toLowerCase()) && free(s.start - before[0].length, s.start)) s.start -= before[0].length;
+    if (before !== null && initials.has((before[1] as string).toLowerCase()) && free(s.start - before[0].length, s.start)) {
+      s.start -= before[0].length;
+      delete s.part;
+    }
   }
   return out;
 }

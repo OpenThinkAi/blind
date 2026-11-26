@@ -449,7 +449,9 @@ number cell is renumbered as before). A non-`vocabulary` spec entity (its name, 
 the redact list and a dropped or redacted value all win over the term ([policy.md](policy.md#keep)).
 
 A rule that names a column the file does not have is an error, so a stale spec never quietly stops
-blinding a column. Rows above the header and the header row itself are treated as free text.
+blinding a column. Rows above the header and the header row itself are treated as free text, with
+one exception: a detected header row is never changed by a lone name part (see **Header cells and
+JSON keys** below).
 
 **One entity, one pseudonym.** A value gets one pseudonym across classes: a name blinded as a
 transcript speaker (`person`) and pseudonymised again in a `value` column keeps the speaker's
@@ -539,6 +541,30 @@ before. Spec entities are not split this way: their parts are the ones the spec 
 pseudonymised as `value` that reads as a person's name (`Avery Quill`, `Quill, Avery`; the same test
 as a column of people) has name parts too, which carry that cell's `Value` pseudonym.
 
+**Header cells and JSON keys.** A header cell names its column, and rules, consumers and the next
+run's spec refer to the column by that name, so a lone name part never changes one: `Tips` stays
+`Tips` in `pay.csv` when `Ada Tips` is blinded in `staff.csv`, and so does a part two people share
+(pseudonymised as itself, above), or a part of a name in a `drop` or `redact` column (written as
+`REDACTED` elsewhere), in the same file or any other file of the run, and when it comes back as an
+earlier map's entry. This covers every cell of a detected header row in a CSV or TSV file
+and in each XLSX worksheet (and the table column and pivot field names that repeat one), and JSON
+and JSONL structural keys (field names). A whole recurring value still replaces a header cell that is
+it or holds it (a pivoted sheet whose headers are client names, `Acme Roofing Q1`, or a header that is
+someone's full name), and spec entities and patterns are replaced there as in any free text. The
+apply report lists each header cell (or JSON key) the output changed, by column and original text
+(`header cells changed` per file; `headerCellsReplaced` in the JSON report: `index`, `sheet` for a
+workbook, and `header`), since a rule naming that column needs the new name. It also warns about each
+header cell (or key) it kept that holds a word of a blinded person's name (`headerPartsKept`, same
+shape): a column name such as `Tips` is the point, but a roster pivoted by first name or surname
+(`Week,Avery,Bea`) keeps those names too, so check the list and add a spec entity for any that is a
+person (a spec entity is replaced in a header). Rows above the header
+(a title, a note) are free text as before, name parts included. When no row looked like a header and
+row 1 stands in for one, that row may be data, so it is free text as before too. An XLSX shared string
+a header cell shares with another cell is written once for both, as free text. DOCX tables have no
+header row: their cells are free text. `blind audit` reports a name part surviving in one of these
+places as a `candidate` (`kept as a column header ... check it is not the person's name`), not a
+leak, so the audit's status is `candidates`, not `clean`.
+
 **Key/value blocks.** A vertical record (`Client | Dana Example`, then `Phone | ...`, `Card | ...`,
 `Email | ...` below) puts labels in one column and values in the next. When a rule pseudonymises a
 CSV or XLSX column that has a column to its right and whose cells are short labels (at least two
@@ -618,7 +644,8 @@ table above applies to each key path's values as it does to a column's cells:
 - Keys that are record identifiers are the values of their `.*~` key path and are rewritten like any
   other value, so an ID used as a key and the same ID used as a value get the same pseudonym. If
   blinding would give two keys of one object the same name, apply refuses (exit 2, nothing written).
-- Other keys (field names) are free text, like a table's header row.
+- Other keys (field names) are free text, like a table's header row, and like it are never changed
+  by a lone name part (see **Header cells and JSON keys** above).
 
 Edits are spliced into the original text: indentation, spacing, separators, key order, the escaping
 of untouched characters and the trailing newline are unchanged, and JSONL stays one record per line.
@@ -1071,7 +1098,9 @@ up to three layers, mechanical, semantic, then model; the report lists the layer
   whole words only), and every match of an enabled pattern that is not a pseudonym. A lone word of a
   blinded person's name in the engine's case for a single-word form (capitalised, or an exact short
   acronym) is a `leak`; in another case, a `candidate`; one that is also a dictionary word or a keep
-  term is a `candidate` in that case and is not reported otherwise. Text counts as a pseudonym only
+  term is a `candidate` in that case and is not reported otherwise. One in a detected CSV/TSV or
+  worksheet header cell, a table column or pivot field name repeating one, or a JSON structural key
+  is a `candidate` too: blind keeps a column's name there by design. Text counts as a pseudonym only
   when the map issued it: a whole pseudonym in either style or its name-safe twin, or a host or
   email pseudonym built from `host-` labels and `user_` local parts the map holds. A real value
   that merely has a pseudonym's shape (`Person_1A2B`, `[Client A #1A2B]`, `host-1a2b.net`, an RFC

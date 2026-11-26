@@ -6,7 +6,7 @@
 import { lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
-import { type ApplyResult, ApplyError, applySpec, type FileReport, type InputFile, type SkippedFile } from "./engine/apply.ts";
+import { type ApplyResult, ApplyError, applySpec, type FileReport, type HeaderCellReport, type InputFile, type SkippedFile } from "./engine/apply.ts";
 import { type BlindMap, MapError } from "./engine/map.ts";
 import { readMap, writeMap } from "./mapfile.ts";
 import { NameError } from "./engine/names.ts";
@@ -204,6 +204,21 @@ export function renderReport(result: ApplyResult, show = false): string {
         const n = c.keptTerms as number;
         lines.push(`    ${n} ${unit}${n === 1 ? "" : "s"} kept as written: the whole value is a [keep] term`);
       }
+    }
+    const place = (h: HeaderCellReport): string =>
+      `${h.sheet === undefined ? "" : `sheet ${v(h.sheet)} `}${h.index === undefined ? `key ${v(h.header)}` : `column ${h.index + 1} ${v(h.header)}`}`;
+    const renamed = f.headerCellsReplaced ?? [];
+    if (renamed.length > 0) {
+      const those = renamed.length === 1 ? "that column" : "those columns";
+      lines.push(
+        `  ${renamed.length} header ${renamed.length === 1 ? "cell" : "cells"} changed (a whole blinded value, spec entity or pattern match; a name part never changes one), so a rule or consumer naming ${those} by header needs the new name: ${renamed.map(place).join(", ")}`,
+      );
+    }
+    const keptParts = f.headerPartsKept ?? [];
+    if (keptParts.length > 0) {
+      lines.push(
+        `  warning: ${keptParts.length} header ${keptParts.length === 1 ? "cell" : "cells"} kept as written although ${keptParts.length === 1 ? "it holds" : "they hold"} a word of a blinded person's name (a column's name is never changed for a name part); check none is the person's name, and give a spec entity for one that is: ${keptParts.map(place).join(", ")}`,
+      );
     }
     if (f.entityReplacements + f.patternReplacements > 0) {
       lines.push(`  free text: ${f.entityReplacements} entity and ${f.patternReplacements} pattern replacements`);

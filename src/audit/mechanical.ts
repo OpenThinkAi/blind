@@ -60,6 +60,7 @@ import { findRedactValues } from "../engine/redactlist.ts";
 import { nameShaped, recurrenceExclusion, vocabularyForms } from "../engine/recur.ts";
 import { isLabelWord } from "../engine/labels.ts";
 import { keptCells } from "./keptcells.ts";
+import { headerCellRanges, jsonKeyRanges, xlsxHeaderRanges } from "./headercells.ts";
 import { Shield } from "../engine/shield.ts";
 import { detectHeaderRow } from "../profile/table.ts";
 import { valueStats } from "../profile/stats.ts";
@@ -521,7 +522,7 @@ function scanView(view: View, ctx: Context, isName: boolean): Hit[] {
       // A month or weekday word in a date ("9 Jan.") is a date, as the engine reads it (AGT-1813).
       if (isDateWord(got) && inDateContext(text, start, end)) continue;
       const ruleCase = n.rule === "exact" ? got === n.original : /^\p{Lu}/u.test(got) && got.toLowerCase() === n.original.toLowerCase();
-      if (ruleCase && n.part === "name") push(start, end, { ...base, severity: "leak", reason: "a word of a blinded person's name (from the map) survives on its own" });
+      if (ruleCase && n.part === "name") push(start, end, { ...base, severity: "leak", reason: PART_SURVIVES });
       else if (ruleCase) push(start, end, { ...base, severity: "candidate", reason: "a word of a blinded person's name (from the map), also an ordinary word or a keep term" });
       else if (n.part === "name") push(start, end, { ...base, severity: "candidate", reason: "a word of a blinded person's name (from the map), in another case, accent or width" });
       continue;
@@ -560,6 +561,9 @@ function scanView(view: View, ctx: Context, isName: boolean): Hit[] {
   }
   return hits;
 }
+
+/** The reason of a lone name-part survivor (a leak unless it names a column, headerParts). */
+const PART_SURVIVES = "a word of a blinded person's name (from the map) survives on its own";
 
 const PATTERN_NAMES: readonly PatternName[] = ["email", "ip", "mac", "guid", "phone", "card", "address", "host", "secret"];
 
@@ -1103,6 +1107,43 @@ function keptByRule(sink: PartSink, bytes: Uint8Array, rules: readonly ColumnRul
   });
 }
 
+const JSON_RE = /\.(?:json|jsonl|ndjson)$/i;
+
+/**
+ * A lone word of a blinded person's name in a detected header cell, a JSON structural key, or a
+ * workbook's detected header text (headercells.ts) is there by design: blind never rewrites a
+ * column's name for a name part (AGT-2785), as a rule, a consumer or the next run's spec refers to
+ * the column by it. Such a survivor is a candidate saying so, not a leak. A whole value surviving
+ * there is still a leak, and so is a part in a row that only stands in for a header.
+ */
+function headerParts(sink: PartSink, path: string, bytes: Uint8Array) {
+  if (!sink.findings.some((f) => f.severity === "leak" && f.reason === PART_SURVIVES)) return;
+  const byPart = new Map<string, (readonly [number, number])[]>();
+  const format = tableFormat(path);
+  if (format !== null || JSON_RE.test(path)) {
+    let decoded;
+    try {
+      decoded = decode(bytes);
+    } catch (e) {
+      if (!(e instanceof EncodingError)) throw e;
+      return;
+    }
+    if (decoded.encoding !== "utf8" && decoded.encoding !== "utf8-bom") return;
+    const ranges = format !== null ? headerCellRanges(decoded.text, format === "tsv") : jsonKeyRanges(decoded.text, !/\.json$/i.test(path));
+    const bom = decoded.encoding === "utf8-bom" ? 3 : 0;
+    const place = (at: number): number => utf8Length(decoded.text.slice(0, at)) + bom;
+    byPart.set("", ranges.map(([a, b]) => [place(a), place(b)] as const));
+  } else if (/\.xlsx$/i.test(path) && looksLikeZip(bytes)) {
+    for (const [member, ranges] of xlsxHeaderRanges(bytes)) byPart.set(member, ranges);
+  } else return;
+  sink.findings = sink.findings.map((f) => {
+    if (f.severity !== "leak" || f.reason !== PART_SURVIVES || f.in !== "content" || f.offset === null) return f;
+    const at = f.offset;
+    if (!(byPart.get(f.part) ?? []).some(([a, b]) => at >= a && at < b)) return f;
+    return { ...f, severity: "candidate" as const, reason: `${f.reason}, kept as a column header (blind never changes a column's name for a name part): check it is not the person's name` };
+  });
+}
+
 /**
  * The shield the engine used, read back from the output: every value held whole in a CSV/TSV `keep`
  * column, less those the map or a spec entity also blinds, and the built-in placeholders.
@@ -1219,6 +1260,7 @@ export function auditTree(
         eightBitFinding(sink, entry.path, entry.bytes);
         columnFindings(sink, entry.bytes, rulesByFile.get(entry.path) ?? []);
         keptByRule(sink, entry.bytes, rulesByFile.get(entry.path) ?? []);
+        headerParts(sink, entry.path, entry.bytes);
         break;
       case "symlink":
         unscanned(sink, "", "symbolic link, not followed: whatever it points to was not audited", "link");

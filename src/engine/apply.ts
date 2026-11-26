@@ -187,6 +187,14 @@ export interface FileReport {
   noHeader?: boolean;
   /** CSV/TSV only: data rows wider than the header (a stray delimiter); their extra cells continue the last column. Absent when 0. */
   overflowRows?: number;
+  /**
+   * CSV/TSV and XLSX: the cells of a detected header row the output changed, by 0-based column
+   * (`index`, and `sheet` in a workbook) and original text; JSON/JSONL: the structural keys changed,
+   * by original text, each once. A lone name part never changes one (AGT-2785); a whole blinded
+   * value, a spec entity, a pattern match or a key/value block's paired value can, and a rule or
+   * consumer that names the column by its header then needs the new name. Absent when none.
+   */
+  headerCellsReplaced?: HeaderCellReplaced[];
   columns: ColumnReport[];
   /** Free-text replacements (text files, and header, preamble and kept cells of tables). */
   entityReplacements: number;
@@ -219,6 +227,15 @@ export interface FileReport {
   /** Names replaced as a new person because a given name stood right before a known person's surname (AGT-1854). Absent when 0. */
   joinedNames?: number;
   changed: boolean;
+}
+
+export interface HeaderCellReplaced {
+  /** 0-based column, as in `columns`; absent for a JSON key. */
+  index?: number;
+  /** XLSX only: the worksheet. */
+  sheet?: string;
+  /** The header cell (or JSON key) as written in the input. */
+  header: string;
 }
 
 export interface TranscriptReport {
@@ -346,6 +363,11 @@ interface Pending<K> {
   keep: boolean;
   /** The column a data cell belongs to; null for headers, preamble rows and structural keys. */
   column: ColumnReport | null;
+  /**
+   * A cell of a detected header row, or a JSON structural key: it names a column, so a lone name
+   * part never rewrites it (TextScanner.heading, AGT-2785). Absent for everything else.
+   */
+  heading?: true;
 }
 
 interface TablePlan {
@@ -459,7 +481,7 @@ function proseInputs(plans: readonly Plan[]): { free: string[]; kept: string[] }
 function scanPending<K>(pending: readonly Pending<K>[], edits: Map<K, CellEdit>, scanner: TextScanner): void {
   for (const p of pending) {
     if (p.keep && p.column !== null && scanner.flagged(p.value)) p.column.flagged++;
-    const spans = p.keep ? scanner.kept(p.value) : scanner.free(p.value);
+    const spans = p.keep ? scanner.kept(p.value) : p.heading === true ? scanner.heading(p.value) : scanner.free(p.value);
     if (spans.length > 0) edits.set(p.key, { kind: "spans", spans });
   }
 }
@@ -573,10 +595,14 @@ function planTable(
   }
   // Preamble rows and the header row are free text. A dropped column leaves with its header; a
   // preamble row (a title, a note) is not part of any column and is never cut.
+  // A detected header row names the columns: a lone name part never rewrites it, a whole value
+  // still does (AGT-2785). With no detected header, row 1 only stands in and may be data (a
+  // headerless file's first record), so it stays plain free text, name parts included.
   for (let r = 0; r <= headerRow; r++) {
+    const heading = detected !== null && r === headerRow;
     (rows[r] as Row).cells.forEach((cell, col) => {
       if (r === headerRow && headerPaired.has(col)) return;
-      if (r < headerRow || !dropped.has(col)) pending.push({ key: `${r}:${col}`, value: cell.value, keep: false, column: null });
+      if (r < headerRow || !dropped.has(col)) pending.push({ key: `${r}:${col}`, value: cell.value, keep: false, column: null, ...(heading ? { heading: true as const } : {}) });
     });
   }
   // A cell that holds the value of a label in another cell ("DOB" | "01/02/1960"), in a column
@@ -699,9 +725,10 @@ function planJson(
     }
   }
   const cuts = jsonCuts(text, tokens, dropped);
-  // Structural keys (field names) are free text, like a table's header row; a dropped member's key goes with it.
+  // Structural keys (field names) are free text, like a table's header row, and like it are never
+  // rewritten for a lone name part (AGT-2785); a dropped member's key goes with it.
   tokens.forEach((t, i) => {
-    if (t.kind === "key" && t.column === null && !cuts.tokens.has(i)) pending.push({ key: i, value: t.value, keep: false, column: null });
+    if (t.kind === "key" && t.column === null && !cuts.tokens.has(i)) pending.push({ key: i, value: t.value, keep: false, column: null, heading: true });
   });
   return { kind: "json", format, input, encoding, text, tokens, edits, pending, mapped, removed, columns, cuts, wholeCells };
 }
@@ -723,7 +750,7 @@ function spliceString(raw: string, spans: readonly Span[], pz: Pseudonymizer): s
 function renderJson(
   p: JsonPlan,
   pz: Pseudonymizer,
-): { text: string; entityReplacements: number; patternReplacements: number; mappedReplacements: number; keptHosts: number } {
+): { text: string; entityReplacements: number; patternReplacements: number; mappedReplacements: number; keptHosts: number; keysReplaced: string[] } {
   const byPath = new Map(p.columns.map((c) => [c.jsonPath as string, c]));
   // Per object, each output key and the input key it came from: two input keys must never become one.
   const keys = new Map<number, Map<string, string>>();
@@ -731,6 +758,8 @@ function renderJson(
   let patternReplacements = 0;
   let mappedReplacements = 0;
   let keptHosts = 0;
+  /** Structural keys the output changed (AGT-2785), each once. */
+  const keysReplaced = new Set<string>();
   // Replacements and cuts, spliced into the text at the end; they never overlap.
   const patches: { start: number; end: number; text: string }[] = p.cuts.ranges.map(([start, end]) => ({ start, end, text: "" }));
   p.tokens.forEach((t, i) => {
@@ -754,6 +783,7 @@ function renderJson(
           t.kind === "number" ? (isJsonNumber(value) ? value : quote(value)) : edit.kind !== "spans" ? quote(value) : spliceString(raw, edit.spans, pz);
         patches.push({ start: t.start, end: t.end, text: written });
         if (t.column !== null) (byPath.get(t.column) as ColumnReport).changed++;
+        else if (t.kind === "key") keysReplaced.add(t.value);
       }
     }
     if (t.kind === "key") {
@@ -774,7 +804,7 @@ function renderJson(
     out += p.text.slice(at, x.start) + x.text;
     at = x.end;
   }
-  return { text: out + p.text.slice(at), entityReplacements, patternReplacements, mappedReplacements, keptHosts };
+  return { text: out + p.text.slice(at), entityReplacements, patternReplacements, mappedReplacements, keptHosts, keysReplaced: [...keysReplaced].sort(cmp) };
 }
 
 /** Every text of the corpus blind reads: paths, documents, cells and values, for the redact list (redactlist.ts). */
@@ -1115,7 +1145,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   const removedParts = (): ExtraForm[] =>
     nameParts(removedNames, [], vocabularySet, new Set([...keepSet, ...shield]))
       .filter((p) => p.exclusion === null)
-      .map((p) => ({ cls: "redact" as const, value: p.form, form: p.form, source: "removed" as const }));
+      .map((p) => ({ cls: "redact" as const, value: p.form, form: p.form, source: "removed" as const, part: true }));
   // An earlier map's entries for such values go on the next write (the count is reported, never the values).
   const redactedParts = removedParts();
   // Values on the spec's redact list (listedValues, above): written as the placeholder wherever they
@@ -1477,6 +1507,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         ...(r.metadataReplacements > 0 ? { metadataReplacements: r.metadataReplacements } : {}),
         ...(out.changed ? { datesScrubbed: out.dates } : {}),
         sheets: p.plan.sheets.map((s) => ({ ...s, outputName: r.sheetNames.find((n) => n.from === s.name)?.to ?? s.name })),
+        ...(r.headerCells.length > 0 ? { headerCellsReplaced: r.headerCells.map((h) => ({ index: h.index, sheet: h.sheet, header: h.header })) } : {}),
         unread: r.members.filter((m) => m.kind === "other" && m.replaced !== true && !m.name.endsWith("/")).map((m) => m.name),
         ...(pictureNote.line !== null ? { warnings: [pictureNote.line] } : {}),
         changed,
@@ -1548,6 +1579,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         patternReplacements: r.patternReplacements,
         mappedReplacements: r.mappedReplacements,
         keptHosts: r.keptHosts,
+        ...(r.keysReplaced.length > 0 ? { headerCellsReplaced: r.keysReplaced.map((header) => ({ header })) } : {}),
         changed: false,
       };
     } else {
@@ -1555,6 +1587,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       let patternReplacements = 0;
       let mappedReplacements = 0;
       let keptHosts = 0;
+      const headerCellsReplaced: HeaderCellReplaced[] = [];
       for (const [key, edit] of p.edits) {
         const [r, c] = key.split(":").map(Number) as [number, number];
         const cell = (p.rows[r] as Row).cells[c] as Cell;
@@ -1569,6 +1602,8 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
           keptHosts += keptHostCount(edit.spans);
         }
         if (value === cell.value) continue;
+        // A detected header cell that leaves with its dropped column is not in the output to rename.
+        if (r === p.headerRow && !p.noHeader && !p.dropped.has(c)) headerCellsReplaced.push({ index: c, header: cell.value });
         cell.raw = renderCell(value, cell.quoted, p.delim);
         cell.value = value;
         if (r > p.headerRow) (p.columns[Math.min(c, p.columns.length - 1)] as ColumnReport).changed++;
@@ -1590,6 +1625,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         outputPath: p.input.path,
         columns: p.columns,
         ...(p.overflowRows > 0 ? { overflowRows: p.overflowRows } : {}),
+        ...(headerCellsReplaced.length > 0 ? { headerCellsReplaced: headerCellsReplaced.sort((a, b) => (a.index as number) - (b.index as number)) } : {}),
         entityReplacements,
         patternReplacements,
         mappedReplacements,

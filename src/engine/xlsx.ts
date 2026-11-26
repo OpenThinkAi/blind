@@ -39,6 +39,7 @@ import {
   slotRules,
   tokenizeFormula,
   wholeClass,
+  type SharedString,
   type XlsxCell,
   XlsxError,
   type XlsxWorkbook,
@@ -71,7 +72,12 @@ export interface Namer {
 
 export type Spanner = (text: string) => Span[];
 
-type Action = ColumnAction | { kind: "header" };
+/**
+ * `header`: a preamble cell, or a cell of a header row that only stands in (no row looked like
+ * one): free text. `heading`: a cell of a detected header row, which names a column: free text,
+ * less lone name parts (TextScanner.heading, AGT-2785).
+ */
+type Action = ColumnAction | { kind: "header" } | { kind: "heading" };
 
 interface CellPlan {
   action: Action;
@@ -133,6 +139,11 @@ export interface XlsxPlan {
   wholes: ExtraForm[];
   /** Set when a `drop` or `redact` column cannot be cleared in this workbook: it is not written, for this reason. */
   refusal?: string;
+  /**
+   * The text of every detected header cell (`heading`), so a table column or pivot field name that
+   * repeats one is rewritten the same way and still matches it (AGT-2785).
+   */
+  headings: Set<string>;
 }
 
 const NUMBER = /^(-?)(\d+)(?:\.(\d+))?([Ee][+-]?\d+)?$/;
@@ -181,6 +192,7 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
   /** Per shared string, the plans of the cells that use it. */
   const uses: CellPlan[][] = wb.sharedStrings.map(() => []);
   const wholeCells: XlsxPlan["wholeCells"] = [];
+  const headings = new Set<string>();
 
   for (const sheet of wb.sheets) {
     if (sheet.member === null) continue;
@@ -281,7 +293,9 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
       });
       columns.push(column);
     }
-    // Rows above the header and the header row itself are free text.
+    // Rows above the header and the header row itself are free text. A detected header row names the
+    // columns: a lone name part never rewrites it, a whole value still does (AGT-2785). With no
+    // detected header, row 1 only stands in and stays plain free text, name parts included.
     for (const c of sheet.cells) {
       if (c.row > headerRow) continue;
       const pairedCls = c.row === headerRow && (c.type === "s" || c.type === "str" || c.type === "inlineStr") ? headerPairs.get(c.col) : undefined;
@@ -290,7 +304,9 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
         columnValues.push(form);
         mapped.push(form);
       }
-      const plan: CellPlan = { action: pairedCls !== undefined ? { kind: "pseudo", cls: pairedCls } : { kind: "header" }, renumber: false };
+      const heading = pairedCls === undefined && detected !== null && c.row === headerRow;
+      if (heading) headings.add(cellText(c, wb.sharedStrings));
+      const plan: CellPlan = { action: pairedCls !== undefined ? { kind: "pseudo", cls: pairedCls } : heading ? { kind: "heading" } : { kind: "header" }, renumber: false };
       plans.set(c.ref, plan);
       if (c.type === "s") (uses[Number(c.v)] as CellPlan[]).push(plan);
     }
@@ -344,6 +360,7 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
     metadata: [],
     wholes: xlsxWholes(bytes),
     ...(refusal === undefined ? {} : { refusal }),
+    headings,
   };
 }
 
@@ -380,7 +397,11 @@ export function settleXlsx(p: XlsxPlan, held: { has(text: string): boolean }, ke
   }
   const rank = (a: Action): number => (a.kind === "pseudo" ? 0 : a.kind === "keep" ? 2 : 1);
   p.strings = p.uses.map((plans): Action | { kind: "orphan" } => {
-    const list = plans.map((c) => c.action);
+    // A string a detected header cell shares with any other cell is written once for both: as free
+    // text, name parts included, so the other cell is never left with a name part (AGT-2785).
+    const all = plans.map((c) => c.action);
+    if (all.length > 0 && all.every((a) => a.kind === "heading")) return { kind: "heading" };
+    const list = all.map((a): Action => (a.kind === "heading" ? { kind: "header" } : a));
     if (list.length === 0) return { kind: "orphan" };
     if (list.some((a) => a.kind === "drop")) return { kind: "drop" };
     if (list.some((a) => a.kind === "redact")) return { kind: "redact" };
@@ -390,6 +411,11 @@ export function settleXlsx(p: XlsxPlan, held: { has(text: string): boolean }, ke
       return { kind: "pseudo", cls };
     }
     return [...list].sort((a, b) => rank(a) - rank(b))[0] as Action;
+  });
+  // A header string written as free text (shared with another cell) is no heading for the table
+  // column or pivot field names that repeat it either, so they still match the cell.
+  p.uses.forEach((plans, i) => {
+    if (plans.some((c) => c.action.kind === "heading") && p.strings[i]?.kind !== "heading") p.headings.delete((p.wb.sharedStrings[i] as SharedString).runs.join(""));
   });
 }
 
@@ -463,6 +489,8 @@ export interface Rendered {
   keptHosts: number;
   /** Identity metadata values and account names in paths replaced as a whole. */
   metadataReplacements: number;
+  /** Cells of a detected header row the output changed (AGT-2785): sheet, 0-based column, original text. */
+  headerCells: { sheet: string; index: number; header: string }[];
 }
 
 /**
@@ -568,6 +596,12 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
   };
   const free = (text: string): string => rewrite(text, env.scanner.free(text));
   const kept = (text: string): string => rewrite(text, env.scanner.kept(text));
+  const heading = (text: string): string => rewrite(text, env.scanner.heading(text));
+  /** Free text, or a header cell's text: a cell that is not a detected header cell gets every span. */
+  const textOf = (action: Action | { kind: "orphan" }, text: string): string =>
+    action.kind === "keep" ? kept(text) : action.kind === "heading" ? heading(text) : free(text);
+  /** Formula-string (`str`) cells' output, by member and reference, for the header cells the report lists. */
+  const strOut = new Map<string, string>();
   const rename = (slot: NameSlot, name: string): string => (render ? env.names.rename(slot, name, pz) : name);
 
   // Names, before and after.
@@ -586,8 +620,11 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
   }
   const sheetEq = (text: string): string | undefined => sheetOut.get(text);
   const freeCell = (text: string): string => sheetEq(text) ?? free(text);
+  // A table column or pivot field name repeats a header cell: one that repeats a detected header
+  // cell is rewritten as that cell is, so the two still match (AGT-2785).
+  const headerName = (text: string): string => sheetEq(text) ?? (p.headings.has(text) ? heading(text) : free(text));
   const columnOut = new Map<string, string>();
-  for (const t of p.wb.tables) for (const c of t.columns) columnOut.set(lower(c), freeCell(c));
+  for (const t of p.wb.tables) for (const c of t.columns) columnOut.set(lower(c), headerName(c));
 
   // Numbers renumbered in cells, so pivot and chart caches repeat them.
   const numbers = new Map<string, string>();
@@ -663,7 +700,7 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
     if (eq !== undefined) return eq === full ? [...runs] : merged(eq);
     if (action.kind === "drop" || action.kind === "redact") return full.trim() === "" ? [...runs] : merged(action.kind === "drop" ? "" : REDACTED_VALUE);
     if (action.kind === "pseudo") return full.trim() === "" ? [...runs] : merged(pseudoWrite(pz, action.cls, full));
-    const spans = action.kind === "keep" ? env.scanner.kept(full) : env.scanner.free(full);
+    const spans = action.kind === "keep" ? env.scanner.kept(full) : action.kind === "heading" ? env.scanner.heading(full) : env.scanner.free(full);
     if (spans.length === 0) return [...runs];
     const bounds: number[] = [];
     let at = 0;
@@ -712,7 +749,9 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
           if (plan.action.kind === "pseudo") return pseudoWrite(pz, plan.action.cls, value);
           if (plan.action.kind === "drop") return "";
           if (plan.action.kind === "redact") return REDACTED_VALUE;
-          return plan.action.kind === "keep" ? kept(value) : free(value);
+          const out = textOf(plan.action, value);
+          strOut.set(`${ctx.member}\0${ref}`, out);
+          return out;
         }
         case "inlineRun":
         case "sharedRun": {
@@ -733,7 +772,7 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
           if (action === undefined || runs === undefined) return free(value);
           if (phonetic(ctx.parents)) {
             if (action.kind === "pseudo" || action.kind === "drop" || action.kind === "redact") return "";
-            return action.kind === "keep" ? kept(value) : free(value);
+            return textOf(action, value);
           }
           if (cache === undefined) {
             cache = runsOut(runs, action);
@@ -748,7 +787,7 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
         case "text":
           return free(value);
         case "header":
-          return freeCell(value);
+          return headerName(value);
         case "sheetName":
           return sheetOut.get(value) ?? value;
         case "definedName":
@@ -793,7 +832,22 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
     // Pictures become placeholders at render time only (the default); the plan pass leaves them alone.
     render && images === "replace" ? (member) => (IMAGE.test(member) ? placeholderFor(member) : null) : undefined,
   );
+  // The detected header cells the output changed (a whole value, a spec entity, a pattern match or a
+  // key/value block's paired value; never a lone name part).
+  const headerCells: Rendered["headerCells"] = [];
+  for (const s of p.wb.sheets) {
+    const info = p.sheets.find((x) => x.name === s.name);
+    if (s.member === null || info === undefined || info.noHeader || info.headerRow < 1) continue;
+    for (const c of s.cells) {
+      if (c.row !== info.headerRow - 1) continue;
+      const before = cellText(c, p.wb.sharedStrings);
+      const after =
+        c.type === "s" ? sharedOut.get(Number(c.v))?.join("") : c.type === "inlineStr" ? inlineOut.get(`${s.member}\0${c.ref}`)?.join("") : c.type === "str" ? strOut.get(`${s.member}\0${c.ref}`) : undefined;
+      if (after !== undefined && after !== before) headerCells.push({ sheet: s.name, index: c.col, header: before });
+    }
+  }
   return {
+    headerCells,
     bytes: result.bytes,
     members: result.members,
     sheetNames: p.wb.sheets.map((s) => ({ from: s.name, to: sheetOut.get(s.name) as string })),

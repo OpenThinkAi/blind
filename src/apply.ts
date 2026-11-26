@@ -205,6 +205,13 @@ export function renderReport(result: ApplyResult, show = false): string {
         lines.push(`    ${n} ${unit}${n === 1 ? "" : "s"} kept as written: the whole value is a [keep] term`);
       }
     }
+    const renamed = f.headerCellsReplaced ?? [];
+    if (renamed.length > 0) {
+      const where = renamed.map((h) => `${h.sheet === undefined ? "" : `sheet ${v(h.sheet)} `}${h.index === undefined ? `key ${v(h.header)}` : `column ${h.index + 1} ${v(h.header)}`}`);
+      lines.push(
+        `  ${renamed.length} header ${renamed.length === 1 ? "cell" : "cells"} changed (a whole blinded value, spec entity or pattern match; a name part never changes one), so a rule or consumer naming ${renamed.length === 1 ? "that column" : "those columns"} by header needs the new name: ${where.join(", ")}`,
+      );
+    }
     if (f.entityReplacements + f.patternReplacements > 0) {
       lines.push(`  free text: ${f.entityReplacements} entity and ${f.patternReplacements} pattern replacements`);
     }

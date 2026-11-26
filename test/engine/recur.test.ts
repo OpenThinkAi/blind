@@ -97,9 +97,10 @@ describe("recurrence rules", () => {
       { cls: "org", value: "Copperleaf Ltd", form: "Copperleaf" },
       { cls: "org", value: "Copperleaf Ltd", form: "Copperleaf Ltd" },
       { cls: "org", value: "Brightwater Mills, Inc.", form: "brightwater mills" },
-      // A person's name parts recur on their own, with the person's value (AGT-1803).
-      { cls: "person", value: "Quill, Avery", form: "Avery" },
-      { cls: "person", value: "Quill, Avery", form: "Quill", surname: true },
+      // A person's name parts recur on their own, with the person's value (AGT-1803), marked as
+      // parts so a detected header cell keeps its text (AGT-2785).
+      { cls: "person", value: "Quill, Avery", form: "Avery", part: true },
+      { cls: "person", value: "Quill, Avery", form: "Quill", part: true, surname: true },
       { cls: "person", value: "Quill, Avery", form: "Quill, Avery" },
       { cls: "person", value: "Quill, Avery", form: "avery quill" },
     ]);

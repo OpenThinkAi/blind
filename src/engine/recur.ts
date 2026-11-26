@@ -33,6 +33,9 @@
 // per segment, no organisation word) has parts at all (AGT-1852): a date or an
 // organisation in a person column recurs whole. A part two different people share is never given either's
 // pseudonym: it is pseudonymised as itself (nameParts), and apply reports it.
+// Every part form is marked `part`: a detected header cell or a JSON structural key, which names a
+// column for rules, consumers and later runs, is never rewritten for one (AGT-2785). A whole value
+// still is.
 // Matching uses the entity case rules (text.ts): a short acronym only exactly,
 // a single capitalised word only where the text is capitalised too, anything
 // else in any case; whole tokens only; longest form first at each position,
@@ -228,22 +231,29 @@ export function recurrenceForms(values: Iterable<ExtraForm>, entities: Entities,
   const vocabulary = vocabularyForms(entities);
   const list = [...values];
   const out = new Map<string, ExtraForm>();
-  const consider = (cls: PseudoClass, value: string, raw: string): void => {
+  const parts = personPartForms(list, map, vocabulary, opts);
+  const partWords = new Set(parts.filter((p) => p.part === true).map((p) => fold(p.form as string)));
+  const consider = (cls: PseudoClass, value: string, raw: string, part: boolean): void => {
     const form = raw.trim().replace(/\s+/g, " ");
     if (recurrenceExclusion(form, vocabulary) !== null) return;
     const key = `${cls}\0${form}`;
     const prior = out.get(key);
-    // The smallest value, so two values sharing a form always resolve the same way.
-    if (prior === undefined || value < prior.value) out.set(key, { cls, value, form });
+    // A whole value over a lone name part; then the smallest value, so two values sharing a form always resolve the same way.
+    if (prior === undefined || (prior.part === true && !part) || ((prior.part === true) === part && value < prior.value)) out.set(key, { cls, value, form, ...(part ? { part } : {}) });
   };
-  const add = (cls: PseudoClass, value: string, canonical: string): void => {
-    consider(cls, value, value);
-    if (fold(canonical) !== fold(value)) consider(cls, value, caseCanonical(canonical));
+  const add = (cls: PseudoClass, value: string, canonical: string, part = false): void => {
+    consider(cls, value, value, part);
+    if (fold(canonical) !== fold(value)) consider(cls, value, caseCanonical(canonical), part);
   };
   for (const v of list) add(v.cls, v.value, canonicalize(v.cls, v.value));
-  for (const e of map?.entries ?? []) if (isPseudoClass(e.kind)) add(e.kind, e.value, e.canonical);
+  // An earlier map records a part two people share as a person of its own ("Quill" for Avery and Bea
+  // Quill). One word of a person's name in this run or the map is still a part when it comes back
+  // from the map, so the next run does not rewrite a header cell this run kept (AGT-2785).
+  for (const e of map?.entries ?? []) {
+    if (isPseudoClass(e.kind)) add(e.kind, e.value, e.canonical, e.kind === "person" && !/\s/.test(e.value.trim()) && partWords.has(fold(e.value)));
+  }
   // Name parts come after whole values: a part that is also a whole value keeps that value's form.
-  for (const p of personPartForms(list, map, vocabulary, opts)) if (!out.has(`${p.cls}\0${p.form as string}`)) out.set(`${p.cls}\0${p.form as string}`, p);
+  for (const p of parts) if (!out.has(`${p.cls}\0${p.form as string}`)) out.set(`${p.cls}\0${p.form as string}`, p);
   return [...out.values()].sort((a, b) => cmp(a.cls, b.cls) || cmp(a.form as string, b.form as string) || cmp(a.value, b.value));
 }
 
@@ -376,6 +386,7 @@ export function personPartForms(values: Iterable<ExtraForm>, map: BlindMap | und
       cls: p.shared ? "person" : clsOf(p.value),
       value: p.value,
       form: p.form,
+      part: true,
       ...(isDateWord(p.form) ? { datePart: true } : {}),
       ...(surnames.has(fold(p.form)) ? { surname: true } : {}),
     }));
@@ -410,7 +421,7 @@ export function proseForms(names: readonly string[], others: Iterable<string>, v
   const out: ExtraForm[] = [];
   for (const v of names) if (recurrenceExclusion(v, vocabulary) === null) out.push({ cls: "person", value: v, form: v, source: "prose" });
   for (const p of nameParts(names, others, vocabulary, keep, aliases)) {
-    if (p.exclusion === null) out.push({ cls: "person", value: p.value, form: p.form, source: "prose", ...(isDateWord(p.form) ? { datePart: true } : {}) });
+    if (p.exclusion === null) out.push({ cls: "person", value: p.value, form: p.form, source: "prose", part: true, ...(isDateWord(p.form) ? { datePart: true } : {}) });
   }
   return out;
 }
@@ -445,6 +456,16 @@ export class TextScanner {
   free(text: string, carry?: SecretCarry): Span[] {
     const spans = findSpans(text, this.all, this.patterns, this.keep, this.context, carry);
     return this.shield === undefined ? spans : this.shield.filter(text, spans);
+  }
+
+  /**
+   * A detected header cell or a JSON structural key (AGT-2785): free text, less the spans of a lone
+   * name part. It names a column that rules, consumers and the next run's spec refer to, so a word
+   * of someone's name ("Tips" of "Ada Tips") never rewrites it; a whole recurring value, a spec
+   * entity or a pattern match still does.
+   */
+  heading(text: string): Span[] {
+    return this.free(text).filter((s) => s.part !== true);
   }
 
   /**

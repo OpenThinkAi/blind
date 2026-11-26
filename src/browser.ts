@@ -9,7 +9,8 @@
 // and text work (D-14). A caller that brings its own raw deflate/inflate can still install one with
 // setZipCodec; its contract is in src/formats/zipcodec.ts.
 //
-// The package's `exports` (`.` and `./browser`, D-24) are wired up with the release build, not here.
+// The package exports it as `@openthink/blind/browser` (D-24), compiled to dist/browser.js by
+// scripts/build.ts; test/pack.test.ts bundles that import from the packed package and runs the same check.
 // Profile and plan (profileInputs, proposeSpec: built-in detectors and policy rules, no model) and the
 // rule-based audit (auditOutputs: mechanical and semantic layers, no model) are here through src/lib.ts;
 // the bundle test is what holds them to the same rule. With no codec, the audit reports a deflated

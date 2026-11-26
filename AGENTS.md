@@ -107,7 +107,7 @@ addressed or the design is reconsidered.
 
 ## Project rules (blind)
 
-- Bun + TypeScript, ships source. `bun run typecheck` and `bun test --timeout 30000` must pass; stamp runs both (with the same timeout as the release workflow) as `required_checks` on the merged tree.
+- Bun + TypeScript, ships source; the library entries are also compiled to `dist/` by `bun run build` (not committed). `bun run typecheck` and `bun test --timeout 30000` must pass; stamp runs both (with the same timeout as the release workflow) as `required_checks` on the merged tree.
 - **No attribution trailers.** Do not add `Co-Authored-By` or session-link trailers to commits or PR text.
 - **Clean-room.** No code, rules, vocabulary, or test data from scrubby or from any employer repository. Write from the design doc (`pm project show blind`).
 - **Never use real data** in tests, fixtures, docs, or examples. Synthetic only.

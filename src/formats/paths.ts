@@ -57,13 +57,16 @@ export function accountSegments(value: string): AccountSegment[] {
 }
 
 /**
- * `[Client A #7F3A]` -> `Client_A_7F3A`: a path segment cannot hold brackets, spaces or "#". Mirrors
+ * `[Client A #7F3A]` -> `Client_A_7F3A` and `Front Desk KQZTB` -> `Front_Desk_KQZTB`: a path segment
+ * cannot hold brackets, spaces or "#". Mirrors
  * `nameSafe` in src/engine/pseudonym.ts (this module may import nothing, test/engine/pseudonym.test.ts);
  * test/engine/names-readable.test.ts pins the two to the same output.
  */
 function pathSafe(p: string): string {
   const m = /^\[([A-Za-z0-9][A-Za-z0-9 -]*) ([A-Z]+) #([0-9A-F]{4})\]$/.exec(p);
-  return m === null ? p : `${(m[1] as string).replace(/ /g, "_")}_${m[2]}_${m[3]}`;
+  if (m !== null) return `${(m[1] as string).replace(/ /g, "_")}_${m[2]}_${m[3]}`;
+  const l = /^([A-Za-z][A-Za-z -]*) ([BCDFGHJKLMNPQRSTVWXZ]{5})$/.exec(p);
+  return l === null ? p : `${(l[1] as string).replace(/ /g, "_")}_${l[2]}`;
 }
 
 /** `value` with each account segment replaced by `replace(segment)` and every other piece by `other(piece)`. */

@@ -139,3 +139,20 @@ describe("library entry: blind and reveal in memory", () => {
     expect(engineFormat("a/b.bin")).toBeNull();
   });
 });
+
+describe("letters style through the options object (AGT-2734)", () => {
+  test("policy.pseudonyms.style = letters writes digit-free stand-ins that Revealer and revealText restore", () => {
+    const salt = Uint8Array.from({ length: SALT_BYTES }, (_, i) => i + 9);
+    const csv = "name,email\nAvery Quill,avery@example.com\nRowan Pike,rowan@example.com\n";
+    const r = applySpec([{ path: "staff.csv", bytes: enc(csv) }], SPEC, { salt, policy: { pseudonyms: { style: "letters" } } });
+    const out = dec((r.outputs[0] as { bytes: Uint8Array }).bytes);
+    const names = out.split("\n").slice(1, 3).map((l) => l.split(",")[0] as string);
+    for (const n of names) expect(n).toMatch(/^Person [BCDFGHJKLMNPQRSTVWXZ]{5}$/);
+    expect(out).toMatch(/user_[0-9a-f]{4}@host-[0-9a-f]{4}\.com/);
+    expect(dec(revealFile("staff.csv", enc(out), new Revealer(r.map)).bytes)).toBe(csv);
+    expect(revealText(`${names[0]}'s note to ${names[1]}, then ${names[0]}.`, r.map)).toBe("Avery Quill's note to Rowan Pike, then Avery Quill.");
+    // The default style is unchanged.
+    const plain = applySpec([{ path: "staff.csv", bytes: enc(csv) }], SPEC, { salt });
+    expect(dec((plain.outputs[0] as { bytes: Uint8Array }).bytes)).toMatch(/\nPerson_[0-9A-F]{4},/);
+  });
+});

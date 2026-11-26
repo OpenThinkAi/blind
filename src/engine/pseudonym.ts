@@ -82,9 +82,15 @@ export interface PseudonymizerOptions {
    * placeholder and has no map entry (AGT-1848).
    */
   redactCards?: boolean;
-  /** Blinded-name shape from blind.toml `[pseudonyms] style`: `readable` (`[Person A #7F3A]`) or `compact` (`Person_7F3A`, the default). */
-  style?: "readable" | "compact";
+  /**
+   * Blinded-name shape from blind.toml `[pseudonyms] style`: `readable` (`[Person A #7F3A]`), `letters`
+   * (`Person KQZTB`, no digits) or `compact` (`Person_7F3A`, the default).
+   */
+  style?: PseudonymStyle;
 }
+
+/** The stand-in shapes `[pseudonyms] style` can name. */
+export type PseudonymStyle = "readable" | "compact" | "letters";
 
 export class PseudonymError extends Error {
   override name = "PseudonymError";
@@ -93,6 +99,12 @@ export class PseudonymError extends Error {
 const PREFIXED_RE = /^(?:Person|Org|Host|Id|Value|Loc)_[0-9A-F]{4}$/;
 /** Readable form: `[<Label> <Letters> #<HEX4>]`. Labels are ASCII words, digits, spaces and hyphens. */
 const READABLE_RE = /^\[([A-Za-z0-9][A-Za-z0-9 -]*) ([A-Z]+) #([0-9A-F]{4})\]$/;
+/** Letters-style consonants: no vowels, so five of them cannot spell a word, and no digits. */
+export const LETTERS_ALPHABET = "BCDFGHJKLMNPQRSTVWXZ";
+/** Letters form: `<Label> <FIVE CONSONANTS>`, such as `Staff KQZTB`. Labels are ASCII letters, spaces and hyphens. */
+export const LETTERS_RE = /^([A-Za-z][A-Za-z -]*) ([BCDFGHJKLMNPQRSTVWXZ]{5})$/;
+/** The name-safe twin of a letters form: spaces in the label become `_` (`Front_Desk_KQZTB`). */
+const LETTERS_NAME_SAFE_RE = /^([A-Za-z][A-Za-z_-]*)_([BCDFGHJKLMNPQRSTVWXZ]{5})$/;
 /** The name-safe twin of a readable form: spaces in the label become `_`, brackets and `#` are dropped. */
 const CLASS_LABELS = ["Person", "Org", "Host", "Id", "Value", "Place"];
 const NAME_SAFE_CLASS_RE = new RegExp(`^(?:${CLASS_LABELS.join("|")})_[A-Z]+_[0-9A-F]{4}$`);
@@ -141,19 +153,31 @@ function cleanLabel(label: string | undefined): string | undefined {
   return /^[A-Za-z0-9][A-Za-z0-9 -]*$/.test(l) ? l : undefined;
 }
 
-/** `[Client A #7F3A]` -> `Client_A_7F3A`, for slots that cannot hold brackets, spaces or `#`. */
+/** A letters-style label, or undefined: ASCII letters, spaces and hyphens only (no digits); `_` reads as a space. */
+function cleanLettersLabel(label: string | undefined): string | undefined {
+  const l = cleanLabel(label);
+  return l !== undefined && /^[A-Za-z][A-Za-z -]*$/.test(l) ? l : undefined;
+}
+
+/**
+ * `[Client A #7F3A]` -> `Client_A_7F3A` and `Front Desk KQZTB` -> `Front_Desk_KQZTB`, for slots that
+ * cannot hold brackets, spaces or `#`.
+ */
 export function nameSafe(p: string): string {
   const m = READABLE_RE.exec(p);
-  if (!m) return p;
-  return `${(m[1] as string).replace(/ /g, "_")}_${m[2]}_${m[3]}`;
+  if (m) return `${(m[1] as string).replace(/ /g, "_")}_${m[2]}_${m[3]}`;
+  const l = LETTERS_RE.exec(p);
+  if (l) return `${(l[1] as string).replace(/ /g, "_")}_${l[2]}`;
+  return p;
 }
 
 /** Reverse of `nameSafe`; a string that is not a name-safe twin is returned unchanged. */
 export function fromNameSafe(s: string): string {
   const m = NAME_SAFE_RE.exec(s);
-  if (!m) return s;
-  const label = (m[1] as string).replace(/_/g, " ");
-  return `[${label} ${m[2]} #${m[3]}]`;
+  if (m) return `[${(m[1] as string).replace(/_/g, " ")} ${m[2]} #${m[3]}]`;
+  const l = LETTERS_NAME_SAFE_RE.exec(s);
+  if (l) return `${(l[1] as string).replace(/_/g, " ")} ${l[2]}`;
+  return s;
 }
 const LABEL = "host-[0-9a-f]{4}";
 const HOST_RE_SRC = `${LABEL}(?:\\.${LABEL})*(?:\\.[a-z]{2,63})?`;
@@ -258,6 +282,17 @@ function hex4(bytes: ByteStream): string {
   return toHex(bytes.take(2));
 }
 
+/** Five consonants from LETTERS_ALPHABET. Rejection sampling (bytes 240 and up are skipped) keeps them unbiased. */
+function letters5(bytes: ByteStream): string {
+  let out = "";
+  while (out.length < 5) {
+    const byte = bytes.next();
+    if (byte >= 240) continue;
+    out += LETTERS_ALPHABET[byte % LETTERS_ALPHABET.length];
+  }
+  return out;
+}
+
 function renderIpv4(bytes: ByteStream): string {
   const [a, b] = bytes.take(2);
   return `${IPV4_DOC_PREFIXES[(a as number) % 3]}.${1 + ((b as number) % 254)}`;
@@ -323,6 +358,9 @@ export class Pseudonymizer {
   private readonly personAliases: PersonAliases | undefined;
   private readonly redactCards: boolean;
   private readonly readable: boolean;
+  private readonly letters: boolean;
+  /** Letter runs already issued or recorded in letters-style pseudonyms: unique within the upload, whatever the label. */
+  private readonly usedLetters = new Set<string>();
   /** Next unused letter index per readable label. */
   private readonly nextLetter = new Map<string, number>();
   /** Hex tags already issued or recorded in readable pseudonyms: unique within the upload. */
@@ -331,6 +369,7 @@ export class Pseudonymizer {
   constructor(opts: PseudonymizerOptions) {
     this.redactCards = opts.redactCards === true;
     this.readable = opts.style === "readable";
+    this.letters = opts.style === "letters";
     if (opts.salt !== undefined && opts.salt.length < MIN_SALT_BYTES) {
       throw new PseudonymError(`salt must be at least ${MIN_SALT_BYTES} bytes`);
     }
@@ -352,6 +391,8 @@ export class Pseudonymizer {
         this.usedTags.add(r[3] as string);
         this.nextLetter.set(label, Math.max(this.nextLetter.get(label) ?? 0, indexOfLetters(r[2] as string) + 1));
       }
+      const l = LETTERS_RE.exec(e.pseudonym);
+      if (l) this.usedLetters.add(l[2] as string);
     }
     for (const e of this.entries.values()) {
       if (e.kind !== "person") continue;
@@ -435,6 +476,11 @@ export class Pseudonymizer {
         if (this.usedTags.has(tag)) continue;
         this.usedTags.add(tag);
       }
+      const run = this.letters ? LETTERS_RE.exec(candidate)?.[2] : undefined;
+      if (run !== undefined) {
+        if (this.usedLetters.has(run)) continue;
+        this.usedLetters.add(run);
+      }
       this.issued.add(candidate);
       this.entries.set(`${kind}\0${canonical}`, { kind, canonical, value: surface, pseudonym: candidate });
       return candidate;
@@ -451,7 +497,8 @@ export class Pseudonymizer {
    */
   private suffixAvoided(candidate: string): boolean {
     const m = /^(?:(?:Person|Org|Host|Id|Value|Loc)_|host-|user_)([0-9A-Za-z]+)$/.exec(candidate);
-    const variable = m?.[1] ?? READABLE_RE.exec(candidate)?.[3] ?? (/^\d+$/.test(candidate) ? candidate : undefined);
+    const variable =
+      m?.[1] ?? READABLE_RE.exec(candidate)?.[3] ?? (this.letters ? LETTERS_RE.exec(candidate)?.[2] : undefined) ?? (/^\d+$/.test(candidate) ? candidate : undefined);
     if (variable !== undefined) return this.isAvoided(variable);
     // A GUID reads as its hyphen-separated groups: an all-digit group can equal a real numeric ID
     // (AGT-1805), and any group can equal an avoided token.
@@ -505,6 +552,11 @@ export class Pseudonymizer {
       this.nextLetter.set(lab, (this.nextLetter.get(lab) ?? 0) + 1);
       return out;
     }
+    if (this.letters) {
+      // The label is not part of the HMAC input: the same value and salt give the same letters under any label.
+      const lab = cleanLettersLabel(label) ?? READABLE_LABEL[cls];
+      return this.derive(cls, canonical, surface, (b) => `${lab} ${letters5(b)}`);
+    }
     return this.derive(cls, canonical, surface, (b) => `${PREFIX[cls]}_${hex4(b).toUpperCase()}`);
   }
 
@@ -525,7 +577,7 @@ export class Pseudonymizer {
     return undefined;
   }
 
-  /** `label` (readable style only) names the value's role; it defaults to the class word. */
+  /** `label` (readable and letters styles) names the value's role; it defaults to the class word. */
   pseudonym(cls: PseudoClass, value: string, label?: string): string {
     // Redacted text is a fixed placeholder: no pseudonym, no map entry, so it cannot be revealed.
     if (cls === "redact" || (this.redactCards && cardDigits(value) !== undefined)) return REDACTED_VALUE;

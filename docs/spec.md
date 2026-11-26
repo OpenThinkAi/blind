@@ -299,8 +299,9 @@ same blinded output tree. No model is called.
 
 `[pseudonyms] style` in `blind.toml` sets the shape of every blinded name (see
 [policy.md](policy.md#pseudonyms)). `blind init` writes `readable`; a `blind.toml` without the table is
-`compact`. Both styles come from the same HMAC, so one value has the same tag in each. The two rows
-below are one CSV, blinded under each style with the same salt:
+`compact`; `letters` ([below](#letters-form)) is the third, with no digits. Readable and compact come from
+the same HMAC, so one value has the same tag in each. The two rows below are one CSV, blinded under the
+readable and compact styles with the same salt:
 
 ```text
 readable  5580,[Counterparty Label C #8481],[Client Scope Code AR #A888],[Ledger Ref AX #5763],[Owner A #F884],host-ee89.host-470e.example
@@ -332,6 +333,26 @@ compact   5580,Org_8481,Value_A888,Id_5763,Person_F884,host-ee89.host-470e.examp
   country-code domain (`.de`, `.ch`) or an unusual one (`.museum`) therefore stays readable and can
   narrow down who the documents are about; a last label with a digit or hyphen is replaced too.
 
+### Letters form
+
+```text
+<Label> <FIVE>
+```
+
+- **Label**: the same label the readable form would take (a class word `Person`, `Org`, `Host`, `Id`,
+  `Value`, `Place`, or a role label, below), ASCII letters, spaces and hyphens only; a label with a digit
+  falls back to the class word.
+- **Five**: five letters from `BCDFGHJKLMNPQRSTVWXZ`, read from the same HMAC as the compact tag (bytes
+  240 and up are skipped, so every letter is equally likely). The label is not part of the HMAC, so the
+  same value and salt give the same five letters under any label. They are unique within one upload and
+  never equal a real value's token; a collision takes the next candidate (the HMAC with a counter
+  appended), as the other styles do. Example: `Staff KQZTB`, `Org MRDHX`.
+- Shape: `^[A-Za-z][A-Za-z -]* [BCDFGHJKLMNPQRSTVWXZ]{5}$`. No person, org, location, id or value stand-in
+  holds a digit. The shaped stand-ins listed above (emails, host names, IPv4, GUIDs, numeric IDs) keep
+  their shape, digits included.
+- The name-safe twin turns the label's spaces into `_`: `Front Desk KQZTB` becomes `Front_Desk_KQZTB`.
+- A map that already holds letters stand-ins pins them, and their five letters are not issued again.
+
 ### Role labels
 
 For a value in a CSV or TSV column, an XLSX column or a JSON key, the label is the header or key as
@@ -360,7 +381,8 @@ written in the input:
 ### Name-safe form
 
 A slot that cannot hold brackets, spaces or `#` takes the name-safe twin of the readable form: the
-label's spaces become `_`, and the brackets and `#` go. `[Org A #5CF4]` has the twin `Org_A_5CF4`.
+label's spaces become `_`, and the brackets and `#` go. `[Org A #5CF4]` has the twin `Org_A_5CF4`. A
+letters stand-in has one too: `Org MRDHX` is written `Org_MRDHX`.
 Compact pseudonyms already fit these slots, so compact output does not change. The twin is used in:
 
 - sheet names and defined names: the defined name `Brambleworth_Total` is written `Org_A_5CF4_Total`;

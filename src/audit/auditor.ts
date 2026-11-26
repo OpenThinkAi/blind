@@ -27,7 +27,7 @@
 
 import type { AskOptions, PolicyView } from "../model.ts";
 import { ask, MAX_DATA_STRING, ModelError, ModelRefusal, ModelRejected, policyView, profilePayload, resolveEndpoint } from "../model.ts";
-import type { Policy } from "../policy.ts";
+import type { Policy, PseudonymStyle } from "../policy.ts";
 import { buildProfile, forPrivacyMode } from "../profile/profile.ts";
 import { tokeniseProfile } from "../profile/tokens.ts";
 import type { Spec } from "../schema.ts";
@@ -68,6 +68,7 @@ const REASON_TEXT: Record<ModelReason, string> = {
 
 const COMPACT_EXAMPLES = "Person_1A2B, Org_3C4D, Host_5E6F, Id_7A8B, Value_9C0D and Loc_1E2F";
 const READABLE_EXAMPLES = "[Person A #1A2B], [Org A #3C4D], [Host A #5E6F], [Client B #7A8B], [Value A #9C0D] and [Place A #1E2F]";
+const LETTERS_EXAMPLES = "Person KQZTB, Org MRDHX, Host PLWGN, Client VBSJC, Value FNTRZ and Place HDKMQ";
 
 function auditorSystem(examples: string): string {
   return [
@@ -91,6 +92,12 @@ function auditorSystem(examples: string): string {
 export const AUDITOR_SYSTEM = auditorSystem(COMPACT_EXAMPLES);
 /** The same instructions with readable-style example pseudonyms, for output made with `[pseudonyms] style = "readable"`. */
 export const AUDITOR_SYSTEM_READABLE = auditorSystem(READABLE_EXAMPLES);
+/** The same instructions with letters-style example pseudonyms, for output made with `[pseudonyms] style = "letters"`. */
+export const AUDITOR_SYSTEM_LETTERS = auditorSystem(LETTERS_EXAMPLES);
+
+/** The auditor's instructions for output made in `style`. */
+export const auditorSystemFor = (style: PseudonymStyle | undefined): string =>
+  style === "readable" ? AUDITOR_SYSTEM_READABLE : style === "letters" ? AUDITOR_SYSTEM_LETTERS : AUDITOR_SYSTEM;
 
 const candidate = (where: Record<string, Schema>): Schema => ({
   type: "object",
@@ -355,7 +362,7 @@ export interface ModelLayerOptions {
   /** The policy keep list (`[keep] terms`): kept on purpose, so a model candidate equal to one is dropped. */
   keep: readonly string[];
   /** The pseudonym style the output was made in; picks the example pseudonyms in the auditor's instructions. Default compact. */
-  style?: "readable" | "compact";
+  style?: PseudonymStyle;
   /** Test seams and the announce sink, passed through to ask(). */
   ask: Omit<AskOptions, "policy">;
 }
@@ -390,7 +397,7 @@ async function auditText(entries: readonly TreeEntry[], policy: Policy, opts: Mo
     try {
       reply = await ask<Reply<{ line: number }>>(
         "auditor",
-        opts.style === "readable" ? AUDITOR_SYSTEM_READABLE : AUDITOR_SYSTEM,
+        auditorSystemFor(opts.style),
         {
           task: "The data block holds the policy and lines of text from the documents. Find everything that tells you who they are about. Give each finding's line as its index in data.lines.",
           data: { policy: view, lines: chunk.map((l) => l.text) },
@@ -427,7 +434,7 @@ async function auditProfile(entries: readonly TreeEntry[], policy: Policy, opts:
   try {
     reply = await ask<Reply<{ file: string }>>(
       "auditor",
-      opts.style === "readable" ? AUDITOR_SYSTEM_READABLE : AUDITOR_SYSTEM,
+      auditorSystemFor(opts.style),
       {
         task: "The data block holds the policy and a profile of the documents (file names, sheet names, headers and keys as tokens, and statistics; no values). Find everything in it that tells you who they are about. Give each finding's file as the profile names it. " +
           "data.policy.keep is empty: the owner's keep terms are not sent, and blind leaves them out of your findings itself.",

@@ -65,7 +65,7 @@ import { assertRowWidths, type Cell, CsvError, parseCsv, renderCell, type Row, s
 import { decode, type Encoding, EncodingError, encode } from "./encoding.ts";
 import { isJsonNumber, type JsonFormat, JsonError, type JsonToken, jsonCuts, quote, scanJson, scanJsonl, stringOffsets } from "./json.ts";
 import { type BlindMap, foldText, withoutValues } from "./map.ts";
-import { type EntityEntry, NAME_SAFE_SHAPE_RE, Pseudonymizer, READABLE_SHAPE_RE } from "./pseudonym.ts";
+import { type EntityEntry, NAME_SAFE_SHAPE_RE, Pseudonymizer, type PseudonymStyle, READABLE_SHAPE_RE } from "./pseudonym.ts";
 import { cellText, readWorkbook } from "../formats/xlsx.ts";
 import { NO_ZIP_CODEC_REASON, zipCodec } from "../formats/zipcodec.ts";
 import { lastKey } from "./birthdate.ts";
@@ -277,7 +277,7 @@ export interface ApplyOptions {
    */
   dates?: "scrub" | "keep";
   /** Blinded-name shape (blind.toml `[pseudonyms] style`), passed to the Pseudonymizer, which renders it. The CLI forwards it from the policy (AGT-1940). */
-  pseudonymStyle?: "readable" | "compact";
+  pseudonymStyle?: PseudonymStyle;
 }
 
 /** The spec does not fit the inputs (a rule names a column that is not there, or a shape this engine cannot apply). */
@@ -1280,7 +1280,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   }
   for (const r of names.requests()) want(r.cls, r.value);
   // Role labels (AGT-1932): a value in a column or under a key is labelled from that header as written in
-  // the output. The first labelled request for an entity wins; it is only read by a readable-style Pseudonymizer.
+  // the output. The first labelled request for an entity wins; it is only read by a readable- or letters-style Pseudonymizer.
   const labels = new Map<string, string>();
   const setLabel = (cls: PseudoClass, value: string, header: string | undefined, headerHidden: boolean) => {
     const label = headerHidden || header === undefined || pz.isPseudonym(header) || /[A-Za-z]_[0-9A-Fa-f]{4}/.test(header) ? undefined : roleLabel(header);

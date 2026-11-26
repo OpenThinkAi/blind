@@ -383,7 +383,9 @@ export class EntityMatcher {
       if (prior !== undefined) {
         // A whole value with the text of a lone name part keeps that value's form (recurrenceForms):
         // fail closed, so a header cell equal to it is still replaced (AGT-2785).
-        if (prior.part && !part) Object.assign(prior, { value, source, datePart: false, surname: false, part: false });
+        if (prior.part && !part) {
+          Object.assign(prior, { value, rank, source, datePart: false, surname: false, part: false, digits: source !== "entity" && words.length === 1 && DIGITS_RE.test(words[0] as string) });
+        }
         return;
       }
       const form: Form = {

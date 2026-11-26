@@ -259,6 +259,8 @@ describe("name parts kept in headers: the other paths (AGT-2785)", () => {
     const r = applySpec([file("staff.csv", STAFF), file("pay.csv", PAY), file("note.txt", NOTE)], s, { salt: SALT });
     expect(out(r, "pay.csv")).toBe(PAY);
     expect(out(r, "note.txt")).toBe("REDACTED covered the late shift; REDACTED checked the till.\n");
+    // The map does not hold them, so the apply warning is the signal: it lists the kept headers.
+    expect(report(r, "pay.csv")?.headerPartsKept?.map((h) => h.header)).toEqual(["Subtotal", "Bonus", "Tips", "Net"]);
   });
 
   test("a transcript speaker's name part leaves a header as written", () => {

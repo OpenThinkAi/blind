@@ -544,8 +544,9 @@ as a column of people) has name parts too, which carry that cell's `Value` pseud
 **Header cells and JSON keys.** A header cell names its column, and rules, consumers and the next
 run's spec refer to the column by that name, so a lone name part never changes one: `Tips` stays
 `Tips` in `pay.csv` when `Ada Tips` is blinded in `staff.csv`, and so does a part two people share
-(pseudonymised as itself, above), in the same file or any other file of the run, and when it comes
-back as an earlier map's entry. This covers every cell of a detected header row in a CSV or TSV file
+(pseudonymised as itself, above), or a part of a name in a `drop` or `redact` column (written as
+`REDACTED` elsewhere), in the same file or any other file of the run, and when it comes back as an
+earlier map's entry. This covers every cell of a detected header row in a CSV or TSV file
 and in each XLSX worksheet (and the table column and pivot field names that repeat one), and JSON
 and JSONL structural keys (field names). A whole recurring value still replaces a header cell that is
 it or holds it (a pivoted sheet whose headers are client names, `Acme Roofing Q1`, or a header that is

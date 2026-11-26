@@ -115,3 +115,16 @@ describe("placeholders", () => {
     for (const ext of ["tiff", "emf", "wmf", "ico", "webp"]) expect(placeholderFor(`a.${ext}`)).toBeNull();
   });
 });
+
+describe("placeholder bytes are unchanged without Buffer (AGT-2737)", () => {
+  test("each base64 placeholder decodes to the bytes Buffer decoded", () => {
+    const expected: Record<string, string> = {
+      png: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNoAAAAggCBd81ytgAAAABJRU5ErkJggg==",
+      jpg: "/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=",
+      gif: "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+    };
+    for (const [ext, b64] of Object.entries(expected)) {
+      expect(Buffer.from(placeholderFor(`media/image1.${ext}`) as Uint8Array).equals(Buffer.from(b64, "base64"))).toBe(true);
+    }
+  });
+});

@@ -117,15 +117,16 @@ describe("the library entry's import graph", () => {
   const graph = (): { files: string[]; specifiers: string[] } => {
     const seen = new Set<string>();
     const specifiers: string[] = [];
-    const stack = [join(ROOT, "src", "lib.ts")];
+    const stack = [join(ROOT, "src", "lib.ts"), join(ROOT, "src", "browser.ts")];
     while (stack.length > 0) {
       const f = stack.pop() as string;
       if (seen.has(f)) continue;
       seen.add(f);
       if (!f.endsWith(".ts")) continue;
       const src = readFileSync(f, "utf8");
-      for (const m of src.matchAll(/(?:^|\n)\s*(?:import|export)\b[^;]*?\bfrom\s+["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\)/g)) {
-        const s = (m[1] ?? m[2]) as string;
+      // `import x from "m"` / `export ... from "m"`, a side-effect `import "m";`, and `import("m")`.
+      for (const m of src.matchAll(/(?:^|\n)\s*(?:import|export)\b[^;]*?\bfrom\s+["']([^"']+)["']|(?:^|\n)\s*import\s*["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\)/g)) {
+        const s = (m[1] ?? m[2] ?? m[3]) as string;
         if (s.startsWith(".")) stack.push(resolve(dirname(f), s));
         else specifiers.push(s);
       }
@@ -135,6 +136,11 @@ describe("the library entry's import graph", () => {
 
   test("imports no node:, bun or other package", () => {
     expect(graph().specifiers).toEqual([]);
+  });
+
+  test("a side-effect import with no `from` is seen too", () => {
+    const re = /(?:^|\n)\s*import\s*["']([^"']+)["']/g;
+    expect([...'import "node:os";\nimport"bun:sqlite";\n'.matchAll(re)].map((m) => m[1])).toEqual(["node:os", "bun:sqlite"]);
   });
 
   test("reaches no CLI or file-system module", () => {

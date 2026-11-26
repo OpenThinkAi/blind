@@ -23,6 +23,7 @@
 // not at all: a member that cannot be read refuses the file.
 
 import { type Frame, localName, rewriteOoxml, ZipError } from "../formats/ooxml.ts";
+import { NO_ZIP_CODEC_REASON, zipCodec } from "../formats/zipcodec.ts";
 import { classify, needsQuotes, quoteSheet, readWorkbook, type Slot, slotRules, tokenizeFormula, XlsxError } from "../formats/xlsx.ts";
 import { guidCore } from "./canonical.ts";
 import { CsvError, parseCsv, renderCell, serializeCsv, sniffDelimiter } from "./csv.ts";
@@ -207,6 +208,8 @@ export function revealFile(path: string, bytes: Uint8Array, rv: Revealer): Revea
     const ext = dot > path.lastIndexOf("/") ? path.slice(dot) : "(no extension)";
     throw new RevealError(`no reversal path for ${ext} files; reveal handles CSV/TSV, JSON/JSONL, text (.txt, .md, .log, .vtt, .srt), XLSX and DOCX`);
   }
+  // No zip codec (the browser entry installs none): refuse the Office file whole, never copy it through unrevealed.
+  if ((format === "xlsx" || format === "docx") && zipCodec() === null) throw new RevealError(NO_ZIP_CODEC_REASON);
   if (format === "xlsx") return revealXlsx(bytes, rv);
   if (format === "docx") return revealDocx(bytes, rv);
   try {

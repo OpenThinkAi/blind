@@ -4,7 +4,27 @@
 // (content types and relationships stay valid). `[images] keep = true` copies them unchanged.
 // Plain constants: no dependency and no model code.
 
-const b64 = (s: string): Uint8Array => Uint8Array.from(Buffer.from(s, "base64"));
+const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/** Standard base64 (with "=" padding) to bytes, without Node's Buffer, so the engine runs in a browser (D-15). Used only on the constants below. */
+function b64(s: string): Uint8Array {
+  const body = s.replace(/=+$/, "");
+  const out = new Uint8Array(Math.floor((body.length * 3) / 4));
+  let bits = 0;
+  let value = 0;
+  let at = 0;
+  for (const ch of body) {
+    const v = B64.indexOf(ch);
+    if (v < 0) throw new Error(`images: not base64: ${ch}`);
+    value = ((value << 6) | v) & 0xffff;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      out[at++] = (value >> bits) & 0xff;
+    }
+  }
+  return out;
+}
 
 /** A 1x1 24-bit grey BMP. */
 function grayBmp(): Uint8Array {

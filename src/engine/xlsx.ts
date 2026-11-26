@@ -105,8 +105,11 @@ export interface XlsxPlan {
   strings: (Action | { kind: "orphan" })[];
   /** Per shared string, the plans of the cells that use it. */
   uses: CellPlan[][];
-  /** Text cells the fail-closed fallback pseudonymised whole, settled by settleXlsx. */
-  fallback: { plan: CellPlan; text: string; column: ColumnReport; form: ExtraForm }[];
+  /**
+   * Text cells the column pass pseudonymised whole, settled by settleXlsx: the recurring form each
+   * added (none under a `vocabulary` rule) and whether the fail-closed fallback decided its column.
+   */
+  wholeCells: { plan: CellPlan; text: string; column: ColumnReport; form: ExtraForm; recur: boolean; fallback: boolean }[];
   columns: ColumnReport[];
   sheets: SheetReport[];
   /** Pseudonymised cell values, for the corpus-wide name matcher. */
@@ -177,7 +180,7 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
   let refusal: string | undefined;
   /** Per shared string, the plans of the cells that use it. */
   const uses: CellPlan[][] = wb.sharedStrings.map(() => []);
-  const fallback: XlsxPlan["fallback"] = [];
+  const wholeCells: XlsxPlan["wholeCells"] = [];
 
   for (const sheet of wb.sheets) {
     if (sheet.member === null) continue;
@@ -272,7 +275,7 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
           if (form !== null) {
             columnValues.push(form);
             if (recur) mapped.push(form);
-            if (recur && isFallback(outcome) && c.type !== "n") fallback.push({ plan, text, column, form });
+            if (c.type !== "n") wholeCells.push({ plan, text, column, form, recur, fallback: isFallback(outcome) });
           }
         } else pending.push({ cell: plan, text, number: c.type === "n", column });
       });
@@ -329,7 +332,7 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
     cells,
     strings: [],
     uses,
-    fallback,
+    wholeCells,
     columns,
     sheets,
     columnValues,
@@ -345,22 +348,29 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
 }
 
 /**
- * Step 1b, once every file is planned. A text cell the fail-closed fallback pseudonymised whole
- * whose trimmed value is in `held` (held whole in a `keep` or `scan` cell somewhere in the corpus)
- * is left as text instead, scanned like free text, and counted in its column's `heldWhole`. Then
- * every shared string gets one treatment: emptied if any cell using it is dropped, else redacted if
- * any is, else a pseudonym if any cell gets one, else free text if any cell treats it so, else
- * kept. Strings no cell uses are orphans: free text all the same.
+ * Step 1b, once every file is planned. A text cell the column pass pseudonymised whole whose trimmed
+ * value is a `[keep]` term (`keepTerm`, explicit rules already left out) is kept, as a `keep` cell
+ * is, and counted in its column's `keptTerms` (AGT-2767). Else, one the fail-closed fallback
+ * pseudonymised whose trimmed value is in `held` (held whole in a `keep` or `scan` cell somewhere in
+ * the corpus) is left as text instead, scanned like free text, and counted in its column's
+ * `heldWhole`. Either no longer recurs. Then every shared string gets one treatment: emptied if any
+ * cell using it is dropped, else redacted if any is, else a pseudonym if any cell gets one, else free
+ * text if any cell treats it so, else kept. Strings no cell uses are orphans: free text all the same.
  */
-export function settleXlsx(p: XlsxPlan, held: { has(text: string): boolean }): void {
+export function settleXlsx(p: XlsxPlan, held: { has(text: string): boolean }, keepTerm: { has(text: string): boolean } = { has: () => false }): void {
   const freed = new Set<ExtraForm>();
-  for (const f of p.fallback) {
-    if (!held.has(f.text.trim())) continue;
-    f.plan.action = { kind: "free" };
+  for (const f of p.wholeCells) {
+    const text = f.text.trim();
+    if (keepTerm.has(text)) {
+      f.plan.action = { kind: "keep" };
+      f.column.keptTerms = (f.column.keptTerms ?? 0) + 1;
+    } else if (f.fallback && f.recur && held.has(text)) {
+      f.plan.action = { kind: "free" };
+      f.column.heldWhole = (f.column.heldWhole ?? 0) + 1;
+    } else continue;
     // planXlsx counted the cell as changed (a workbook counts at plan time, unlike CSV/JSON, which
     // count at render); prepareXlsx counts it again if the scanner changes it.
     f.column.changed--;
-    f.column.heldWhole = (f.column.heldWhole ?? 0) + 1;
     p.pending.push({ cell: f.plan, text: f.text, number: false, column: f.column });
     freed.add(f.form);
   }

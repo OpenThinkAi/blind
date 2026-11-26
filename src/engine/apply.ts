@@ -22,7 +22,11 @@
 //   pseudonyms; the rest are kept, with spec entities and patterns still
 //   replaced inside their cells. A cell whose value is held whole in a `keep`
 //   or `scan` cell anywhere in the corpus is never pseudonymised by this test:
-//   it is scanned instead (settleFallback).
+//   it is scanned instead (settleWholes).
+// - Any column blinded whole (by a rule, the fallback or a classified detector): a cell
+//   whose whole value is a `[keep]` term (folded for case and spacing) is kept, as a `keep`
+//   cell is, unless an explicit rule names that value: a non-vocabulary spec entity, the
+//   redact list, or a dropped/redacted column's value (settleWholes, AGT-2767).
 // Rows above the header and the header row itself are treated as free text.
 //
 // JSON and JSONL: every key path is a column (see json.ts), with the same
@@ -155,6 +159,11 @@ export interface ColumnReport {
    * in the corpus. Absent when 0.
    */
   heldWhole?: number;
+  /**
+   * When the column was blinded whole (by a rule, the fallback or a classified detector): cells kept
+   * as written because the whole value is a `[keep]` term (AGT-2767). Absent when 0.
+   */
+  keptTerms?: number;
 }
 
 export interface FileReport {
@@ -356,16 +365,20 @@ interface TablePlan {
   dropped: Set<number>;
   /** Data rows wider than the header; their extra cells continue the last column. */
   overflowRows: number;
-  /** Cells the fail-closed fallback pseudonymised whole, settled once every plan exists (settleFallback). */
-  fallback: Fallback<string>[];
+  /** Cells the column pass pseudonymised whole, settled once every plan exists (settleWholes). */
+  wholeCells: WholeCell<string>[];
 }
 
-/** A cell the fail-closed fallback pseudonymised whole: its edit, and the recurring form it added. */
-interface Fallback<K> {
+/**
+ * A cell the column pass pseudonymised whole: its edit, the recurring form it added (none under a
+ * `vocabulary` rule), and whether the fail-closed fallback decided its column (not a rule).
+ */
+interface WholeCell<K> {
   key: K;
   value: string;
   column: ColumnReport;
-  form: ExtraForm;
+  form: ExtraForm | undefined;
+  fallback: boolean;
 }
 
 interface TextPlan {
@@ -395,7 +408,7 @@ interface JsonPlan {
   columns: ColumnReport[];
   /** Text ranges removed for `drop` key paths (jsonCuts), and the tokens inside them. */
   cuts: { ranges: [number, number][]; tokens: Set<number> };
-  fallback: Fallback<number>[];
+  wholeCells: WholeCell<number>[];
 }
 
 interface DocxFilePlan {
@@ -491,7 +504,7 @@ function planTable(
   const keptCols = new Set<number>();
   /** Header cells pseudonymised as the value of a key/value block's label header. */
   const headerPaired = new Set<number>();
-  const fallback: Fallback<string>[] = [];
+  const wholeCells: WholeCell<string>[] = [];
   const data = rows.slice(headerRow + 1);
   for (let col = 0; col < width; col++) {
     const header = headers[col] as string;
@@ -541,10 +554,14 @@ function planTable(
         else if (labels && isLabelCell(cell.value)) pending.push({ key, value: cell.value, keep: false, column });
         else if (action.kind === "pseudo") {
           edits.set(key, { kind: "pseudo", cls: action.cls });
-          if (rule?.class === "vocabulary") continue;
+          const fallback = isFallback(outcome);
+          if (rule?.class === "vocabulary") {
+            wholeCells.push({ key, value: cell.value, column, form: undefined, fallback });
+            continue;
+          }
           const form: ExtraForm = { cls: action.cls, value: pseudoCell(action.cls, cell.value).core };
           mapped.push(form);
-          if (isFallback(outcome)) fallback.push({ key, value: cell.value, column, form });
+          wholeCells.push({ key, value: cell.value, column, form, fallback });
         } else pending.push({ key, value: cell.value, keep: action.kind === "keep", column });
       }
     });
@@ -592,7 +609,7 @@ function planTable(
     columns,
     dropped,
     overflowRows,
-    fallback,
+    wholeCells,
   };
 }
 
@@ -628,7 +645,7 @@ function planJson(
   const removed: ExtraForm[] = [];
   const columns: ColumnReport[] = [];
   const dropped: number[] = [];
-  const fallback: Fallback<number>[] = [];
+  const wholeCells: WholeCell<number>[] = [];
   for (const [path, indices] of byPath) {
     const rule = rules.find((r) => r.jsonPath === path);
     if ((rule?.treatment === "drop" || rule?.treatment === "redact") && (path === "$" || path.endsWith("~"))) {
@@ -665,10 +682,14 @@ function planJson(
       }
       if (action.kind === "pseudo") {
         edits.set(i, { kind: "pseudo", cls: action.cls });
-        if (rule?.class === "vocabulary") continue;
+        const fallback = isFallback(outcome);
+        if (rule?.class === "vocabulary") {
+          wholeCells.push({ key: i, value, column, form: undefined, fallback });
+          continue;
+        }
         const form: ExtraForm = { cls: action.cls, value: pseudoCell(action.cls, value).core };
         mapped.push(form);
-        if (isFallback(outcome)) fallback.push({ key: i, value, column, form });
+        wholeCells.push({ key: i, value, column, form, fallback });
       } else pending.push({ key: i, value, keep: action.kind === "keep", column });
     }
   }
@@ -677,7 +698,7 @@ function planJson(
   tokens.forEach((t, i) => {
     if (t.kind === "key" && t.column === null && !cuts.tokens.has(i)) pending.push({ key: i, value: t.value, keep: false, column: null });
   });
-  return { kind: "json", format, input, encoding, text, tokens, edits, pending, mapped, removed, columns, cuts, fallback };
+  return { kind: "json", format, input, encoding, text, tokens, edits, pending, mapped, removed, columns, cuts, wholeCells };
 }
 
 /** A string literal with the spans replaced; every untouched character keeps its original escaping. */
@@ -829,22 +850,37 @@ function hidesRemoved(plans: readonly Plan[]): (text: string) => boolean {
 }
 
 /**
- * Settle every cell the fail-closed fallback pseudonymised whole: one whose value is held whole in a
- * `keep` or `scan` cell somewhere (heldValues) is left as text instead, scanned like free text, and
- * counted in its column's `heldWhole`; it no longer recurs. Every plan's own decisions stand.
+ * Settle every cell the column pass pseudonymised whole, once every plan exists:
+ *
+ * - One whose whole value is a `[keep]` term (`keepTerm`) is kept, as a cell under `keep` is (only a
+ *   value blinded elsewhere is replaced inside it), counted in its column's `keptTerms`, and no
+ *   longer recurs or reaches the map (AGT-2767). `keepTerm` already leaves out a value an explicit
+ *   rule names.
+ * - Else, one the fail-closed fallback decided whose value is held whole in a `keep` or `scan` cell
+ *   somewhere (heldValues), on the redact list or hiding a removed value, is left as text instead,
+ *   scanned like free text, and counted in its column's `heldWhole`; it no longer recurs.
+ *
+ * Every plan's own decisions otherwise stand.
  */
-function settleFallback(plans: readonly Plan[], listed: (t: string) => boolean = () => false): void {
+function settleWholes(plans: readonly Plan[], listed: (t: string) => boolean, keepTerm: (t: string) => boolean): void {
   const heldSet = heldValues(plans);
   const hides = hidesRemoved(plans);
   const held = { has: (t: string): boolean => heldSet.has(t) || hides(t) || listed(t) };
-  const release = <K>(fallback: readonly Fallback<K>[], edits: Map<K, CellEdit>, pending: Pending<K>[], mapped: ExtraForm[]): void => {
+  const keeps = (t: string): boolean => keepTerm(t) && !hides(t) && !listed(t);
+  const release = <K>(wholes: readonly WholeCell<K>[], edits: Map<K, CellEdit>, pending: Pending<K>[], mapped: ExtraForm[]): void => {
     const freed = new Set<ExtraForm>();
-    for (const f of fallback) {
-      if (!held.has(f.value.trim())) continue;
-      edits.delete(f.key);
-      pending.push({ key: f.key, value: f.value, keep: false, column: f.column });
-      f.column.heldWhole = (f.column.heldWhole ?? 0) + 1;
-      freed.add(f.form);
+    for (const f of wholes) {
+      const value = f.value.trim();
+      if (keeps(value)) {
+        edits.delete(f.key);
+        pending.push({ key: f.key, value: f.value, keep: true, column: f.column });
+        f.column.keptTerms = (f.column.keptTerms ?? 0) + 1;
+      } else if (f.fallback && held.has(value)) {
+        edits.delete(f.key);
+        pending.push({ key: f.key, value: f.value, keep: false, column: f.column });
+        f.column.heldWhole = (f.column.heldWhole ?? 0) + 1;
+      } else continue;
+      if (f.form !== undefined) freed.add(f.form);
     }
     if (freed.size === 0) return;
     const rest = mapped.filter((m) => !freed.has(m));
@@ -852,9 +888,9 @@ function settleFallback(plans: readonly Plan[], listed: (t: string) => boolean =
     mapped.push(...rest);
   };
   for (const p of plans) {
-    if (p.kind === "table") release(p.fallback, p.edits, p.pending, p.mapped);
-    else if (p.kind === "json") release(p.fallback, p.edits, p.pending, p.mapped);
-    else if (p.kind === "xlsx") settleXlsx(p.plan, held);
+    if (p.kind === "table") release(p.wholeCells, p.edits, p.pending, p.mapped);
+    else if (p.kind === "json") release(p.wholeCells, p.edits, p.pending, p.mapped);
+    else if (p.kind === "xlsx") settleXlsx(p.plan, held, { has: keeps });
   }
 }
 
@@ -1006,7 +1042,18 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   // such a cell is scanned, so the value is written as the placeholder and never mapped.
   const listedValues = findRedactValues(corpusTexts(plans), spec.redact ?? [], opts.salt);
   const listedSet = new Set(listedValues);
-  settleFallback(plans, (t) => listedSet.has(t));
+  // A cell that is a keep term is kept in a column blinded whole (AGT-2767), unless an explicit rule
+  // names the value: a spec entity that is not vocabulary (or the redact list and removed values,
+  // checked in settleWholes). "An explicit rule wins", as for kept values (shield.ts).
+  const keepSet = keepForms(opts.keep);
+  const entityForms = new Set(
+    Object.entries(spec.entities)
+      .filter(([cls]) => cls !== "vocabulary")
+      .flatMap(([, list]) => (list ?? []).flatMap((e) => [e.canonical, ...e.aliases]))
+      .map(foldText),
+  );
+  const keepTerm = (t: string): boolean => keepSet.has(foldText(t)) && !entityForms.has(foldText(t));
+  settleWholes(plans, (t) => listedSet.has(t), keepTerm);
 
   // File and folder names go through the patterns, the spec entities and every cell value a
   // column rule pseudonymises, so a value hidden in a cell is hidden in a name too.
@@ -1050,7 +1097,6 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   // exception is a value some column also pseudonymises: that pseudonym wins, and only that path
   // records it.
   const vocabularySet = vocabularyForms(spec.entities);
-  const keepSet = keepForms(opts.keep);
   const textKey = (v: string): string => canonicalize("value", v);
   const mappedTexts = new Set(columnMapped.map((f) => textKey(f.value)));
   const removedAll = plans.flatMap((p) => (p.kind === "text" || p.kind === "docx" ? [] : p.kind === "xlsx" ? p.plan.removed : p.removed));

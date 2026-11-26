@@ -1,7 +1,7 @@
 // blind.toml's policy as data: its shape, its defaults and the rules that validate it, with no file
 // system, no TOML reader and nothing Bun- or Node-only. The CLI (src/policy.ts) parses blind.toml with
 // Bun's TOML reader and hands the document to policyFromDocument; the library entry (src/lib.ts) hands it
-// a plain object (resolvePolicy in src/libpolicy.ts). Both go through the same rules, so a policy the
+// a plain object (policyFromObject, below). Both go through the same rules, so a policy the
 // library accepts is one blind.toml could say, and an invalid one fails with the same message.
 
 import { CONTEXT_KINDS, type ContextTriggerSpec } from "./engine/context.ts";
@@ -428,14 +428,14 @@ function readPatterns(r: Reader, doc: Table): PolicyPatterns {
   return out;
 }
 
-
 /**
  * Validates a policy given as a plain object (the library entry's BlindPolicy: blind.toml's tables, with
  * `keepDates` for `[metadata] keep_dates`) by the same rules as a parsed blind.toml (policyFromDocument),
  * and fills in what it leaves out. Every table is optional here: a table blind.toml requires and the
  * object leaves out gets what `blind init` writes (`[sensitive]` lists every class, `[keep]` keeps no
  * term, `[privacy] mode` is local-only, the samples follow the mode); within `[sensitive]` and `[keep]`
- * a key left out gets the same. Throws PolicyError naming the offending field, prefixed with `source`.
+ * a key left out gets the same. A `[models]` table is checked like blind.toml's when given and is
+ * otherwise unused by the library, which calls no model. Throws PolicyError naming the offending field, prefixed with `source`.
  */
 export function policyFromObject(policy: unknown, source = "policy"): Policy {
   if (policy === undefined) policy = {};

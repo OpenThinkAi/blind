@@ -15,6 +15,7 @@ import { patternHits, profileText } from "./text.ts";
 import { tokeniseProfile } from "./tokens.ts";
 import { ZipError } from "../formats/ooxml.ts";
 import { isDateCell, readWorkbook, sheetRows, XlsxError } from "../formats/xlsx.ts";
+import { NO_ZIP_CODEC_REASON, zipCodec } from "../formats/zipcodec.ts";
 
 /** Formats this profiler reads, by lower-cased extension. */
 const PROFILED: Record<string, "csv" | "tsv" | "json" | "jsonl" | "text" | "markdown" | "log" | "vtt" | "srt" | "docx"> = {
@@ -170,6 +171,12 @@ export function profileSources(sources: readonly ProfileSource[], asked: number,
       continue;
     }
     const ext = extensionOf(f.path);
+    // With no zip codec installed (the browser entry installs none) an Office file cannot be opened:
+    // it is listed as skipped, as applySpec lists it, never profiled as if it were empty.
+    if ((ext === ".xlsx" || ext === ".docx") && zipCodec() === null) {
+      skipped.push({ path: f.path, reason: NO_ZIP_CODEC_REASON });
+      continue;
+    }
     if (ext === ".xlsx") {
       const bytes = readOrSkip(f, skipped);
       if (bytes === undefined) continue;

@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 import { PassThrough } from "node:stream";
 import { runPlan } from "../src/analyst/plan.ts";
 import { generateKit, kitFileBytes } from "../src/bench/synth.ts";
-import { applySpec, type BlindPolicy, InputError, type InputFile, PolicyError, profileInputs, proposeSpec, SchemaError, validateSpec } from "../src/lib.ts";
+import { applySpec, type BlindPolicy, InputError, type InputFile, NO_ZIP_CODEC_REASON, PolicyError, profileInputs, proposeSpec, SchemaError, setZipCodec, validateSpec, type ZipCodec, zipCodec } from "../src/lib.ts";
 import { parsePolicy, POLICY_FILE } from "../src/policy.ts";
 
 let dir: string;
@@ -134,6 +134,20 @@ describe("profileInputs", () => {
     expect(r.profile.files.map((f) => f.path)).toEqual(["a.csv"]);
     expect(r.skipped.map((s) => s.path)).toEqual(["b.bin", "c.txt"]);
     expect(r.skipped[0]?.reason).toBe("unsupported file type .bin");
+  });
+
+  test("with no zip codec an Office file is skipped with the reason, as applySpec skips it", () => {
+    const saved: ZipCodec | null = zipCodec();
+    setZipCodec(null);
+    try {
+      const office = kitFiles().filter((f) => f.path.endsWith(".docx") || f.path.endsWith(".xlsx"));
+      expect(office.length).toBe(2);
+      const r = profileInputs(office);
+      expect(r.profile.files).toEqual([]);
+      expect(r.skipped).toEqual(office.map((f) => ({ path: f.path, reason: NO_ZIP_CODEC_REASON })));
+    } finally {
+      setZipCodec(saved);
+    }
   });
 
   test("two inputs with one path are refused", () => {

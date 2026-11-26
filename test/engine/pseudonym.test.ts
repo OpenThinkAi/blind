@@ -423,18 +423,23 @@ describe("collision handling", () => {
     expect(() => p.pseudonym("host", "10.9.9.9")).toThrow(PseudonymError);
   });
 
-  test("the retry is bounded: an exhausted space throws instead of reusing", () => {
+  test("an exhausted numeric space widens instead of reusing or throwing (AGT-2786)", () => {
     const avoid = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
-    expect(() => fresh({ avoid }).pseudonym("id", "5")).toThrow(`after ${MAX_ATTEMPTS} attempts`);
+    expect(fresh({ avoid }).pseudonym("id", "5")).toMatch(/^[1-9]\d$/);
   });
 
-  test("errors never quote the value", () => {
+  test("the retry is bounded: an exhausted IPv4 space throws, and the error never quotes the value", () => {
+    const p = fresh();
+    for (let i = 0; i < 762; i++) p.pseudonym("host", `10.${Math.floor(i / 250)}.${i % 250}.1`);
+    let message = "";
     try {
-      fresh({ avoid: ["1", "2", "3", "4", "6", "7", "8", "9"] }).pseudonym("id", "5");
-      throw new Error("expected a throw");
+      p.pseudonym("host", "10.9.9.9");
     } catch (err) {
-      expect((err as Error).message).not.toContain("5");
+      message = (err as Error).message;
     }
+    expect(message).toContain(`after ${MAX_ATTEMPTS} attempts`);
+    expect(message).toContain("an IPv4 address");
+    expect(message).not.toContain("10.9.9.9");
   });
 });
 

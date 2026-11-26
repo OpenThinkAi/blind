@@ -398,10 +398,11 @@ export async function runApply(argv: string[], io: ApplyIO): Promise<number> {
     return 0;
   } catch (e) {
     if (e instanceof Refusal || e instanceof PolicyError || e instanceof SchemaError || e instanceof ApplyError || e instanceof MapError || e instanceof PseudonymError || e instanceof NameError) {
-      // An ApplyError quotes the spec rule's header, key path or sheet name, and a MapError a map
-      // key, which may be values; a SchemaError masks the strings it quotes from the spec. A
-      // Refusal, PolicyError, PseudonymError or NameError names paths and settings, never a value.
-      const message = e instanceof ApplyError || e instanceof MapError ? maskQuoted(e.message, show) : e instanceof SchemaError ? e.masked(show) : e.message;
+      // An ApplyError quotes the spec rule's header, key path or sheet name, a PseudonymError the
+      // column or key path it failed in (AGT-2786), and a MapError a map key, which may be values; a
+      // SchemaError masks the strings it quotes from the spec. A Refusal, PolicyError or NameError
+      // names paths and settings, never a value.
+      const message = e instanceof ApplyError || e instanceof MapError || e instanceof PseudonymError ? maskQuoted(e.message, show) : e instanceof SchemaError ? e.masked(show) : e.message;
       io.err.write(`blind apply: ${message}\nnothing was written\n`);
       return 2;
     }

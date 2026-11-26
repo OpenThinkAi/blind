@@ -11,6 +11,17 @@
 // came before, callers must ask for values in a stable order (the engine walks
 // a sorted file list); a reloaded map pins every earlier answer.
 //
+// Numeric IDs (AGT-2786) keep their digits but never exhaust. The same-width
+// space (900 values for a three-digit ID) is counted first. While it has a free
+// value, the counter draws above run exactly as before, so every ID that got a
+// stand-in before gets the same one; if they all miss, a walk from an
+// HMAC-chosen point finds a free value of that width. When no value of that
+// width is free, the stand-in widens to the next width with a free value: one
+// more digit, still digits only, leading digit non-zero (an ID written with a
+// leading zero, `007`, widens to a zero-padded code such as `0428`, never to a
+// figure like `4280`). The map pairs the wider stand-in with the value, so
+// reveal is unchanged.
+//
 // One entity, one pseudonym: a value already recorded under another class
 // (the same name as a `value` column cell and as a transcript speaker, say)
 // reuses that class's pseudonym rather than getting a second one. The other
@@ -319,6 +330,59 @@ function renderNumeric(bytes: ByteStream, like: string): string {
   return out;
 }
 
+/**
+ * A space of digit strings of one width (AGT-2786): `any` digit first (an ID with a leading zero, at its
+ * own width), a `nonzero` first digit, or a `zero` first digit (an ID with a leading zero, widened).
+ */
+type Lead = "any" | "nonzero" | "zero";
+
+function inSpace(s: string, width: number, lead: Lead): boolean {
+  if (s.length !== width || !/^\d+$/.test(s)) return false;
+  return lead === "any" || (lead === "zero") === (s[0] === "0");
+}
+
+function spaceSize(width: number, lead: Lead): bigint {
+  const all = 10n ** BigInt(width);
+  return lead === "any" ? all : lead === "nonzero" ? all - all / 10n : all / 10n;
+}
+
+/** The digit string at `index` (0 <= index < spaceSize) of a space, in numeric order. */
+function spaceAt(width: number, lead: Lead, index: bigint): string {
+  if (lead === "nonzero") return String(10n ** BigInt(width - 1) + index);
+  if (lead === "zero") return `0${String(index).padStart(width - 1, "0")}`;
+  return String(index).padStart(width, "0");
+}
+
+/** The taken digit strings of one width, and how many of them start with `0`. */
+interface DigitsOfWidth {
+  all: Set<string>;
+  zeros: number;
+}
+
+function indexDigits(idx: Map<number, DigitsOfWidth>, s: string): void {
+  if (!/^\d+$/.test(s)) return;
+  let got = idx.get(s.length);
+  if (got === undefined) idx.set(s.length, (got = { all: new Set(), zeros: 0 }));
+  if (got.all.has(s)) return;
+  got.all.add(s);
+  if (s[0] === "0") got.zeros++;
+}
+
+/** A start point in a space from the HMAC: 16 bytes reduced modulo its size. */
+function spaceStart(bytes: ByteStream, size: bigint): bigint {
+  let n = 0n;
+  for (const b of bytes.take(16)) n = (n << 8n) | BigInt(b);
+  return n % size;
+}
+
+/** How a value reads in an error message: its shape, never the value (errors may be logged). */
+function shapeOf(kind: MapKind, value: string): string {
+  const v = value.trim();
+  if (/^\d+$/.test(v)) return `a ${v.length}-digit ${kind} value`;
+  if (IPV4_RE.test(v)) return "an IPv4 address";
+  return `a ${kind} value of ${v.length} character${v.length === 1 ? "" : "s"}`;
+}
+
 /** Re-apply a surface GUID's case and braces to a canonical (lowercase, bare) pseudonym. */
 function formatGuidLike(surface: string, guid: string): string {
   const s = surface.trim();
@@ -365,6 +429,11 @@ export class Pseudonymizer {
   private readonly nextLetter = new Map<string, number>();
   /** Hex tags already issued or recorded in readable pseudonyms: unique within the upload. */
   private readonly usedTags = new Set<string>();
+  /**
+   * Digit strings taken by a real value or an issued pseudonym, by width, with how many of them start
+   * with `0`; built on the first numeric ID (AGT-2786).
+   */
+  private digitIndex: Map<number, DigitsOfWidth> | undefined;
 
   constructor(opts: PseudonymizerOptions) {
     this.redactCards = opts.redactCards === true;
@@ -462,15 +531,34 @@ export class Pseudonymizer {
   private derive(kind: MapKind, canonical: string, surface: string, render: (b: ByteStream) => string): string {
     const known = this.lookup(kind, canonical, surface);
     if (known !== undefined) return known;
+    const salt = this.needSalt(kind);
+    const got = this.draw(salt, kind, canonical, surface, render);
+    if (got !== undefined) return got;
+    throw new PseudonymError(
+      `no free ${kind} pseudonym for ${shapeOf(kind, surface)} after ${MAX_ATTEMPTS} attempts: too many distinct values of this shape in one upload; blind the column under another class (value gives Value stand-ins) or split the upload`,
+    );
+  }
+
+  private needSalt(kind: MapKind): Uint8Array {
     if (this.salt === undefined) {
       throw new PseudonymError(`a ${kind} value is not in the map and no salt was given to derive it`);
     }
+    return this.salt;
+  }
+
+  /** Whether a candidate is free: not the value, not a real value or token, not issued to another value. */
+  private free(candidate: string, canonical: string, surface: string): boolean {
+    if (candidate === canonical || candidate === surface) return false;
+    if (this.avoid.has(candidate) || this.issued.has(candidate)) return false;
+    return !this.suffixAvoided(candidate);
+  }
+
+  /** The counter draws, recorded on the first free candidate; undefined when all MAX_ATTEMPTS miss. */
+  private draw(salt: Uint8Array, kind: MapKind, canonical: string, surface: string, render: (b: ByteStream) => string): string | undefined {
     for (let counter = 0; counter < MAX_ATTEMPTS; counter++) {
       const msg = counter === 0 ? `${kind}\0${canonical}` : `${kind}\0${canonical}\0${counter}`;
-      const candidate = render(new ByteStream(this.salt, msg));
-      if (candidate === canonical || candidate === surface) continue;
-      if (this.avoid.has(candidate) || this.issued.has(candidate)) continue;
-      if (this.suffixAvoided(candidate)) continue;
+      const candidate = render(new ByteStream(salt, msg));
+      if (!this.free(candidate, canonical, surface)) continue;
       const tag = READABLE_RE.exec(candidate)?.[3];
       if (tag !== undefined) {
         if (this.usedTags.has(tag)) continue;
@@ -481,11 +569,79 @@ export class Pseudonymizer {
         if (this.usedLetters.has(run)) continue;
         this.usedLetters.add(run);
       }
-      this.issued.add(candidate);
-      this.entries.set(`${kind}\0${canonical}`, { kind, canonical, value: surface, pseudonym: candidate });
-      return candidate;
+      return this.record(kind, canonical, surface, candidate);
     }
-    throw new PseudonymError(`no free ${kind} pseudonym after ${MAX_ATTEMPTS} attempts`);
+    return undefined;
+  }
+
+  private record(kind: MapKind, canonical: string, surface: string, pseudo: string): string {
+    this.issued.add(pseudo);
+    if (this.digitIndex !== undefined) indexDigits(this.digitIndex, pseudo);
+    this.entries.set(`${kind}\0${canonical}`, { kind, canonical, value: surface, pseudonym: pseudo });
+    return pseudo;
+  }
+
+  private digitsTaken(): Map<number, DigitsOfWidth> {
+    if (this.digitIndex !== undefined) return this.digitIndex;
+    const idx = new Map<number, DigitsOfWidth>();
+    for (const s of this.avoid) indexDigits(idx, s);
+    for (const s of this.issued) indexDigits(idx, s);
+    this.digitIndex = idx;
+    return idx;
+  }
+
+  /**
+   * How many values of a space are taken: real values and issued pseudonyms in it, plus the value
+   * itself and its surface. An upper bound on what `free` rejects there, as every digit string `free`
+   * rejects is one of these: for a digit string `suffixAvoided` is `avoid.has`. A new rejection rule
+   * for digit candidates must be counted here too, or `walk` can give up on a space with a free value.
+   */
+  private takenIn(width: number, lead: Lead, canonical: string, surface: string): bigint {
+    const got = this.digitsTaken().get(width);
+    let n = got === undefined ? 0 : lead === "any" ? got.all.size : lead === "zero" ? got.zeros : got.all.size - got.zeros;
+    for (const s of new Set([canonical, surface])) if (inSpace(s, width, lead) && got?.all.has(s) !== true) n++;
+    return BigInt(n);
+  }
+
+  /**
+   * A free value of one space, or undefined when it has none: a walk in numeric order from an
+   * HMAC-chosen point. At most `taken + 1` steps, since no more than `taken` values in a row can be taken.
+   */
+  private walk(salt: Uint8Array, msg: string, width: number, lead: Lead, canonical: string, surface: string): string | undefined {
+    const size = spaceSize(width, lead);
+    const taken = this.takenIn(width, lead, canonical, surface);
+    if (taken >= size) return undefined;
+    const start = spaceStart(new ByteStream(salt, msg), size);
+    for (let i = 0n; i <= taken; i++) {
+      const candidate = spaceAt(width, lead, (start + i) % size);
+      if (this.free(candidate, canonical, surface)) return candidate;
+    }
+    return undefined;
+  }
+
+  /**
+   * A numeric ID's stand-in (AGT-2786; see the header). Same width while a value of that width is
+   * free: the counter draws as before, then a walk. Otherwise the next wider space with a free value.
+   */
+  private numericId(canonical: string, surface: string): string {
+    const known = this.lookup("id", canonical, surface);
+    if (known !== undefined) return known;
+    const salt = this.needSalt("id");
+    const width = canonical.length;
+    const lead: Lead = canonical[0] === "0" ? "any" : "nonzero";
+    if (this.takenIn(width, lead, canonical, surface) < spaceSize(width, lead)) {
+      const drawn = this.draw(salt, "id", canonical, surface, (b) => renderNumeric(b, canonical));
+      if (drawn !== undefined) return drawn;
+      const walked = this.walk(salt, `id\0${canonical}\0walk`, width, lead, canonical, surface);
+      if (walked !== undefined) return this.record("id", canonical, surface, walked);
+    }
+    // A lone `0` is the number zero, not a zero-padded code: it widens like any other figure.
+    const wide: Lead = canonical.length > 1 && canonical[0] === "0" ? "zero" : "nonzero";
+    // Terminates: the corpus and the map are finite, and each wider space is ten times larger.
+    for (let w = width + 1; ; w++) {
+      const walked = this.walk(salt, `id\0${canonical}\0w${w}`, w, wide, canonical, surface);
+      if (walked !== undefined) return this.record("id", canonical, surface, walked);
+    }
   }
 
   /**
@@ -518,9 +674,7 @@ export class Pseudonymizer {
     if (this.issued.has(pseudo)) {
       throw new PseudonymError(`composed ${kind} pseudonym collides with an issued one`);
     }
-    this.issued.add(pseudo);
-    this.entries.set(`${kind}\0${canonical}`, { kind, canonical, value: surface, pseudonym: pseudo });
-    return pseudo;
+    return this.record(kind, canonical, surface, pseudo);
   }
 
   /** Host labels that recur bare in the corpus (recur.ts hostLabelForms): as host values they get the label's pseudonym. */
@@ -608,7 +762,7 @@ export class Pseudonymizer {
       case "id": {
         if (guidCore(c) !== undefined) return formatGuidLike(value, this.derive("id", c, surface, renderGuid));
         // A phone written with separators canonicalises to digits but keeps the prefixed shape.
-        if (/^\d+$/.test(c) && /^\d+$/.test(value.trim())) return this.derive("id", c, surface, (b) => renderNumeric(b, c));
+        if (/^\d+$/.test(c) && /^\d+$/.test(value.trim())) return this.numericId(c, surface);
         return this.prefixed(cls, c, surface, label);
       }
       case "person":

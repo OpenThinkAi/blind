@@ -325,8 +325,17 @@ compact   5580,Org_8481,Value_A888,Id_5763,Person_F884,host-ee89.host-470e.examp
 - A `location` value writes the label `Place` (compact: `Loc_`). An email-class value that is not
   email-shaped writes `Value`. `redact` writes `REDACTED`, in both styles.
 - Some shapes are the same in both styles: email addresses, host names (`host-` labels), IPv4 addresses
-  in the documentation ranges, GUIDs and numeric IDs of the same length. A phone written with
-  separators takes the `Id` form.
+  in the documentation ranges, GUIDs and numeric IDs (digits for digits, of the same length unless
+  that width is full, below). A phone written with separators takes the `Id` form.
+- **Numeric IDs widen rather than run out** (AGT-2786). A bare-digit ID gets digits of its own width,
+  never equal to a real value in the corpus or to another stand-in. When every value of that width is
+  taken (a column of three-digit IDs beside a kept column that holds every number from 100 to 999),
+  the stand-in widens to the next width with a free value: `101` becomes a four-digit number such as
+  `4813`, still digits only, with a non-zero first digit. An ID written with a leading zero is a
+  zero-padded code and widens to one (`007` becomes `0428`, never `4280`). The choice is
+  deterministic for the salt and is recorded in the map, so `blind reveal` restores it. A width that
+  is crowded but not full still gives a same-width stand-in, and an ID whose width is not full gets
+  the stand-in it got before.
 - A host or email pseudonym keeps the real top-level domain: every label but the last is replaced,
   and the last is kept when it is alphabetic (`db01.corp.example.de` becomes
   `host-1a2b.host-3c4d.host-5e6f.de`, `ada@example.com` becomes `user_7a8b@host-9c0d.com`). A
@@ -452,7 +461,7 @@ digits): a pet called `Rex` in a `value` column and an owner or speaker called `
 entities with two pseudonyms. Other classes (a phone as `id` and as `value`) always join. Phone-shaped values
 canonicalise to their digits in every class, so `(801) 555-0100`, `801-555-0100` and
 `+1 801 555 0100` share one pseudonym (`blind reveal` restores each as the form the map records). A
-value of bare digits is never read as a phone by canonicalisation, so numeric IDs keep their length (the pattern reads a bare run as a phone only from its context, see `phone`).
+value of bare digits is never read as a phone by canonicalisation, so numeric IDs keep their length (the pattern reads a bare run as a phone only from its context, see `phone`), unless their width is full ([numeric IDs widen](#pseudonym-styles)).
 
 **Recurring values.** Once every column is decided, each value a column rule pseudonymised, each XLSX
 or DOCX identity metadata value replaced whole (creator, last modified by, comment and revision
@@ -641,7 +650,7 @@ them, alongside the patterns:
   `triple oh` counted as two and three digits, any case), joined by spaces, a comma, a full stop, a
   dash or one line break: `eight oh one, five five five, zero one four two` is the number
   `8015550142`. It is classed by the first enabled pattern that matches the digits whole and is an
-  `id` otherwise, so it gets a numeric pseudonym of the same length. Fewer than four digits, or
+  `id` otherwise, so it gets a numeric pseudonym of the same length (wider only when that width is full). Fewer than four digits, or
   number words with other words between them (`two dogs, one cat`), are left alone. This detector
   has no switch; note that a counted-out sequence such as `five six seven eight` is also replaced.
 - An email address spoken word by word: a local part whose words are joined by `dot`,
@@ -772,7 +781,8 @@ is an error). The column table above applies to every cell, with these workbook 
   run and the other runs are emptied; otherwise each run keeps its formatting.
 - **Numbers.** A number cell cannot hold text, so a number cell in a column a rule pseudonymises
   (`blind`, or `value` with a class) is renumbered: its digits get a same-length numeric `id`
-  pseudonym (`4417` → `8203`; a decimal keeps its point), whatever the column's class. A column
+  pseudonym (`4417` → `8203`; a decimal keeps its point and its number of decimal places; a widened
+  stand-in adds its digits before the point), whatever the column's class. A column
   with no rule (or `unknown`/`value`) that fails closed still pseudonymises its text cells, but its
   number cells are left as written: a renumbered amount is a different, plausible number, which is
   silent corruption. Apply's report says so for that column (`N number cells left as written`),

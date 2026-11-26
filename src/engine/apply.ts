@@ -74,7 +74,7 @@ import { assertRowWidths, type Cell, CsvError, parseCsv, renderCell, type Row, s
 import { decode, type Encoding, EncodingError, encode } from "./encoding.ts";
 import { isJsonNumber, type JsonFormat, JsonError, type JsonToken, jsonCuts, quote, scanJson, scanJsonl, stringOffsets } from "./json.ts";
 import { type BlindMap, foldText, withoutValues } from "./map.ts";
-import { type EntityEntry, NAME_SAFE_SHAPE_RE, Pseudonymizer, type PseudonymStyle, READABLE_SHAPE_RE } from "./pseudonym.ts";
+import { type EntityEntry, NAME_SAFE_SHAPE_RE, PseudonymError, Pseudonymizer, type PseudonymStyle, READABLE_SHAPE_RE } from "./pseudonym.ts";
 import { cellText, readWorkbook } from "../formats/xlsx.ts";
 import { NO_ZIP_CODEC_REASON, zipCodec } from "../formats/zipcodec.ts";
 import { lastKey } from "./birthdate.ts";
@@ -1298,38 +1298,49 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
 
   // Pass 1 ends here: derive every pseudonym in sorted order.
   const requests = new Set<string>();
-  const want = (cls: PseudoClass, value: string) => requests.add(`${cls}\0${value}`);
+  // Where each request was first seen (file, and column or key path), for a PseudonymError (AGT-2786).
+  const origins = new Map<string, string>();
+  const want = (cls: PseudoClass, value: string, where: string) => {
+    const req = `${cls}\0${value}`;
+    requests.add(req);
+    if (!origins.has(req)) origins.set(req, where);
+  };
   for (const p of plans) {
+    const path = p.input.path;
     if (p.kind === "text") {
-      for (const s of p.spans) if (s.cls !== null) want(s.cls, s.value);
+      for (const s of p.spans) if (s.cls !== null) want(s.cls, s.value, path);
       continue;
     }
     if (p.kind === "docx") {
-      for (const r of p.docx.requests) want(r.cls, r.value);
+      for (const r of p.docx.requests) want(r.cls, r.value, path);
       continue;
     }
     if (p.kind === "json") {
       for (const [i, edit] of p.edits) {
+        const tok = p.tokens[i] as JsonToken;
+        const where = tok.column === null ? path : `${path}, key path ${JSON.stringify(tok.column)}`;
         if (edit.kind === "spans") {
-          for (const s of edit.spans) if (s.cls !== null) want(s.cls, s.value);
-        } else if (edit.kind === "pseudo") want(edit.cls, (p.tokens[i] as JsonToken).value);
+          for (const s of edit.spans) if (s.cls !== null) want(s.cls, s.value, where);
+        } else if (edit.kind === "pseudo") want(edit.cls, tok.value, where);
       }
       continue;
     }
     if (p.kind === "xlsx") {
-      for (const r of p.plan.requests) want(r.cls, r.value);
+      for (const r of p.plan.requests) want(r.cls, r.value, path);
       continue;
     }
     for (const [key, edit] of p.edits) {
+      const [r, c] = key.split(":").map(Number) as [number, number];
+      const header = p.noHeader || p.headerRow < 0 || r <= p.headerRow ? undefined : (p.rows[p.headerRow] as Row).cells[c]?.value;
+      const where = header === undefined ? `${path}, column ${c + 1}` : `${path}, column ${JSON.stringify(header)}`;
       if (edit.kind === "spans") {
-        for (const s of edit.spans) if (s.cls !== null) want(s.cls, s.value);
+        for (const s of edit.spans) if (s.cls !== null) want(s.cls, s.value, where);
       } else if (edit.kind === "pseudo") {
-        const [r, c] = key.split(":").map(Number) as [number, number];
-        want(edit.cls, ((p.rows[r] as Row).cells[c] as Cell).value);
+        want(edit.cls, ((p.rows[r] as Row).cells[c] as Cell).value, where);
       }
     }
   }
-  for (const r of names.requests()) want(r.cls, r.value);
+  for (const r of names.requests()) want(r.cls, r.value, "a file, folder or sheet name");
   // Role labels (AGT-1932): a value in a column or under a key is labelled from that header as written in
   // the output. The first labelled request for an entity wins; it is only read by a readable- or letters-style Pseudonymizer.
   const labels = new Map<string, string>();
@@ -1399,7 +1410,13 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     const cut = req.indexOf("\0");
     const cls = req.slice(0, cut) as PseudoClass;
     const value = req.slice(cut + 1);
-    pz.pseudonym(cls, value, labels.get(req) ?? entityLabels.get(pz.entityKey(cls, value)));
+    try {
+      pz.pseudonym(cls, value, labels.get(req) ?? entityLabels.get(pz.entityKey(cls, value)));
+    } catch (e) {
+      // The pseudonymizer names the value's shape only; this names the file and column it came from.
+      if (e instanceof PseudonymError) throw new PseudonymError(`${origins.get(req) ?? "input"}: ${e.message}`);
+      throw e;
+    }
   }
   // Office's hex linking IDs, also in sorted order, so a collision is resolved the same way every run.
   const hexIds = new Set<string>();

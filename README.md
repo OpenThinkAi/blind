@@ -227,7 +227,9 @@ true
 Avery Quill works the most hours.
 ```
 
-`proposeSpec(profile, policy)` returns the spec alone. `parseSpec(text)` reads a spec saved as JSON
+The CLI applies nothing until a person has seen the spec; from code, that review is yours to
+build. Nothing stops `proposal.spec` going straight to `applySpec`, so show `proposal.columns` (each
+with its reason) to the owner first. `proposeSpec(profile, policy)` returns the spec alone. `parseSpec(text)` reads a spec saved as JSON
 (the format of `.blind/spec.json`) and checks it; pass a spec through it, or `validateSpec`, before
 `applySpec`, which does not check one.
 
@@ -324,8 +326,9 @@ true
 
 `inflateRaw` must throw once its output would pass `maxOutputLength` (the size blind expects for
 that archive member) rather than return a truncated result: that limit is what stops a zip bomb.
-The codec is one value for the whole process (or page), so install it once at start-up. Every example in this section is run by `test/pack.test.ts` against the packed package, under
-Node.
+The codec is one value for the whole process (or page), so install it once at start-up.
+
+Every example in this section is run by `test/pack.test.ts` against the packed package, under Node.
 
 ## Documentation
 

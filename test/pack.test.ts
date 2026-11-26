@@ -6,6 +6,7 @@
 // tarball's bin on Bun; and every JavaScript example in the README's "Use as a library" section runs
 // under Node and prints what the README says it prints. Synthetic data only.
 //
+// The build runs at module load, so every `bun test` rewrites dist/ in the working tree (it is gitignored).
 // It needs `node` and `npm` on PATH, and fails (it does not skip) when either is missing. Nothing is
 // fetched: the package has no runtime dependency, so the install is offline.
 import { afterAll, describe, expect, test } from "bun:test";

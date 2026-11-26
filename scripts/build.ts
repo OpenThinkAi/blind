@@ -14,8 +14,7 @@
 //
 // Run: bun scripts/build.ts (or bun run build).
 
-import { mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "..");
@@ -33,7 +32,7 @@ function walk(dir: string): string[] {
 }
 
 /** `from "./x.ts"`, `import("./x.ts")` and `import "./x.ts"` with `.js`, for relative specifiers only. */
-export function rewriteSpecifiers(dts: string): string {
+function rewriteSpecifiers(dts: string): string {
   return dts.replace(/((?:\bfrom|\bimport)\s*\(?\s*)(["'])(\.\.?\/[^"']*?)\.ts\2/g, "$1$2$3.js$2");
 }
 
@@ -47,8 +46,10 @@ for (const entry of ENTRIES) {
 }
 
 // Declarations: emitted into a scratch directory under the source's own layout (src/... beside schema/,
-// which src/validate.ts imports), then src/ is moved to dist/types.
-const scratch = mkdtempSync(join(tmpdir(), "blind-build-"));
+// which src/validate.ts imports), then src/ is moved to dist/types. The scratch directory is inside dist/,
+// not the system temp directory, so the move is a rename on one file system (a tmpfs /tmp would fail it).
+const scratch = join(DIST, ".types-build");
+mkdirSync(scratch, { recursive: true });
 try {
   const config = join(scratch, "tsconfig.json");
   writeFileSync(

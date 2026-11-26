@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.4.0-rc.2
+
+Fixes found by running the library on small-business exports (job history, payroll, bank and till files).
+
+- **Fix: a hidden number no longer damages kept numbers and dates.** A value written only in digits
+  (`1048`, `2026`) from a dropped, redacted or blinded column, or from an earlier map, was replaced
+  wherever the same digits appeared, so a kept amount `-1048.93` became `-REDACTED.93` and a kept date
+  `2026-01-05` became `REDACTED-01-05`. Now such a value is never matched inside a longer number
+  (`1048.93`, `1,048`), anywhere, and is never replaced in a `keep` cell whose whole value reads as a
+  number, an amount, a date or a time. It is still replaced in free text ("see invoice 1048") and in
+  kept cells that are free text; names, emails and mixed IDs such as `A1048` recur as before. The
+  audit reports a blinded number left in place this way as a candidate. A dropped or redacted value
+  is not in the map, so the audit cannot report one that survives. See "Numbers stay whole" in
+  [docs/spec.md](docs/spec.md).
+- **Fix: large files no longer overflow the stack.** `applySpec` threw `RangeError: Maximum call stack
+  size exceeded` on a CSV of about 125,000 rows under Node and in Chromium-based browsers. Every place
+  that passed one argument per row, cell or value is now a loop, and 500,000-row CSV and JSONL files
+  are tested under Bun and Node through both entries. The audit of a large kept table and applying a
+  large JSONL file with a blinded field are also much faster.
+- **Fix: a column header is no longer renamed by a word of someone's name.** With a person column
+  blinded, a header such as `Tax`, `Bonus` or `Tips` was replaced when it equalled one word of a blinded
+  name ("PayHarbor Tax Service", "Ivy Bonus"), in the same file or another. A detected header cell and
+  a JSON key are now never changed by a lone name part. A whole blinded value in a header is still
+  replaced. The apply report lists the header cells it changed (`headerCellsReplaced`) and those it
+  kept although they hold a word of a blinded name (`headerPartsKept`); the audit reports the kept ones
+  as candidates, not leaks. A sheet whose headers are bare first names or surnames therefore keeps
+  them: name them as spec entities to have them replaced. See "Header cells and JSON keys" in
+  [docs/spec.md](docs/spec.md).
+- **Fix: numeric IDs no longer run out of stand-ins.** A column of short numeric IDs blinded with
+  class `id` failed with "no free id pseudonym after 10000 attempts" when the files already held most
+  numbers of that length. A stand-in now takes a longer number when every number of the ID's own
+  length is in use (`101` becomes a four-digit number); otherwise stand-ins are exactly what they were,
+  so earlier maps still match. Where a stand-in space can still run out (IPv4 addresses, and more than
+  65,536 distinct values in one run under the `compact` or `readable` style), the error names the file
+  and column and says what to change.
+
 ## 0.4.0-rc.1
 
 - **Use blind as a library.** `import ... from "@openthink/blind"` gives the engine as functions over

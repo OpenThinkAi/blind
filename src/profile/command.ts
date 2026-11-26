@@ -70,7 +70,7 @@ function detectors(s: ValueStats): string {
 }
 
 function table(rows: string[][]): string[] {
-  const widths = (rows[0] ?? []).map((_, c) => Math.max(...rows.map((r) => (r[c] ?? "").length)));
+  const widths = (rows[0] ?? []).map((_, c) => rows.reduce((w, r) => Math.max(w, (r[c] ?? "").length), 0));
   return rows.map((r) => `  ${r.map((cell, c) => (c === r.length - 1 ? cell : cell.padEnd(widths[c] ?? 0))).join("  ")}`.trimEnd());
 }
 
@@ -103,13 +103,12 @@ export function renderProfile(p: Profile, skipped: readonly Skipped[], notes: re
   };
   for (const t of p.tables) {
     out.push(`${head(t.file)}${t.sheet === undefined ? "" : `  sheet ${v(t.sheet)}`}  header row ${t.headerRow}${t.overflowRows === undefined ? "" : `  ${t.overflowRows} row(s) wider than the header (extra cells counted in the last column)`}`);
-    out.push(
-      ...table([
-        ["column", "count", "distinct", "digits", "words", "length", "detectors", "samples"],
-        ...t.columns.map((c) => [v(c.header), ...statCells(c.stats, v)]),
-      ]),
-      "",
-    );
+    const rows = table([
+      ["column", "count", "distinct", "digits", "words", "length", "detectors", "samples"],
+      ...t.columns.map((c) => [v(c.header), ...statCells(c.stats, v)]),
+    ]);
+    for (const line of rows) out.push(line);
+    out.push("");
   }
   // JSON and JSONL files, each with its key paths.
   for (const f of p.files) {
@@ -120,13 +119,12 @@ export function renderProfile(p: Profile, skipped: readonly Skipped[], notes: re
       out.push("  no key paths", "");
       continue;
     }
-    out.push(
-      ...table([
-        ["key path", "count", "distinct", "digits", "words", "length", "detectors", "samples"],
-        ...group.map((j) => [v(j.path), ...statCells(j.stats, v)]),
-      ]),
-      "",
-    );
+    const rows = table([
+      ["key path", "count", "distinct", "digits", "words", "length", "detectors", "samples"],
+      ...group.map((j) => [v(j.path), ...statCells(j.stats, v)]),
+    ]);
+    for (const line of rows) out.push(line);
+    out.push("");
   }
   for (const d of p.documents) {
     out.push(head(d.file));

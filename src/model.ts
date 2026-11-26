@@ -322,7 +322,7 @@ export function splitText(text: string, max = MAX_DATA_STRING): string[] {
   for (const word of text.split(/(\s+)/)) {
     const w = [...word];
     if (line.length + w.length <= max) {
-      line.push(...w);
+      for (const ch of w) line.push(ch);
       continue;
     }
     flush();

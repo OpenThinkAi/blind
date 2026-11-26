@@ -203,8 +203,7 @@ function planForget(values: string[], mapPath: string, cwd: string): ForgetPlan 
     for (const cls of ENTITY_CLASSES) {
       const list = raw.entities[cls];
       if (list === undefined) continue;
-      gone.push(...list.filter(named));
-      kept.push(...list.filter((e) => !named(e)));
+      for (const e of list) (named(e) ? gone : kept).push(e);
       raw.entities[cls] = list.filter((e) => !named(e));
     }
     entities = gone.length;

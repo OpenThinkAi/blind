@@ -195,7 +195,7 @@ export function mergeProposal(
 
   // New columns: the analyst's rule or the heuristic one, unknown while any question about it is open.
   const fresh = completeProposal({ ...saved, columns: proposed, questions: [...saved.questions, ...added] }, part, policy);
-  columns.push(...fresh.spec.columns);
+  for (const c of fresh.spec.columns) columns.push(c);
 
   // Entities: new ones are added. A saved entity is never changed, so a proposal for a saved
   // canonical form is dropped, and a new entity's forms that already belong to a saved one are left out.

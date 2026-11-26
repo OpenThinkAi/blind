@@ -73,7 +73,7 @@ export function profileTable(file: string, rows: readonly string[][], k: number,
   const header = rows[headerRow - 1] ?? [];
   const data = rows.slice(headerRow).filter((r) => filled(r).length > 0);
   const fold_ = foldOverflow && header.length > 0;
-  const width = fold_ ? header.length : Math.max(header.length, ...data.map((r) => r.length));
+  const width = fold_ ? header.length : data.reduce((w, r) => Math.max(w, r.length), header.length);
   const overflowRows = fold_ ? data.filter((r) => r.length > width).length : 0;
   const cells = Array.from({ length: width }, (_, c) =>
     fold_ && c === width - 1 ? data.flatMap((r) => (r.length > c ? r.slice(c) : [""])) : data.map((r) => r[c] ?? ""),

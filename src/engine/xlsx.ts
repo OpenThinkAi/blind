@@ -200,7 +200,8 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
     const detected = detectHeaderRow(rows);
     const headerRow = rows.length === 0 ? -1 : (detected ?? 1) - 1;
     const headerCells = headerRow >= 0 ? (rows[headerRow] ?? []) : [];
-    const width = Math.max(0, ...rows.map((r) => r.length));
+    let width = 0;
+    for (const r of rows) width = Math.max(width, r.length); // a loop, not a spread of one argument per row (AGT-2784)
     const headers = Array.from({ length: width }, (_, i) => headerCells[i] ?? "");
     const sheetRules = rules.filter((r) => r.sheet === sheet.name);
     for (const rule of sheetRules) {
@@ -251,7 +252,7 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
       const removes = action.kind === "drop" || action.kind === "redact";
       // Their text recurs elsewhere although the cells go; a number cell refuses the workbook below.
       if (removes) {
-        removed.push(...removedForms(rule, texts.filter((_, i) => ["s", "str", "inlineStr"].includes((data[i] as XlsxCell).type))));
+        for (const f of removedForms(rule, texts.filter((_, i) => ["s", "str", "inlineStr"].includes((data[i] as XlsxCell).type)))) removed.push(f);
       }
       data.forEach((c, i) => {
         const text = texts[i] as string;
@@ -455,9 +456,12 @@ export function xlsxValues(p: XlsxPlan): string[] {
     for (const c of s.cells) out.push(cellText(c, p.wb.sharedStrings));
   }
   for (const s of p.wb.sharedStrings) out.push(s.runs.join(""));
-  out.push(...p.wb.definedNames);
-  for (const t of p.wb.tables) out.push(t.name, t.displayName, ...t.columns);
-  out.push(...p.metadata);
+  for (const n of p.wb.definedNames) out.push(n);
+  for (const t of p.wb.tables) {
+    out.push(t.name, t.displayName);
+    for (const c of t.columns) out.push(c);
+  }
+  for (const m of p.metadata) out.push(m);
   return out;
 }
 

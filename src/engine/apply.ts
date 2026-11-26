@@ -475,7 +475,7 @@ function proseInputs(plans: readonly Plan[]): { free: string[]; kept: string[] }
   const kept: string[] = [];
   for (const p of plans) {
     if (p.kind === "text") free.push(p.text);
-    else if (p.kind === "docx") free.push(...docxParagraphs(p.docx, "all"));
+    else if (p.kind === "docx") for (const para of docxParagraphs(p.docx, "all")) free.push(para);
     else if (p.kind === "xlsx") {
       for (const c of p.plan.pending) {
         if (c.cell.action.kind === "keep") kept.push(c.text);
@@ -533,7 +533,9 @@ function planTable(
   // The header sets the columns. A data row's extra cells (a stray delimiter) continue the last column.
   const width = headerCells.length;
   const lastCol = width - 1;
-  const maxCells = Math.max(width, ...rows.slice(headerRow + 1).map((r) => r.cells.length));
+  // A loop, not a spread of one Math.max argument per row: that overflows the stack past ~125,000 rows (AGT-2784).
+  let maxCells = width;
+  for (let r = headerRow + 1; r < rows.length; r++) maxCells = Math.max(maxCells, (rows[r] as Row).cells.length);
   const headers = Array.from({ length: width }, (_, i) => headerCells[i]?.value ?? "");
 
   for (const rule of rules) {
@@ -577,7 +579,7 @@ function planTable(
     columns.push(column);
     if (action.kind === "keep") keptCols.add(col);
     if (action.kind === "drop" || action.kind === "redact") {
-      removed.push(...removedForms(rule, data.map((r) => r.cells[col]?.value ?? "")));
+      for (const f of removedForms(rule, data.map((r) => r.cells[col]?.value ?? ""))) removed.push(f);
     }
     // A key/value block (AGT-1852): a rule pseudonymises a column of field labels ("Phone", "Card",
     // "Email") with values to its right. The labels are not values of the rule's class: they stay
@@ -722,10 +724,10 @@ function planJson(
       flagged: 0,
     };
     columns.push(column);
-    if (action.kind === "drop" || action.kind === "redact") removed.push(...removedForms(rule, valued.map((i) => (tokens[i] as JsonToken).value)));
+    if (action.kind === "drop" || action.kind === "redact") for (const f of removedForms(rule, valued.map((i) => (tokens[i] as JsonToken).value))) removed.push(f);
     if (action.kind === "drop") {
       // The member goes whatever its value, null included.
-      dropped.push(...indices);
+      for (const i of indices) dropped.push(i);
       column.changed = indices.length;
       continue;
     }
@@ -945,7 +947,7 @@ function settleWholes(plans: readonly Plan[], listed: (t: string) => boolean, ke
     if (freed.size === 0) return;
     const rest = mapped.filter((m) => !freed.has(m));
     mapped.length = 0;
-    mapped.push(...rest);
+    for (const m of rest) mapped.push(m);
   };
   for (const p of plans) {
     if (p.kind === "table") release(p.wholeCells, p.edits, p.pending, p.mapped);
@@ -1121,7 +1123,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   for (const p of plans) {
     if (p.kind === "json") {
       for (const [i, edit] of p.edits) if (edit.kind === "pseudo") columnValues.push({ cls: edit.cls, value: (p.tokens[i] as JsonToken).value });
-    } else if (p.kind === "xlsx") columnValues.push(...p.plan.columnValues);
+    } else if (p.kind === "xlsx") for (const f of p.plan.columnValues) columnValues.push(f);
     else if (p.kind === "table") {
       for (const [key, edit] of p.edits) {
         if (edit.kind !== "pseudo") continue;
@@ -1134,7 +1136,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   // whatever the spec says; those values recur like a pseudonymised column value (AGT-1812), so the
   // creator in a cell, a sheet name, another file or a file name gets the same pseudonym.
   const metadata = plans.flatMap((p) => (p.kind === "xlsx" ? p.plan.wholes : p.kind === "docx" ? docxWholes(p.docx) : []));
-  columnValues.push(...metadata);
+  for (const f of metadata) columnValues.push(f);
   // Transcript speakers: person forms for names, content and recurrences alike.
   const vocabulary = (spec.entities.vocabulary ?? []).flatMap((e) => [e.canonical, ...e.aliases, ...e.parts]);
   const kept = keptSpeakers(opts.keep ?? [], vocabulary);
@@ -1142,11 +1144,11 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   const spoken: string[] = [];
   for (const p of plans) {
     if (p.kind === "text" && p.transcript !== undefined) {
-      speakers.push(...speakersOf(p.transcript.entries));
-      spoken.push(...p.transcript.entries.map((e) => e.text));
+      for (const s of speakersOf(p.transcript.entries)) speakers.push(s);
+      for (const e of p.transcript.entries) spoken.push(e.text);
     } else if (p.kind === "docx" && p.transcript !== undefined) {
-      speakers.push(...p.transcript.speakers);
-      spoken.push(...p.transcript.spoken);
+      for (const s of p.transcript.speakers) speakers.push(s);
+      for (const s of p.transcript.spoken) spoken.push(s);
     }
   }
   // The values the column pass pseudonymised (an earlier map's are added by recurrenceForms), and
@@ -1184,7 +1186,8 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   const mapDropped = pruned?.dropped ?? 0;
   const asRemoved = (f: ExtraForm): ExtraForm => (f.cls === "redact" ? { ...f, source: "removed" } : f);
   const mapped = [...columnMapped, ...removedValues];
-  columnValues.push(...removedValues, ...listed);
+  for (const f of removedValues) columnValues.push(f);
+  for (const f of listed) columnValues.push(f);
   const voiceNames = speakers.filter((n) => !kept(n));
   const people = personValues(mapped, priorMap);
   // Redacted names are people too for who-is-who and for what prose is new, though they get no pseudonym.
@@ -1225,7 +1228,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     priorMap,
     vocabularySet,
   ).filter((f) => !pseudoForms.some((g) => (g.form ?? g.value).toLowerCase() === f.value));
-  pseudoForms.push(...hostLabels);
+  for (const f of hostLabels) pseudoForms.push(f);
   const bareLabels = hostLabels.map((f) => f.value);
   // A removed form whose text a pseudonymised form also matches is that pseudonym's, never the placeholder.
   const pseudoTexts = new Set([...pseudoForms, ...pseudoParts, ...voices].filter((f) => f.cls !== "redact").map((f) => textKey(f.form ?? f.value)));
@@ -1420,14 +1423,17 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         if (cell !== undefined) setLabel(edit.cls, cell.value, header, hidden(p.edits.get(`${p.headerRow}:${c}`)));
       }
     } else if (p.kind === "json") {
-      const keyTokens = p.tokens.map((t, i) => ({ t, i })).filter((x) => x.t.kind === "key");
+      // The key names any hidden key token carries, once per file: a scan of every key per edit was quadratic (AGT-2784).
+      const hiddenKeys = new Set<string>();
+      p.tokens.forEach((t, i) => {
+        if (t.kind === "key" && hidden(p.edits.get(i))) hiddenKeys.add(t.value);
+      });
       for (const [i, edit] of p.edits) {
         if (edit.kind !== "pseudo") continue;
         const tok = p.tokens[i] as JsonToken;
         const header = tok.column === null ? undefined : lastKey(tok.column);
         if (header === undefined) continue;
-        const gone = keyTokens.some((k) => k.t.value === header && hidden(p.edits.get(k.i)));
-        setLabel(edit.cls, tok.value, header, gone);
+        setLabel(edit.cls, tok.value, header, hiddenKeys.has(header));
       }
     } else if (p.kind === "xlsx") {
       const { wb, cells, sheets } = p.plan;

@@ -17,7 +17,8 @@ export interface KeptCell {
 /**
  * The data cells of every column `rules` keep, in a table already decoded. A row's extra cells
  * continue the last column, as the engine reads them. Empty when the table cannot be parsed or its
- * rows do not add up to the text (then nothing is treated as kept).
+ * rows do not add up to the text (then nothing is treated as kept). The cells come in text order and
+ * never overlap: keptByRule (mechanical.ts) relies on it to place findings by binary search (AGT-2784).
  */
 export function keptCells(text: string, tsv: boolean, rules: readonly ColumnRule[]): KeptCell[] {
   const keep = rules.filter((r) => r.treatment === "keep" && r.header !== undefined);

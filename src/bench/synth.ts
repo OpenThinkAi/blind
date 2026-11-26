@@ -297,10 +297,10 @@ export function generateKit(seed: number = DEFAULT_SEED, options: KitOptions = {
   let spec = kitSpec();
   if (version === 2) {
     const v2 = generateV2(seed, rows, oracle);
-    files.push(...v2.files);
+    for (const f of v2.files) files.push(f);
     columns = [...columns, ...v2.columns];
     spec = kitSpecV2(spec, v2);
-    decoys.push(...v2.decoys);
+    for (const d of v2.decoys) decoys.push(d);
   }
   files.sort((x, y) => cmp(x.path, y.path));
 

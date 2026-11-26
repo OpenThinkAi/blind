@@ -1096,13 +1096,33 @@ function keptByRule(sink: PartSink, bytes: Uint8Array, rules: readonly ColumnRul
   const cells = keptCells(decoded.text, format === "tsv", rules);
   if (cells.length === 0) return;
   const bom = decoded.encoding === "utf8-bom" ? 3 : 0;
-  const place = (at: number): number => utf8Length(decoded.text.slice(0, at)) + bom;
+  // keptCells gives the cells in text order: byte offsets are summed as it goes and a finding is placed
+  // by binary search. A prefix measured per cell and every cell tried per finding were quadratic (AGT-2784).
+  let byte = bom;
+  let char = 0;
+  const place = (at: number): number => {
+    byte += utf8Length(decoded.text.slice(char, at));
+    char = at;
+    return byte;
+  };
   const ranges = cells.map((c) => [place(c.start), place(c.end)] as const);
+  const kept = (at: number): boolean => {
+    let lo = 0;
+    let hi = ranges.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const [a, b] = ranges[mid] as readonly [number, number];
+      if (at < a) hi = mid - 1;
+      else if (at >= b) lo = mid + 1;
+      else return true;
+    }
+    return false;
+  };
   sink.findings = sink.findings.map((f) => {
     if (f.severity !== "leak" || f.part !== "" || f.in !== "content" || f.offset === null) return f;
     if (f.source !== "pattern" && f.source !== "entity" && f.source !== "map") return f;
     const at = f.offset;
-    if (!ranges.some(([a, b]) => at >= a && at < b)) return f;
+    if (!kept(at)) return f;
     return { ...f, severity: "candidate" as const, reason: `${f.reason}; in a column the spec keeps (kept by rule)` };
   });
 }
@@ -1206,7 +1226,7 @@ export function addLayer(
   for (const [path, findings] of perFile) {
     if (findings.length === 0) continue;
     const f = files.get(path) ?? { path, kind: kinds.get(path) ?? "file", status: "clean" as Status, findings: [] };
-    f.findings.push(...findings);
+    for (const x of findings) f.findings.push(x);
     f.findings.sort(compareFindings);
     f.status = statusOf(f.findings);
     files.set(path, f);

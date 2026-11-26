@@ -99,8 +99,9 @@ export function isMeasure(value: string, delimiter?: string): boolean {
  */
 export function readsAsNumber(value: string): boolean {
   const v = value.trim();
+  const ok = (x: string): boolean => /^[-+−]?\d+$/.test(x) || isMeasure(x);
   const inner = /^\((.+)\)$/.exec(v)?.[1]?.trim();
-  return [v, inner].some((x) => x !== undefined && x !== "" && (/^[-+−]?\d+$/.test(x) || isMeasure(x)));
+  return ok(v) || (inner !== undefined && ok(inner));
 }
 
 // Lowercase joining words allowed inside a Title-Case name ("Bank of Example").

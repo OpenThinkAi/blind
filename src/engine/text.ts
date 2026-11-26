@@ -476,7 +476,8 @@ export const DIGITS_RE = /^[0-9]+$/;
  * Whether the digits at text[s, e) are part of a longer number (AGT-2783): a digit and a decimal or
  * thousands separator ("." or ",") right before them ("3.1048", "1,048"), or such a separator and a
  * digit right after ("1048.93", "1048,50"). A dropped 1048 is not in a kept -1048.93. Sentence
- * punctuation has no digit beyond it, so "check 1048." and "1048, then" still match.
+ * punctuation has no digit beyond it, so "check 1048." and "1048, then" still match. Only "." and ","
+ * are separators here: a space or apostrophe grouping ("1 048", "1'048") is not read as one number.
  */
 export function insideNumber(text: string, s: number, e: number): boolean {
   return /[0-9][.,]$/.test(text.slice(Math.max(0, s - 2), s)) || /^[.,][0-9]/.test(text.slice(e, e + 2));

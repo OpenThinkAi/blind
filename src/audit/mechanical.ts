@@ -37,8 +37,8 @@
 // have replaced is a `leak`. Anything the audit finds but cannot call a leak
 // with certainty is a `candidate`: a case, accent or width variant, a value
 // embedded in a longer word, a digits-only map value inside a longer number
-// ("1048" in "1048.93", which the engine leaves alone: AGT-2783), a value under 3 characters, a host label or email
-// local part of a blinded value, a column the spec declares `unknown` or does
+// ("1048" in "1048.93", which the engine leaves alone: AGT-2783), a value
+// under 3 characters, a host label or email local part of a blinded value, a column the spec declares `unknown` or does
 // not mention, an unanswered spec question, and any part the audit could not
 // decode (encrypted or corrupt archive members, binary content, images,
 // symbolic links). Status is `leak` if any leak, else `candidates` if any

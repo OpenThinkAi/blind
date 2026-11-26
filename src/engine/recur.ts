@@ -460,8 +460,7 @@ export class TextScanner {
     const numeric = readsAsNumber(text);
     const spans = this.all
       .find(text, shields)
-      .filter((s) => s.source === "map" || s.source === "removed" || s.source === "speaker")
-      .filter((s) => !(numeric && DIGITS_RE.test(text.slice(s.start, s.end))));
+      .filter((s) => (s.source === "map" || s.source === "removed" || s.source === "speaker") && !(numeric && DIGITS_RE.test(text.slice(s.start, s.end))));
     return this.shield === undefined ? spans : this.shield.filter(text, spans);
   }
 

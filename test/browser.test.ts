@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import vm from "node:vm";
 import ts from "typescript";
-import { NO_ZIP_CODEC_REASON, Revealer, RevealError, revealFile, setZipCodec, type ZipCodec, zipCodec } from "../src/lib.ts";
+import { NO_ZIP_CODEC_REASON, parseMap, Revealer, RevealError, revealFile, setZipCodec, type ZipCodec, zipCodec } from "../src/lib.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
 const scratch = mkdtempSync(join(tmpdir(), "blind-browser-"));
@@ -173,7 +173,7 @@ describe("reveal with no zip codec", () => {
     const saved: ZipCodec | null = zipCodec();
     setZipCodec(null);
     try {
-      const rv = new Revealer({ version: 1, entries: [] } as never);
+      const rv = new Revealer(parseMap('{"version":1,"entries":[]}'));
       for (const path of ["out/book.xlsx", "out/letter.docx"]) {
         expect(() => revealFile(path, new TextEncoder().encode("PK"), rv)).toThrow(RevealError);
         expect(() => revealFile(path, new TextEncoder().encode("PK"), rv)).toThrow(NO_ZIP_CODEC_REASON);

@@ -32,8 +32,7 @@ export interface Decoded {
   text: string;
 }
 
-export function decode(bytes: Uint8Array): Decoded {
-  const b = bytes;
+export function decode(b: Uint8Array): Decoded {
   if (b[0] === 0xef && b[1] === 0xbb && b[2] === 0xbf) {
     return { encoding: "utf8-bom", text: utf8(b.subarray(3), "UTF-8 (BOM)") };
   }

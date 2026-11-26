@@ -15,16 +15,28 @@
   },
   "files": [
     "bin",
+    "dist",
     "src",
     "schema",
     "LICENSE",
     "README.md"
   ],
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/types/lib.d.ts",
+      "default": "./dist/lib.js"
+    },
+    "./browser": {
+      "types": "./dist/types/browser.d.ts",
+      "default": "./dist/browser.js"
+    }
+  },
   "bin": {
     "blind": "bin/blind.js"
   },
   "scripts": {
+    "build": "bun scripts/build.ts",
     "test": "bun test --timeout 30000",
     "typecheck": "tsc --noEmit"
   },

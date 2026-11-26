@@ -17,6 +17,11 @@ name: release
 # also checks that the commit it publishes is on main.
 #
 # Node is pinned to an exact release so the npm that runs the publish is reviewed, not whatever 24.x is newest.
+#
+# The check job builds the library (dist/), runs the tests (test/pack.test.ts packs, installs and runs the
+# package under Node), then packs the tarball and hands it to the publish job as an artifact with its
+# sha256. The publish job checks the hash and publishes that file: what was tested is what is published,
+# and the job holding id-token runs no build tool.
 
 on:
   workflow_dispatch:
@@ -32,6 +37,8 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      tarball_sha256: ${{ steps.pack.outputs.sha256 }}
     steps:
       # Actions are pinned by full commit SHA: the publish job below holds id-token: write.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -44,9 +51,29 @@ jobs:
       - run: npm install -g bun@1.3.13
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
+      # The library build (dist/: compiled ESM and .d.ts for `.` and `./browser`). test/pack.test.ts builds,
+      # packs and installs it again and runs it under Node; this step makes a broken build fail on its own.
+      - run: bun run build
       # Tests may commit to temp git repos; a CI runner has no global git identity, unlike a developer machine.
       - run: git config --global user.name "blind CI" && git config --global user.email "ci@blind.invalid"
       - run: bun test --timeout 30000
+      # What is tested is what is published: the tarball is packed here, from the build the tests just ran,
+      # and the publish job publishes this file. It builds nothing and runs no Bun or tsc.
+      - name: pack
+        id: pack
+        run: |
+          mkdir -p "$RUNNER_TEMP/pack"
+          npm pack --pack-destination "$RUNNER_TEMP/pack"
+          mv "$RUNNER_TEMP"/pack/*.tgz "$RUNNER_TEMP/pack/package.tgz"
+          SHA=$(sha256sum "$RUNNER_TEMP/pack/package.tgz" | cut -d' ' -f1)
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          echo "package.tgz sha256 $SHA"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package
+          path: ${{ runner.temp }}/pack/package.tgz
+          if-no-files-found: error
+          retention-days: 1
 
   publish:
     needs: check
@@ -127,9 +154,32 @@ jobs:
           fi
           echo "npm $V"
 
-      # No build step: the package ships source (src/ runs on Bun).
+      # The tarball the check job packed and tested (dist/ built there); nothing is built in this job.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: package
+          path: ${{ runner.temp }}/pack
+      - name: tarball is the one the check job packed
+        env:
+          EXPECTED: ${{ needs.check.outputs.tarball_sha256 }}
+          NAME: ${{ steps.version.outputs.name }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          TGZ="$RUNNER_TEMP/pack/package.tgz"
+          ACTUAL=$(sha256sum "$TGZ" | cut -d' ' -f1)
+          if [ -z "$EXPECTED" ] || [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "package.tgz sha256 $ACTUAL does not match the check job's ${EXPECTED:-(none)}" >&2
+            exit 1
+          fi
+          PACKED=$(tar -xOzf "$TGZ" package/package.json | node -p "const p = JSON.parse(require('fs').readFileSync(0, 'utf8')); p.name + '@' + p.version")
+          if [ "$PACKED" != "$NAME@$VERSION" ]; then
+            echo "package.tgz is $PACKED, expected $NAME@$VERSION" >&2
+            exit 1
+          fi
+          echo "publishing $PACKED, sha256 $ACTUAL"
+
       - name: publish
         if: steps.check.outputs.published == 'false'
         env:
           DIST_TAG: ${{ steps.version.outputs.dist_tag }}
-        run: npm publish --access public --provenance --tag "$DIST_TAG"
+        run: npm publish "$RUNNER_TEMP/pack/package.tgz" --access public --provenance --tag "$DIST_TAG"

@@ -159,6 +159,174 @@ the salt and the spec are kept. Both list what they would remove and need `--yes
 at a terminal). Neither changes blinded output already shared. Details in
 [docs/spec.md](docs/spec.md#how-blind-forget-and-blind-purge-remove-what-blind-keeps).
 
+## Use as a library
+
+The same engine is importable, for code that holds files in memory (a web app, a server, another
+tool). Same stand-ins, same map and the same reveal as the CLI: for the same salt, spec, policy and
+input, `applySpec` writes the bytes and the map `blind apply` writes. The package exports two entry
+points, both plain ES modules with TypeScript types: `@openthink/blind` (Node 20 or later, Bun, or a
+bundler) and `@openthink/blind/browser` (for a browser). Neither reads or writes a file, calls a
+model or touches the network.
+
+```sh
+npm install @openthink/blind
+```
+
+Profile, propose, blind, audit and reveal, from code. Every file is a `"/"`-separated path and its
+bytes. The policy is a plain object with the tables and keys of `blind.toml`
+([docs/policy.md](docs/policy.md); camelCase where the key has an underscore, `keepDates`):
+
+```js
+import { applySpec, auditOutputs, explainProposal, newSalt, parseMap, profileInputs, revealFile, Revealer, revealText, serializeMap } from "@openthink/blind";
+
+const csv = "name,email,team,hours\nAvery Quill,avery.quill@example.com,North,32\nRowan Pike,rowan.pike@example.com,South,40\n";
+const inputs = [{ path: "staff.csv", bytes: new TextEncoder().encode(csv) }];
+const policy = {
+  sensitive: { classes: ["person", "email"] },
+  columns: [
+    { header: "name", treatment: "blind", class: "person" },
+    { header: ["team", "hours"], treatment: "keep" },
+  ],
+};
+
+// Profile and propose: the built-in detectors and your policy, no model. Show the proposal to a person.
+const { profile } = profileInputs(inputs, { policy });
+const proposal = explainProposal(profile, policy);
+for (const c of proposal.columns) console.log(`${c.header}: ${c.treatment} (${c.source}) ${c.reason}`);
+
+// Blind, with the spec the person approved.
+const salt = newSalt();
+const { outputs, map, skipped } = applySpec(inputs, proposal.spec, { salt, policy });
+console.log(skipped.length, "skipped");
+
+// Audit the output: the rule-based checks `blind audit --no-model` runs.
+const report = auditOutputs(outputs, proposal.spec, map, { policy, salt });
+console.log("audit:", report.status);
+
+// Keep the map (and the salt) somewhere only the owner can read. Reveal later with the map alone.
+const saved = serializeMap(map);
+const revealer = new Revealer(parseMap(saved));
+const back = revealFile(outputs[0].path, outputs[0].bytes, revealer);
+console.log(new TextDecoder().decode(back.bytes) === csv);
+
+// Text that quotes the stand-ins (a report written from the blinded file, say) is revealed the same way.
+const name = new TextDecoder().decode(outputs[0].bytes).split("\n")[1].split(",")[0];
+console.log(revealText(`${name} works the most hours.`, parseMap(saved)));
+```
+
+It prints:
+
+```text
+name: blind (policy) decided by blind.toml columns[0] (header "name", blind/person)
+email: blind (heuristic) email blind, detector: email, 100%
+team: keep (policy) decided by blind.toml columns[1] (header "team", keep/vocabulary)
+hours: keep (policy) decided by blind.toml columns[1] (header "hours", keep/vocabulary)
+0 skipped
+audit: clean
+true
+Avery Quill works the most hours.
+```
+
+`proposeSpec(profile, policy)` returns the spec alone. `parseSpec(text)` reads a spec saved as JSON
+(the format of `.blind/spec.json`) and checks it; pass a spec through it, or `validateSpec`, before
+`applySpec`, which does not check one.
+
+**The map and the salt are yours to keep, and both are secret.** The map pairs every stand-in with
+the original value: anyone holding it can reveal everything. The salt holds no value, but with a
+guessed value it confirms a match, and the same salt gives the same stand-ins. blind does not store
+either: keep them where only the owner can read them, never beside the blinded files. Pass an earlier
+map back as `applySpec(..., { salt, map })` and its stand-ins are reused, as `blind apply` reuses
+`.blind/map.json`.
+
+**`clean` means "nothing found by the rules", not "safe".** `auditOutputs` runs the rule-based layers
+of `blind audit` (no model): every value in the spec and the map, and the shapes of emails, hosts,
+IDs and names it cannot explain. Values in its report are masked. See [What the audit cannot
+promise](#what-a-model-sees) above.
+
+Stand-ins come in three styles, set with `pseudonyms.style` in the policy: `compact` (the default),
+`readable` and `letters` (no digits). The salt below is fixed only so the output is repeatable; use
+`newSalt()` for real work:
+
+```js
+import { applySpec } from "@openthink/blind";
+
+const inputs = [{ path: "people.csv", bytes: new TextEncoder().encode("name\nAvery Quill\n") }];
+const spec = {
+  version: 1,
+  columns: [{ file: "people.csv", header: "name", class: "person", treatment: "blind", confidence: 1, source: "human" }],
+  entities: {},
+  patterns: { ip: true, email: true, host: true, guid: true, mac: false },
+  questions: [],
+};
+const salt = new Uint8Array(32).fill(7);
+for (const style of ["compact", "readable", "letters"]) {
+  const { outputs } = applySpec(inputs, spec, { salt, policy: { pseudonyms: { style } } });
+  console.log(style, new TextDecoder().decode(outputs[0].bytes).split("\n")[1]);
+}
+```
+
+It prints:
+
+```text
+compact Person_7C5E
+readable [Person A #7C5E]
+letters Person GSXGP
+```
+
+**In a browser**, import `@openthink/blind/browser`. It is the same library, and it uses only what a
+browser has (`TextEncoder`, `crypto.getRandomValues`, `Uint8Array`): no `node:` module, `Buffer` or
+`process`. It carries no compression code, so it does not handle Excel or Word files: `applySpec`
+skips a `.xlsx` or `.docx` with the reason below, `revealFile` refuses one, and the audit reports
+one as unread, never `clean`. CSV, TSV, JSON, JSONL and text work.
+
+```js
+import { applySpec, NO_ZIP_CODEC_REASON } from "@openthink/blind/browser";
+
+const spec = { version: 1, columns: [], entities: {}, patterns: { ip: true, email: true, host: true, guid: true, mac: false }, questions: [] };
+const inputs = [
+  { path: "notes.txt", bytes: new TextEncoder().encode("Ask ops at 192.0.2.10.\n") },
+  { path: "rota.xlsx", bytes: new Uint8Array([0x50, 0x4b, 0x03, 0x04]) },
+];
+const { outputs, skipped } = applySpec(inputs, spec, { salt: crypto.getRandomValues(new Uint8Array(32)) });
+for (const o of outputs) console.log("written:", o.path);
+for (const s of skipped) console.log("skipped:", s.path, "-", s.reason);
+console.log(skipped[0].reason === NO_ZIP_CODEC_REASON);
+```
+
+It prints:
+
+```text
+written: notes.txt
+skipped: rota.xlsx - Office files are not supported in this build
+true
+```
+
+**Excel and Word from Node.** `@openthink/blind` installs no compression code either. To handle
+Office files, give it Node's zlib once, with the settings the CLI uses (level 6), so the bytes match
+the CLI's:
+
+```js
+import { deflateRawSync, inflateRawSync } from "node:zlib";
+import { setZipCodec, zipCodec } from "@openthink/blind";
+
+setZipCodec({
+  inflateRaw: (data, maxOutputLength) => inflateRawSync(data, { maxOutputLength }),
+  deflateRaw: (data) => deflateRawSync(data, { level: 6 }),
+});
+console.log(zipCodec() !== null);
+```
+
+It prints:
+
+```text
+true
+```
+
+`inflateRaw` must throw once its output would pass `maxOutputLength` (the size blind expects for
+that archive member) rather than return a truncated result: that limit is what stops a zip bomb.
+The codec is one value for the whole process (or page), so install it once at start-up. Every example in this section is run by `test/pack.test.ts` against the packed package, under
+Node.
+
 ## Documentation
 
 - [docs/policy.md](docs/policy.md): every `blind.toml` key.

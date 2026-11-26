@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+- **Use blind as a library.** `import ... from "@openthink/blind"` gives the engine as functions over
+  files held in memory: `profileInputs`, `proposeSpec` and `explainProposal` (built-in detectors and
+  the policy, no model; each proposed column says who decided it and why), `applySpec`, `revealFile`,
+  `revealText` and `Revealer`, `auditOutputs` (the rule-based audit layers), `newSalt`, `parseMap`,
+  `serializeMap`, `parseSpec` and `validateSpec`. The policy is a plain object shaped like
+  `blind.toml`. For the same salt, spec, policy and input the stand-ins and the map are the CLI's. The
+  caller keeps the map and the salt; both are secret. See "Use as a library" in the README.
+- **A browser entry**, `@openthink/blind/browser`: the same library, with no `node:` module, `Buffer`
+  or `process`. The package now ships compiled ES modules and type declarations for both entries in
+  `dist/`; the CLI is unchanged and still runs on Bun.
+- **Office files need a zip codec in the library.** Neither entry carries compression code. Without
+  one installed (`setZipCodec`; the README shows Node's), `applySpec` and `profileInputs` skip a DOCX
+  or XLSX with the reason "Office files are not supported in this build", `revealFile` refuses one,
+  and the audit reports one as unread, never `clean`. The CLI installs Node's codec itself, so `blind`
+  commands handle Office files as before.
+- **The `letters` stand-in style** (`[pseudonyms] style = "letters"`): the role label, a space and five
+  consonants, with no digit (`Staff KQZTB`, `Org MRDHX`), and `Staff_KQZTB` in file names. Reveal and
+  audit recognise it. See [docs/policy.md](docs/policy.md#pseudonyms).
+- **A cell whose whole value is a `[keep]` term is kept** in a column blinded whole: written as it was,
+  not recorded in the map, and counted per column in the apply report. Only an exact whole-cell match
+  (ignoring case and spacing) counts; a spec entity, a redact entry or a dropped or redacted value still
+  wins. CSV, TSV, JSON and XLSX.
+- **Fix: a host label with digits, written bare in prose, is now replaced.** Once a host such as
+  `123456789012.registry.example` was blinded, the same label written alone elsewhere (the account
+  number on its own in a sentence) stayed as written. It now takes the label's stand-in, for column
+  hosts, hosts the patterns find and an earlier map's host-label entries. Output blinded by an earlier
+  version can still hold such a label: apply again from the originals to replace it.
+
 ## 0.3.0
 
 - **`blind forget <value...>`** removes one data subject from what blind keeps under `.blind/`:

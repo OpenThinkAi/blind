@@ -19,7 +19,9 @@ export function shownValue(s: string, show: boolean): string {
 }
 
 /** True when `stream` is a terminal: a person is looking, and the report may show the originals. */
-export function isTerminal(stream: NodeJS.WritableStream): boolean {
+// Typed structurally, not as NodeJS.WritableStream: the library build's declarations are compiled with
+// no Node types (scripts/build.ts), and this module is in the library's import graph through the audit.
+export function isTerminal(stream: object): boolean {
   return (stream as { isTTY?: boolean }).isTTY === true;
 }
 

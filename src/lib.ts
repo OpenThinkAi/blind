@@ -12,7 +12,8 @@
 // serializeMap(map) is the text the CLI writes to map.json.
 //
 // Planning: profileInputs(inputs, { policy }) is the profile `blind plan` builds, and
-// proposeSpec(profile, policy) the spec `blind plan --no-model` writes, from bytes and a policy object
+// proposeSpec(profile, policy) the spec `blind plan --no-model` writes (explainProposal adds, per column, who
+// decided it and why, as the plan's notes say), from bytes and a policy object
 // validated by blind.toml's own rules. No model is ever called from here.
 //
 // Audit: auditOutputs(files, spec, map, { policy, salt }) is the report `blind audit --no-model --json`
@@ -31,10 +32,11 @@
 //     deflateRaw: (data) => deflateRawSync(data, { level: 6 }),
 //   });
 
-import { heuristicSpec } from "./analyst/heuristic.ts";
+import { heuristicSpec, locationKey, profileLocations } from "./analyst/heuristic.ts";
 import type { AuditReport } from "./audit/mechanical.ts";
 import { auditRules, memoryTree } from "./audit/rules.ts";
-import { applyColumnPolicy } from "./analyst/policycolumns.ts";
+import { applyColumnPolicy, ColumnPolicy } from "./analyst/policycolumns.ts";
+import { baseReason, columnNotes, overlayNotes } from "./analyst/reasons.ts";
 import { applySpec as engineApply, type ApplyOptions, type ApplyResult, type InputFile } from "./engine/apply.ts";
 import type { ColumnDefault } from "./engine/columns.ts";
 import type { ContextTriggerSpec } from "./engine/context.ts";
@@ -42,7 +44,7 @@ import type { BlindMap } from "./engine/map.ts";
 import { Revealer } from "./engine/reveal.ts";
 import { type PrivacyMode, defaultSamples, policyFromObject, type SensitiveClass, withPolicyPatterns } from "./policyrules.ts";
 import { byCodeUnit, forPrivacyMode, InputError, profileSources, type ProfileResult } from "./profile/inputs.ts";
-import type { EntityClassName, PatternName, Profile, Spec, Treatment } from "./schema.ts";
+import type { ColumnRule, EntityClassName, PatternName, Profile, Spec, Treatment } from "./schema.ts";
 import { SchemaError, validateProfile, validateSpec } from "./validate.ts";
 
 export { ApplyError, engineFormat } from "./engine/apply.ts";
@@ -196,13 +198,77 @@ export function profileInputs(inputs: readonly InputFile[], options: ProfileOpti
  * profile that is not one.
  */
 export function proposeSpec(profile: Profile, policy: BlindPolicy = {}): Spec {
+  return explainProposal(profile, policy).spec;
+}
+
+/** One table column or JSON key in a proposal: where it is, what is proposed for it, who decided and why. */
+export interface ProposalEntry {
+  /** The input's "/"-separated path. */
+  file: string;
+  /** The worksheet, for a workbook column. */
+  sheet?: string;
+  /** The column header, for a table column. */
+  header?: string;
+  /** The key path (`$.owner.phone`), for a JSON key. */
+  jsonPath?: string;
+  class: EntityClassName;
+  treatment: Treatment;
+  /** `policy`: a blind.toml column rule (or a header that is a keep term) decided it; `heuristic`: the built-in detectors did, or nothing did and it is decided at apply time. */
+  source: "heuristic" | "policy";
+  /**
+   * Why, in plain English. Where `blind plan --no-model` prints a note about the column (rules that overlap
+   * on it, a birth-date header, a policy pattern, a column shape), this is that note's text after the
+   * location, several joined with "; ". Otherwise: the blind.toml rule that decided it, the detector that
+   * classified it and its rate, or that nothing decides it until apply time. Names, globs, classes and
+   * rates only, never a sample value.
+   */
+  reason: string;
+}
+
+export interface Proposal {
+  /** The spec, exactly what proposeSpec returns. */
+  spec: Spec;
+  /** Every table column and JSON key the profile describes, in profile order. */
+  columns: ProposalEntry[];
+  /** `blind plan`'s notes about the plan as a whole, same text: how many columns blind.toml decided, and keep rules that decide nothing (`warning: ...`). */
+  notes: string[];
+}
+
+/**
+ * proposeSpec with the reasons: the spec, and for every table column and JSON key what is proposed, whether a
+ * policy rule or a detector decided it, and why (the note `blind plan --no-model` prints beside it, where it
+ * prints one). No model call. Throws as proposeSpec does.
+ */
+export function explainProposal(profile: Profile, policy: BlindPolicy = {}): Proposal {
   const p = policyFromObject(policy);
   const checked = validateProfile(profile);
   if (!checked.ok) throw new SchemaError("profile", "profile", checked.issues);
-  const spec = applyColumnPolicy(heuristicSpec(profile, p), profile, p).spec;
+  const overlay = applyColumnPolicy(heuristicSpec(profile, p), profile, p);
+  const spec = overlay.spec;
   const result = validateSpec(spec);
   if (!result.ok) throw new SchemaError("spec", "proposed spec", result.issues);
-  return spec;
+  const notesOf = overlayNotes(overlay);
+  const byLoc = new Map<string, string[]>();
+  for (const n of [...notesOf.overlaps, ...columnNotes(spec, profile, p)]) {
+    const k = locationKey(n.loc);
+    byLoc.set(k, [...(byLoc.get(k) ?? []), n.text]);
+  }
+  const rules = new Map(spec.columns.map((c) => [locationKey(c), c]));
+  const cp = new ColumnPolicy(p);
+  const columns = profileLocations(profile).map(({ loc, stats }): ProposalEntry => {
+    const k = locationKey(loc);
+    const rule = rules.get(k) as ColumnRule;
+    const said = byLoc.get(k);
+    return {
+      ...loc,
+      class: rule.class,
+      treatment: rule.treatment,
+      source: rule.source === "policy" ? "policy" : "heuristic",
+      reason: said === undefined ? baseReason(rule, stats, p, cp) : said.join("; "),
+    };
+  });
+  const notes = [...(notesOf.decided === undefined ? [] : [notesOf.decided]), ...notesOf.shadowedKeeps];
+  return { spec, columns, notes };
 }
 
 export interface AuditOptions {

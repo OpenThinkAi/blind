@@ -199,7 +199,7 @@ export function renderSpec(spec: Spec, policyPatterns: PolicyPatterns = {}, show
     if (rules.length === 0) continue;
     out.push(`  ${label}`);
     const rows = rules.map((c: ColumnRule) => [where(c, show), c.treatment, c.confidence.toFixed(2), c.source]);
-    const widths = [0, 1, 2].map((i) => Math.max(...rows.map((r) => (r[i] ?? "").length)));
+    const widths = [0, 1, 2].map((i) => rows.reduce((w, r) => Math.max(w, (r[i] ?? "").length), 0));
     for (const r of rows) out.push(`    ${r.map((cell, i) => (i < 3 ? cell.padEnd(widths[i] ?? 0) : cell)).join("  ")}`);
   }
   out.push("");
@@ -471,7 +471,7 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
     for (const l of overlay.reverted) remarks.push(`${where(l, show)}: no ${POLICY_FILE} rule matches it any more; the heuristic rule was used`);
     // Rules that disagree on one column: name them (globs only, never a value) and say which won and why (reasons.ts).
     for (const n of notesOf.overlaps) remarks.push(`${where(n.loc, show)}: ${n.text}`);
-    remarks.push(...notesOf.shadowedKeeps);
+    for (const s of notesOf.shadowedKeeps) remarks.push(s);
     // Birth-date columns, heuristic blinds from a policy pattern, and column shapes (reasons.ts).
     for (const n of columnNotes(spec, profile, policy)) remarks.push(`${where(n.loc, show)}: ${n.text}`);
 

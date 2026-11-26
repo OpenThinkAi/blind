@@ -223,7 +223,7 @@ class OutputTree {
       const { name, bytes } = f.part === "" ? { name: f.file, bytes: top } : this.member(top, f.part);
       views = viewsOf(bytes);
       const base = bytes.length > 0 && !looksLikeZip(bytes) ? xmlBaseView(bytes) : null;
-      if (base !== null && looksLikeXml(name, base.text)) views.push(...xmlViews(base, name));
+      if (base !== null && looksLikeXml(name, base.text)) for (const v of xmlViews(base, name)) views.push(v);
     }
     this.views.set(key, views);
     return views;

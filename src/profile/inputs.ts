@@ -271,7 +271,7 @@ export function profileSources(sources: readonly ProfileSource[], asked: number,
         skipped.push({ path: f.path, reason: `a key path is ${[...long.path].length} characters, over the ${MAX_EXCERPT}-character limit` });
         continue;
       }
-      jsonKeys.push(...result.keys);
+      for (const j of result.keys) jsonKeys.push(j);
       result.keys.forEach((j, i) => jsonColumns.push({ loc: { file: j.file, jsonPath: j.path }, values: result.valueSets[i] ?? new Set<string>() }));
     } else {
       // Transcripts are found by content: a WebVTT or SRT file is one whatever its name, and a

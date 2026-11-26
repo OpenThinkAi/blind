@@ -167,15 +167,20 @@ export function renderTable(r: AuditReport): string {
   if (rows.length > 0) {
     const cells = rows.map((f) => [f.severity, where(f), f.class, f.masked === "" ? "-" : f.masked, f.reason].map(oneLine));
     const head = ["SEVERITY", "WHERE", "CLASS", "VALUE", "REASON"];
-    const width = head.map((h, i) => Math.max(h.length, ...cells.map((c) => (c[i] as string).length)));
+    const width = head.map((h, i) => cells.reduce((w, c) => Math.max(w, (c[i] as string).length), h.length));
     const fmt = (c: string[]) => c.map((x, i) => (i === c.length - 1 ? x : x.padEnd(width[i] as number))).join("  ");
-    lines.push(fmt(head), ...cells.map(fmt), "");
+    lines.push(fmt(head));
+    for (const c of cells) lines.push(fmt(c));
+    lines.push("");
   }
   for (const f of r.files) {
     if (f.kind === "dir") continue;
     lines.push(`${f.status.padEnd(10)}  ${oneLine(f.path)}`);
   }
-  if (r.model !== undefined) lines.push("", ...modelLines(r.model));
+  if (r.model !== undefined) {
+    lines.push("");
+    for (const l of modelLines(r.model)) lines.push(l);
+  }
   const layers = layersLine(r);
   const { files, leaks, candidates } = r.summary;
   const counts = `${files} file${files === 1 ? "" : "s"}; ${leaks} leak${leaks === 1 ? "" : "s"}, ${candidates} candidate${candidates === 1 ? "" : "s"}`;

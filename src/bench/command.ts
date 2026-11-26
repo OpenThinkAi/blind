@@ -139,7 +139,7 @@ function table(i: { kind: string; where: string; class: string; masked: string; 
   if (i.length === 0) return [];
   const head = ["KIND", "WHERE", "CLASS", "VALUE", "DETAIL"];
   const cells = i.map((x) => [x.kind, x.where, x.class, x.masked === "" ? "-" : x.masked, x.detail].map(oneLine));
-  const width = head.map((h, k) => Math.max(h.length, ...cells.map((c) => (c[k] as string).length)));
+  const width = head.map((h, k) => cells.reduce((w, c) => Math.max(w, (c[k] as string).length), h.length));
   const fmt = (c: string[]) => c.map((x, k) => (k === c.length - 1 ? x : x.padEnd(width[k] as number))).join("  ");
   return [fmt(head), ...cells.map(fmt), ""];
 }

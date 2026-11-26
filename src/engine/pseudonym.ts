@@ -593,7 +593,8 @@ export class Pseudonymizer {
   /**
    * How many values of a space are taken: real values and issued pseudonyms in it, plus the value
    * itself and its surface. An upper bound on what `free` rejects there, as every digit string `free`
-   * rejects is one of these.
+   * rejects is one of these: for a digit string `suffixAvoided` is `avoid.has`. A new rejection rule
+   * for digit candidates must be counted here too, or `walk` can give up on a space with a free value.
    */
   private takenIn(width: number, lead: Lead, canonical: string, surface: string): bigint {
     const got = this.digitsTaken().get(width);

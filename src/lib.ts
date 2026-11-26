@@ -134,8 +134,9 @@ export interface BlindOptions {
  * Blinds `inputs` (each a "/"-separated path and its bytes) with `spec`, in memory. The result holds
  * the blinded files (`outputs`, under their blinded paths), the map to keep (`map`), a report per
  * file and every input not written (`skipped`, with the reason). Throws where `blind apply` refuses:
- * ApplyError (a spec rule that does not fit the input), MapError, PseudonymError (a salt too short)
- * or NameError. `spec` is not validated here; parseSpec or validateSpec checks one first.
+ * ApplyError (a spec rule that does not fit the input), MapError, PseudonymError (a salt too short, or
+ * too many values of one stand-in shape, such as IPv4 addresses: the message names the file and the
+ * column header or key path, quoted, and the value's shape, never the value) or NameError. `spec` is not validated here; parseSpec or validateSpec checks one first.
  */
 export function applySpec(inputs: readonly InputFile[], spec: Spec, options: BlindOptions): ApplyResult {
   const p = options.policy ?? {};

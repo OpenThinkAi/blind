@@ -122,9 +122,11 @@ What a keep term does:
   payee cell `Stripe` stays `Stripe` while every other payee is replaced. The cell is treated as a
   `keep` cell: it is not written to `map.json`, the audit does not report it, and `blind apply`
   reports `N cells kept as written: the whole value is a [keep] term` for the column. Only an exact
-  whole-cell match counts: `Pay via Stripe Ltd` is replaced whole, as before. A `drop` or `redact`
+  whole-cell match counts: `Pay via Stripe Ltd` is replaced whole, as before; in a workbook only a
+  text cell counts. A `drop` or `redact`
   column (or a `secret` one) is unaffected. An explicit rule wins, as it does for kept values: the
-  cell is still blinded when a spec entity that is not `vocabulary` names the value, when it is on
+  cell is still blinded when a spec entity that is not `vocabulary` names the value (as its name,
+  an alias or a part), when it is on
   the spec's redact list, or when a dropped or redacted column holds it; and a value some column
   blinds whose form is the term (`Stripe Ltd` under an `org` rule is the org `Stripe`) is replaced
   inside the kept cell, as a blinded value is inside any kept cell.

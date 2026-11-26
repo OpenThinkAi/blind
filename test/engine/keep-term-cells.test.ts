@@ -69,7 +69,7 @@ describe("a cell that is a keep term, in a column blinded whole", () => {
     }
   });
 
-  test("a classified detector's column (a phone column) keeps a keep-term cell", () => {
+  test("an id-class rule's column (phone numbers) keeps a keep-term cell", () => {
     const csv = "contact\n801-555-0101\n801-555-0102\nFront Desk\n";
     const r = apply({ "c.csv": csv }, spec([rule("c.csv", "contact", "blind", "id")]), { keep: ["Front Desk"] });
     const rows = lines(r, "c.csv");
@@ -128,6 +128,9 @@ describe("a cell that is a keep term, in a column blinded whole", () => {
     // A vocabulary entity is not a blinding rule: the cell stays kept.
     const vocab = apply({ "pay.csv": PAYMENTS }, spec([], { vocabulary: [{ canonical: "Stripe", aliases: [], parts: [] }] as never }), { keep: KEEP });
     expect(lines(vocab, "pay.csv")[1]).toBe("Stripe,12.50");
+    // A part of a spec person counts as naming the value too.
+    const part = apply({ "pay.csv": PAYMENTS }, spec([], { person: [{ canonical: "Dana Stripe", aliases: [], parts: ["Stripe"] }] as never }), { keep: KEEP });
+    expect(lines(part, "pay.csv")[1]).not.toContain("Stripe");
     const listed = apply({ "pay.csv": PAYMENTS }, spec([], {}, { redact: [redactEntry(SALT, "Stripe")] }), { keep: KEEP });
     expect(lines(listed, "pay.csv")[1]).toBe("REDACTED,12.50");
     expect(mapValues(listed)).not.toContain("Stripe");

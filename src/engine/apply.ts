@@ -1043,13 +1043,13 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   const listedValues = findRedactValues(corpusTexts(plans), spec.redact ?? [], opts.salt);
   const listedSet = new Set(listedValues);
   // A cell that is a keep term is kept in a column blinded whole (AGT-2767), unless an explicit rule
-  // names the value: a spec entity that is not vocabulary (or the redact list and removed values,
+  // names the value: a spec entity that is not vocabulary, by its name, an alias or a part (or the redact list and removed values,
   // checked in settleWholes). "An explicit rule wins", as for kept values (shield.ts).
   const keepSet = keepForms(opts.keep);
   const entityForms = new Set(
     Object.entries(spec.entities)
       .filter(([cls]) => cls !== "vocabulary")
-      .flatMap(([, list]) => (list ?? []).flatMap((e) => [e.canonical, ...e.aliases]))
+      .flatMap(([, list]) => (list ?? []).flatMap((e) => [e.canonical, ...e.aliases, ...e.parts]))
       .map(foldText),
   );
   const keepTerm = (t: string): boolean => keepSet.has(foldText(t)) && !entityForms.has(foldText(t));

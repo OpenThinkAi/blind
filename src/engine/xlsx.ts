@@ -357,7 +357,7 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
  * cell using it is dropped, else redacted if any is, else a pseudonym if any cell gets one, else free
  * text if any cell treats it so, else kept. Strings no cell uses are orphans: free text all the same.
  */
-export function settleXlsx(p: XlsxPlan, held: { has(text: string): boolean }, keepTerm: { has(text: string): boolean } = { has: () => false }): void {
+export function settleXlsx(p: XlsxPlan, held: { has(text: string): boolean }, keepTerm: { has(text: string): boolean }): void {
   const freed = new Set<ExtraForm>();
   for (const f of p.wholeCells) {
     const text = f.text.trim();

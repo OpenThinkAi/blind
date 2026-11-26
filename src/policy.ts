@@ -90,8 +90,10 @@ export function renderPolicy(p: Policy): string {
     "# file) over unscoped, then an exact name over a glob, then fewer wildcards, then more literal text; only a",
     "# full tie goes to the rule written first. `blind plan` notes every column two rules disagree on.",
     "# A column whose header is a [keep] term is kept too, unless a rule here says otherwise.",
-    "# keep: byte-identical, nothing in it is replaced. scan: kept as written apart from what the free-text",
-    "# scanner finds (phones, emails, names, plates and codes after a keyword): the one for notes, remarks, diagnoses.",
+    "# keep: as written, except that a value blinded, dropped or redacted elsewhere is replaced where it recurs",
+    "# (a name in a kept note); a bare number never recurs into a kept number, amount or date, nor inside any",
+    "# longer number. scan: kept as written apart from what the free-text scanner finds (phones, emails, names,",
+    "# plates and codes after a keyword): the one for notes, remarks, diagnoses.",
     ...(p.columns.length === 0
       ? [
           "# [[columns]]",

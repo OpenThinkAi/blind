@@ -28,7 +28,9 @@
 import type { AskOptions, PolicyView } from "../model.ts";
 import { ask, MAX_DATA_STRING, ModelError, ModelRefusal, ModelRejected, policyView, profilePayload, resolveEndpoint } from "../model.ts";
 import type { Policy, PseudonymStyle } from "../policy.ts";
-import { buildProfile, forPrivacyMode } from "../profile/profile.ts";
+import { BLIND_DIR } from "../init.ts";
+import { POLICY_FILE } from "../policy.ts";
+import { forPrivacyMode, profileSources, type ProfileResult, type Skipped } from "../profile/inputs.ts";
 import { tokeniseProfile } from "../profile/tokens.ts";
 import type { Spec } from "../schema.ts";
 import { maskValue } from "../mask.ts";
@@ -44,7 +46,7 @@ import {
   type TreeEntry,
 } from "./mechanical.ts";
 import { globalTerms, xmlViews } from "./semantic.ts";
-import { fold, type View, viewsOf, xmlBaseView } from "./views.ts";
+import { fold, utf8Length, type View, viewsOf, xmlBaseView } from "./views.ts";
 import { looksLikeXml } from "./xml.ts";
 import { looksLikeZip, readZip, type ZipBudget, ZipError, zipBudget } from "./zip.ts";
 
@@ -287,7 +289,7 @@ export function chunkLines(lines: readonly Line[], limit = CHUNK_BYTES): Line[][
   let cur: Line[] = [];
   let size = 2; // "[]"
   for (const l of lines) {
-    const n = Buffer.byteLength(JSON.stringify(l.text), "utf8") + 1;
+    const n = utf8Length(JSON.stringify(l.text)) + 1;
     if (cur.length > 0 && size + n > limit) {
       chunks.push(cur);
       cur = [];
@@ -354,9 +356,8 @@ const dedupe = (fs: Finding[]): Finding[] => {
 
 export interface ModelLayerOptions {
   policy: Policy;
-  /** The output tree's root, as `blind audit` was given it, and the directory it resolves against. */
-  root: string;
-  cwd: string;
+  /** Whether `blind audit` was given a directory (true) or one file: the profile leaves out what `blind plan` leaves out of a walked directory. */
+  fromDirectory: boolean;
   /** The spec the output was made with: its vocabulary forms are explained, so a model candidate equal to one is dropped. */
   spec: Spec;
   /** The policy keep list (`[keep] terms`): kept on purpose, so a model candidate equal to one is dropped. */
@@ -424,8 +425,43 @@ async function auditText(entries: readonly TreeEntry[], policy: Policy, opts: Mo
   return { perFile: group(found), general, failed, why };
 }
 
+/**
+ * The profile of the output tree already read into `entries`, with what `blind plan` leaves out of a
+ * directory it walks (src/profile/profile.ts collect): blind's own state (`.blind/` anywhere, blind.toml
+ * at the top) silently; a hidden entry, a symbolic link or a special file listed in `skipped`, and
+ * nothing under a skipped directory. A file named directly is always profiled.
+ */
+function profileEntries(entries: readonly TreeEntry[], fromDirectory: boolean, samples: number): ProfileResult {
+  const skipped: Skipped[] = [];
+  const files: { path: string; bytes: Uint8Array }[] = [];
+  const pruned: string[] = [];
+  const under = (path: string): boolean => pruned.some((d) => path.startsWith(`${d}/`));
+  // collectTree's order is a sorted depth-first walk, the order collect reports skipped entries in.
+  for (const e of entries) {
+    if (!fromDirectory) {
+      if (e.kind === "file") files.push({ path: e.path, bytes: e.bytes });
+      continue;
+    }
+    if (under(e.path)) continue;
+    const name = e.path.slice(e.path.lastIndexOf("/") + 1);
+    if (name === BLIND_DIR || (e.path === name && name === POLICY_FILE)) {
+      pruned.push(e.path);
+      continue;
+    }
+    if (name.startsWith(".")) {
+      skipped.push({ path: e.path, reason: "hidden" });
+      pruned.push(e.path);
+    } else if (e.kind === "symlink") skipped.push({ path: e.path, reason: "symbolic link (not followed)" });
+    else if (e.kind === "file") files.push({ path: e.path, bytes: e.bytes });
+    else if (e.kind === "other") skipped.push({ path: e.path, reason: "not a regular file" });
+    else if (e.kind === "unreadable") skipped.push({ path: e.path, reason: `cannot be read (${e.reason})` });
+  }
+  files.sort((a, b) => cmp(a.path, b.path));
+  return profileSources(files.map((f) => ({ path: f.path, read: () => f.bytes })), samples, skipped);
+}
+
 async function auditProfile(entries: readonly TreeEntry[], policy: Policy, opts: ModelLayerOptions, summary: ModelLayerSummary): Promise<Outcome> {
-  const result = forPrivacyMode(buildProfile([opts.root], policy.profile.samples, opts.cwd), "profile-only");
+  const result = forPrivacyMode(profileEntries(entries, opts.fromDirectory, policy.profile.samples), "profile-only");
   summary.notSent = result.skipped.map((s) => ({ file: s.path, part: "", reason: `not in the profile: ${s.reason}` }));
   summary.chunks = 1;
   const tokens = tokeniseProfile(result.profile);

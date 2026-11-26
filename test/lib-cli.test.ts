@@ -149,6 +149,8 @@ describe("the library entry's import graph", () => {
       "src/cli.ts", "src/apply.ts", "src/reveal.ts", "src/mapfile.ts", "src/init.ts", "src/policy.ts", "src/nodezip.ts", "src/run.ts",
       // Profiling and planning reach the library through their pure halves only: no file walk, no model client.
       "src/model.ts", "src/profile/profile.ts", "src/profile/command.ts", "src/analyst/plan.ts", "src/analyst/analyst.ts",
+      // The audit reaches the library through its rule-based layers only: no tree walk, no model layer.
+      "src/audit/command.ts", "src/audit/auditor.ts",
     ]) {
       expect(files).not.toContain(banned);
     }
@@ -158,5 +160,8 @@ describe("the library entry's import graph", () => {
     expect(files).toContain("src/policyrules.ts");
     expect(files).toContain("src/analyst/heuristic.ts");
     expect(files).toContain("src/analyst/policycolumns.ts");
+    expect(files).toContain("src/audit/rules.ts");
+    expect(files).toContain("src/audit/mechanical.ts");
+    expect(files).toContain("src/audit/semantic.ts");
   });
 });

@@ -18,8 +18,8 @@ import { loadPolicy, type Policy, POLICY_FILE, PolicyError, withPolicyPatterns }
 import type { Spec } from "../schema.ts";
 import { parseSpec, SchemaError } from "../validate.ts";
 import { addModelLayer } from "./auditor.ts";
-import { addSemanticLayer } from "./semantic.ts";
-import { type AuditReport, auditTree, type Finding, type Status, type TreeEntry } from "./mechanical.ts";
+import { auditRules } from "./rules.ts";
+import type { AuditReport, Finding, Status, TreeEntry } from "./mechanical.ts";
 import { oneLine, terminalStream } from "../terminal.ts";
 
 export interface AuditIO {
@@ -250,7 +250,8 @@ export async function runAudit(argv: string[], io: AuditIO): Promise<number> {
   try {
     const saved = loadSpec(io.cwd);
     const map = loadMap(resolve(io.cwd, values.map ?? join(BLIND_DIR, MAP_FILE)));
-    const entries = collectTree(resolve(io.cwd, positionals[0] as string));
+    const root = resolve(io.cwd, positionals[0] as string);
+    const entries = collectTree(root);
     // Without a blind.toml nothing is kept (the more private reading) and no model is configured.
     const policy = existsSync(join(io.cwd, POLICY_FILE)) ? loadPolicy(io.cwd) : null;
     // The patterns apply used: blind.toml's [patterns] switches over the spec's.
@@ -260,7 +261,7 @@ export async function runAudit(argv: string[], io: AuditIO): Promise<number> {
     // The salt the spec's redact fingerprints were made with: the audit checks the output for those values too.
     const saltPath = join(io.cwd, BLIND_DIR, SALT_FILE);
     const salt = (spec.redact?.length ?? 0) > 0 && existsSync(saltPath) ? new Uint8Array(readFileSync(saltPath)) : undefined;
-    let report = addSemanticLayer(auditTree(entries, spec, map, keep, policy?.keep.placeholders ?? true, salt), entries, spec, map, { keep });
+    let report = auditRules(entries, spec, map, { keep, placeholders: policy?.keep.placeholders ?? true, salt });
     const skip = noModelReason(values["no-model"], policy);
     if (skip !== null) io.err.write(`blind audit: ${skip}\n`);
     if (skip !== null || values["no-model"]) {
@@ -272,8 +273,7 @@ export async function runAudit(argv: string[], io: AuditIO): Promise<number> {
       }
       report = await addModelLayer(report, entries, {
         policy,
-        root: positionals[0] as string,
-        cwd: io.cwd,
+        fromDirectory: lstatSync(root).isDirectory(),
         spec,
         keep,
         style: policy.pseudonyms.style,

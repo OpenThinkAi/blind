@@ -10,8 +10,9 @@
 // setZipCodec; its contract is in src/formats/zipcodec.ts.
 //
 // The package's `exports` (`.` and `./browser`, D-24) are wired up with the release build, not here.
-// Profile and plan (profileInputs, proposeSpec: built-in detectors and policy rules, no model) are
-// here through src/lib.ts; a later export (audit) is added the same way, as long as it keeps to the
-// same rule; the bundle test is what holds it there.
+// Profile and plan (profileInputs, proposeSpec: built-in detectors and policy rules, no model) and the
+// rule-based audit (auditOutputs: mechanical and semantic layers, no model) are here through src/lib.ts;
+// the bundle test is what holds them to the same rule. With no codec, the audit reports a deflated
+// archive member as unread (a candidate), so such a file is never clean.
 
 export * from "./lib.ts";

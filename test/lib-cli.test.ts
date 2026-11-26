@@ -97,6 +97,18 @@ describe("library output equals `blind apply` for the same salt, spec and input"
     await compare(kitFiles(), kit.spec, defaultPolicy(), serializeMap(first.map));
   });
 
+  test("a keep term that is a whole cell of a blinded payee column (AGT-2767)", async () => {
+    const enc = (s: string) => new TextEncoder().encode(s);
+    const files: InputFile[] = [
+      { path: "pay.csv", bytes: enc("payee,amount\nStripe,12.50\nOrchard Lane Bakery,8.00\nSTRIPE,3.10\nHollis Garden Supply,41.00\nPay via Stripe Ltd,9.99\n") },
+      { path: "pay.json", bytes: enc(JSON.stringify(["Stripe", "Quarry Hill Florist", "Juniper Row Books", "Stripe Ltd"].map((payee) => ({ payee })))) },
+    ];
+    const spec: Spec = { version: 1, columns: [], entities: {}, patterns: kit.spec.patterns, questions: [] };
+    await compare(files, spec, { ...defaultPolicy(), keep: { terms: ["Stripe"], placeholders: true } });
+    const out = new TextDecoder().decode(readFileSync(join(dir, "out", "pay.csv")));
+    expect(out.split("\n").slice(1, 4)).toEqual(["Stripe,12.50", expect.not.stringContaining("Orchard"), "STRIPE,3.10"]);
+  });
+
   test("newSalt makes the size `blind init` writes", () => {
     expect(SALT_BYTES).toBe(INIT_SALT_BYTES);
   });

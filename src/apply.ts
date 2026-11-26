@@ -200,6 +200,10 @@ export function renderReport(result: ApplyResult, show = false): string {
           `    ${n} ${unit}${n === 1 ? "" : "s"} not pseudonymised whole: the same value is kept in a "keep" or "scan" ${unit} elsewhere; scanned as text instead (a rule here still blinds it)`,
         );
       }
+      if ((c.keptTerms ?? 0) > 0) {
+        const n = c.keptTerms as number;
+        lines.push(`    ${n} ${unit}${n === 1 ? "" : "s"} kept as written: the whole value is a [keep] term`);
+      }
     }
     if (f.entityReplacements + f.patternReplacements > 0) {
       lines.push(`  free text: ${f.entityReplacements} entity and ${f.patternReplacements} pattern replacements`);

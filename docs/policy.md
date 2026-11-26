@@ -116,6 +116,20 @@ What a keep term does:
   case and runs of spaces, is kept: `blind plan` writes it into the spec as `vocabulary`/`keep`
   with `source: "policy"`, as a [`[[columns]]`](#columns) rule would. A `[[columns]]` rule that
   matches the column wins over the term.
+- **Cells.** In a column (or JSON key) blinded whole, by a `blind` or `value` rule, by the
+  fail-closed fallback or by a detector that classified it, a cell whose **whole** value equals a
+  keep term, ignoring case and runs of spaces, is written as it was: with `terms = ["Stripe"]` a
+  payee cell `Stripe` stays `Stripe` while every other payee is replaced. The cell is treated as a
+  `keep` cell: it is not written to `map.json`, the audit does not report it, and `blind apply`
+  reports `N cells kept as written: the whole value is a [keep] term` for the column. Only an exact
+  whole-cell match counts: `Pay via Stripe Ltd` is replaced whole, as before; in a workbook only a
+  text cell counts. A `drop` or `redact`
+  column (or a `secret` one) is unaffected. An explicit rule wins, as it does for kept values: the
+  cell is still blinded when a spec entity that is not `vocabulary` names the value (as its name,
+  an alias or a part), when it is on
+  the spec's redact list, or when a dropped or redacted column holds it; and a value some column
+  blinds whose form is the term (`Stripe Ltd` under an `org` rule is the org `Stripe`) is replaced
+  inside the kept cell, as a blinded value is inside any kept cell.
 
 ### Kept columns shield their values everywhere
 
@@ -150,9 +164,10 @@ placeholders = false`, these are kept verbatim wherever they appear:
 A real-looking number such as `555-0100` is not a placeholder. The run reports how many
 placeholders it kept.
 
-A keep term does **not** override your spec's values: a value or entity the spec blinds is blinded even when
-it also appears in the keep list. To keep it, take it out of the spec (or classify it as
-`vocabulary`).
+A keep term does **not** override your spec's values: an entity the spec blinds, or a value on its
+redact list, is blinded even when it also appears in the keep list. To keep it, take it out of the
+spec (or classify it as `vocabulary`). A column rule is not a value: a cell that is exactly a keep
+term is kept in a column the rule blinds (see **Cells** above).
 
 ## `[[columns]]`
 

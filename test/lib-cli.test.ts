@@ -145,10 +145,18 @@ describe("the library entry's import graph", () => {
 
   test("reaches no CLI or file-system module", () => {
     const { files } = graph();
-    for (const banned of ["src/cli.ts", "src/apply.ts", "src/reveal.ts", "src/mapfile.ts", "src/init.ts", "src/policy.ts", "src/nodezip.ts", "src/run.ts"]) {
+    for (const banned of [
+      "src/cli.ts", "src/apply.ts", "src/reveal.ts", "src/mapfile.ts", "src/init.ts", "src/policy.ts", "src/nodezip.ts", "src/run.ts",
+      // Profiling and planning reach the library through their pure halves only: no file walk, no model client.
+      "src/model.ts", "src/profile/profile.ts", "src/profile/command.ts", "src/analyst/plan.ts", "src/analyst/analyst.ts",
+    ]) {
       expect(files).not.toContain(banned);
     }
     expect(files).toContain("src/engine/apply.ts");
     expect(files).toContain("src/engine/reveal.ts");
+    expect(files).toContain("src/profile/inputs.ts");
+    expect(files).toContain("src/policyrules.ts");
+    expect(files).toContain("src/analyst/heuristic.ts");
+    expect(files).toContain("src/analyst/policycolumns.ts");
   });
 });

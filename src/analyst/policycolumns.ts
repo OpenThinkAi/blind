@@ -7,10 +7,9 @@
 // blind.toml) goes back to the heuristic rule. An open question about a column the policy now
 // decides is removed, since answering it could not change the column.
 
-import type { ColumnPolicyRule, Policy } from "../policy.ts";
+import type { ColumnPolicyRule, Policy } from "../policyrules.ts";
 import type { ColumnRule, Location, Profile, Spec } from "../schema.ts";
-import { locationKey } from "./analyst.ts";
-import { heuristicRule, profileLocations } from "./heuristic.ts";
+import { heuristicRule, locationKey, profileLocations } from "./heuristic.ts";
 
 const fold = (s: string): string => s.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

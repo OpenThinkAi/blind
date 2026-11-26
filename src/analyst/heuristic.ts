@@ -6,13 +6,16 @@
 // speakers are proposed as people (one person entity per speaker, with its name parts) when the
 // policy calls people sensitive. No model, no other entities, no questions.
 
-import type { Policy, SensitiveClass } from "../policy.ts";
+import type { Policy, SensitiveClass } from "../policyrules.ts";
 import { isHonorificOrRole, isOnlyHonorificsOrRoles } from "../engine/honorifics.ts";
 import { headerNames, type ShapeName, shapeHolds } from "../engine/shapes.ts";
 import { DICTIONARY } from "../engine/words.ts";
 import type { ColumnRule, DetectorName, Entity, Location, PatternName, Profile, Spec, ValueStats } from "../schema.ts";
 
 export const HEURISTIC_RATE = 0.8;
+
+/** One string per spec location (file, sheet, header, JSON path): the key rules and profile locations are matched by. */
+export const locationKey = (l: Location): string => JSON.stringify([l.file, l.sheet ?? null, l.header ?? null, l.jsonPath ?? null]);
 
 /** Checked in this order, so a column matching several shapes gets the first. */
 const DETECTOR_CLASS: [DetectorName, SensitiveClass][] = [

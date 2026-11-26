@@ -140,12 +140,15 @@ const SCENARIO = `
   const back = r.outputs.map((o) => ({ path: rv.path(o.path).text, text: dec(lib.revealFile(o.path, o.bytes, rv).bytes) }));
   let xlsxReveal = "not refused";
   try { lib.revealFile("book.xlsx", enc("PK not a real workbook"), rv); } catch (e) { xlsxReveal = e.name + ": " + e.message; }
-  return JSON.stringify({ globals, skipped: r.skipped, blinded, back, xlsxReveal, codec: lib.zipCodec() === null });
+  const policy = { columns: [{ header: "team", treatment: "keep" }], keep: { terms: ["North"] } };
+  const profiled = lib.profileInputs([{ path: "staff.csv", bytes: enc(CSV_TEXT) }], { policy });
+  const proposed = lib.proposeSpec(profiled.profile, policy).columns.map((c) => [c.header, c.treatment, c.source]);
+  return JSON.stringify({ globals, skipped: r.skipped, blinded, back, xlsxReveal, codec: lib.zipCodec() === null, proposed });
 })()
 `;
 
 describe("the browser bundle runs with only web-standard globals", () => {
-  test("blinds then reveals a synthetic CSV, skips and refuses an XLSX", () => {
+  test("blinds then reveals a synthetic CSV, skips and refuses an XLSX, and profiles and proposes", () => {
     const context = vm.createContext({ TextEncoder, TextDecoder, crypto: globalThis.crypto, URL, console, SPEC_TEXT: JSON.stringify(SPEC), CSV_TEXT: CSV });
     vm.runInContext(asScript(shipped), context, { filename: "blind.browser.js" });
     const out = JSON.parse(vm.runInContext(SCENARIO, context) as string) as {
@@ -155,6 +158,7 @@ describe("the browser bundle runs with only web-standard globals", () => {
       back: { path: string; text: string }[];
       xlsxReveal: string;
       codec: boolean;
+      proposed: [string, string, string][];
     };
     expect(out.globals).toEqual([]);
     expect(out.codec).toBe(true);
@@ -164,6 +168,8 @@ describe("the browser bundle runs with only web-standard globals", () => {
     for (const real of ["Avery", "Quill", "Rowan", "Pike", "example-corp"]) expect(blinded).not.toContain(real);
     expect(out.back).toEqual([{ path: "staff.csv", text: CSV }]);
     expect(out.xlsxReveal).toBe(`RevealError: ${NO_ZIP_CODEC_REASON}`);
+    // Profile and propose run there too, with no model and no file system.
+    expect(out.proposed).toContainEqual(["team", "keep", "policy"]);
   });
 });
 

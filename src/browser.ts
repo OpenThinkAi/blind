@@ -10,7 +10,8 @@
 // setZipCodec; its contract is in src/formats/zipcodec.ts.
 //
 // The package's `exports` (`.` and `./browser`, D-24) are wired up with the release build, not here.
-// A later export (profile, plan, audit) is added to src/lib.ts, and so reaches this entry too, as
-// long as it keeps to the same rule; the bundle test is what holds it there.
+// Profile and plan (profileInputs, proposeSpec: built-in detectors and policy rules, no model) are
+// here through src/lib.ts; a later export (audit) is added the same way, as long as it keeps to the
+// same rule; the bundle test is what holds it there.
 
 export * from "./lib.ts";

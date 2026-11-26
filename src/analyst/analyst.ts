@@ -14,7 +14,7 @@ import { restoreSpec, tokeniseProfile } from "../profile/tokens.ts";
 import { type ColumnRule, type Entities, type EntityClassName, type Location, type PatternName, patternOn, type Profile, type Question, type Spec, type ValueStats } from "../schema.ts";
 import { type SchemaIssue, validateSpec } from "../validate.ts";
 import specSchema from "../../schema/spec.schema.json" with { type: "json" };
-import { heuristicPatterns, heuristicRule, profileLocations } from "./heuristic.ts";
+import { heuristicPatterns, heuristicRule, locationKey, profileLocations } from "./heuristic.ts";
 import { analystPrompt, systemPrompt } from "./prompt.ts";
 
 export class AnalystError extends Error {
@@ -39,7 +39,7 @@ export const proposalSchema = {
   $defs: { ...specSchema.$defs, entity: { ...specSchema.$defs.entity, properties: entityProperties } },
 };
 
-export const locationKey = (l: Location): string => JSON.stringify([l.file, l.sheet ?? null, l.header ?? null, l.jsonPath ?? null]);
+export { locationKey };
 
 const where = (l: Location): string => `${l.file} ${JSON.stringify(l.header ?? l.jsonPath ?? "")}`;
 

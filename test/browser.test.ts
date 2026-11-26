@@ -1,7 +1,7 @@
 // AGT-2737: the browser entry (src/browser.ts). The entry is bundled for the browser and the bundle is
 // checked for Node-only code (no `node:`/`bun:` module, no `require`, no `Buffer` or `process` global),
 // then run in a context that has only web-standard globals, where a synthetic CSV is blinded and
-// revealed and an Office file is skipped (D-14, D-15, D-24; project rule 2). node:vm, node:fs and the
+// revealed, audited, and an Office file is skipped (D-14, D-15, D-24; project rule 2). node:vm, node:fs and the
 // TypeScript parser are used here, in the test, never by the entry. Synthetic data only.
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -143,12 +143,17 @@ const SCENARIO = `
   const policy = { columns: [{ header: "team", treatment: "keep" }], keep: { terms: ["North"] } };
   const profiled = lib.profileInputs([{ path: "staff.csv", bytes: enc(CSV_TEXT) }], { policy });
   const proposed = lib.proposeSpec(profiled.profile, policy).columns.map((c) => [c.header, c.treatment, c.source]);
-  return JSON.stringify({ globals, skipped: r.skipped, blinded, back, xlsxReveal, codec: lib.zipCodec() === null, proposed });
+  const audited = lib.auditOutputs(r.outputs, spec, map, { salt });
+  const outCsv = blinded.find((b) => b.path === "staff.csv").text;
+  const pseudonym = map.entries.find((e) => e.value === "Rowan Pike").pseudonym;
+  const putBack = lib.auditOutputs([{ path: "staff.csv", bytes: enc(outCsv.replace(pseudonym, "Rowan Pike")) }], spec, map, { salt });
+  const audit = { leaks: audited.summary.leaks, layers: audited.layers, putBack: putBack.status, putBackLeaks: putBack.summary.leaks };
+  return JSON.stringify({ globals, skipped: r.skipped, blinded, back, xlsxReveal, codec: lib.zipCodec() === null, proposed, audit });
 })()
 `;
 
 describe("the browser bundle runs with only web-standard globals", () => {
-  test("blinds then reveals a synthetic CSV, skips and refuses an XLSX, and profiles and proposes", () => {
+  test("blinds then reveals a synthetic CSV, skips and refuses an XLSX, profiles and proposes, and audits", () => {
     const context = vm.createContext({ TextEncoder, TextDecoder, crypto: globalThis.crypto, URL, console, SPEC_TEXT: JSON.stringify(SPEC), CSV_TEXT: CSV });
     vm.runInContext(asScript(shipped), context, { filename: "blind.browser.js" });
     const out = JSON.parse(vm.runInContext(SCENARIO, context) as string) as {
@@ -159,6 +164,7 @@ describe("the browser bundle runs with only web-standard globals", () => {
       xlsxReveal: string;
       codec: boolean;
       proposed: [string, string, string][];
+      audit: { leaks: number; layers: string[]; putBack: string; putBackLeaks: number };
     };
     expect(out.globals).toEqual([]);
     expect(out.codec).toBe(true);
@@ -170,6 +176,11 @@ describe("the browser bundle runs with only web-standard globals", () => {
     expect(out.xlsxReveal).toBe(`RevealError: ${NO_ZIP_CODEC_REASON}`);
     // Profile and propose run there too, with no model and no file system.
     expect(out.proposed).toContainEqual(["team", "keep", "policy"]);
+    // The rule-based audit runs there too: no leak in the blinded CSV, a leak once a value is put back.
+    expect(out.audit.leaks).toBe(0);
+    expect(out.audit.layers).toEqual(["mechanical", "semantic"]);
+    expect(out.audit.putBack).toBe("leak");
+    expect(out.audit.putBackLeaks).toBeGreaterThan(0);
   });
 });
 

@@ -15,6 +15,9 @@
 // proposeSpec(profile, policy) the spec `blind plan --no-model` writes, from bytes and a policy object
 // validated by blind.toml's own rules. No model is ever called from here.
 //
+// Audit: auditOutputs(files, spec, map, { policy, salt }) is the report `blind audit --no-model --json`
+// prints for the same blinded files: the mechanical and semantic layers. The model layer is CLI-only.
+//
 // Office files (DOCX, XLSX): the zip codec is injected (src/formats/zipcodec.ts),
 // and this entry installs none, so it never imports a compression library. With
 // no codec an Office input is skipped by applySpec, and refused by revealFile,
@@ -29,6 +32,8 @@
 //   });
 
 import { heuristicSpec } from "./analyst/heuristic.ts";
+import type { AuditReport } from "./audit/mechanical.ts";
+import { auditRules, memoryTree } from "./audit/rules.ts";
 import { applyColumnPolicy } from "./analyst/policycolumns.ts";
 import { applySpec as engineApply, type ApplyOptions, type ApplyResult, type InputFile } from "./engine/apply.ts";
 import type { ColumnDefault } from "./engine/columns.ts";
@@ -51,6 +56,7 @@ export { parseProfile, parseSpec, SchemaError, validateProfile, validateSpec } f
 export { PolicyError, type PrivacyMode, type SensitiveClass } from "./policyrules.ts";
 export { InputError, type ProfileResult, type Skipped } from "./profile/inputs.ts";
 export type { Profile, Spec } from "./schema.ts";
+export type { AuditReport, FileAudit, Finding, ModelLayerStatus, Severity, Status } from "./audit/mechanical.ts";
 
 /** Bytes in a salt from newSalt(): the size `blind init` writes to `.blind/salt`. */
 export const SALT_BYTES = 32;
@@ -197,4 +203,40 @@ export function proposeSpec(profile: Profile, policy: BlindPolicy = {}): Spec {
   const result = validateSpec(spec);
   if (!result.ok) throw new SchemaError("spec", "proposed spec", result.issues);
   return spec;
+}
+
+export interface AuditOptions {
+  /** What blind.toml would say (validated as proposeSpec validates it): the audit reads `keep` (terms and placeholders) and `patterns`. */
+  policy?: BlindPolicy;
+  /**
+   * The salt the output was blinded with. Read only when the spec lists values to redact (`redact`), to
+   * check the output for them by their salted fingerprints; without it such a spec gets a general candidate.
+   */
+  salt?: Uint8Array;
+}
+
+/**
+ * Audits blinded output held in memory (`files`, each a "/"-separated path and its bytes, as applySpec
+ * returns them in `outputs`) against the spec and map it was made with: the report `blind audit
+ * --no-model --json` prints for a directory holding the same files, with the same blind.toml and salt.
+ * The rule-based layers only: the mechanical layer (every spec entity, every original value in the map,
+ * every enabled pattern match that is not a pseudonym, and the spec's redact fingerprints, in every
+ * decoding, name and archive member) and the semantic layer (identifier-, name-, email- and host-shaped
+ * text that is not a pseudonym or kept). No model is called; `modelLayer` says the layer was skipped.
+ *
+ * `status` is `leak` (a spec or map value survives), `candidates` (something to review) or `clean`
+ * (these checks found nothing they look for, not a guarantee). Values in the report are masked. With no
+ * zip codec installed (the browser entry), an archive's deflated members are reported as unread
+ * candidates, so an Office file is never `clean`. Throws InputError for a bad or repeated path and
+ * PolicyError for an invalid policy. `spec` is not validated here; parseSpec or validateSpec checks one first.
+ */
+export function auditOutputs(files: readonly InputFile[], spec: Spec, map: BlindMap, options: AuditOptions = {}): AuditReport {
+  const policy = options.policy === undefined ? null : policyFromObject(options.policy);
+  const entries = memoryTree(files);
+  // As `blind audit`: blind.toml's pattern switches over the spec's, and the salt only for a spec with redact entries.
+  const checked = withPolicyPatterns(spec, policy?.patterns ?? {});
+  const salt = (checked.redact?.length ?? 0) > 0 ? options.salt : undefined;
+  const report = auditRules(entries, checked, map, { keep: policy?.keep.terms ?? [], placeholders: policy?.keep.placeholders ?? true, salt });
+  // The note `blind audit --no-model` adds: the model layer was not called.
+  return { ...report, modelLayer: { status: "skipped", host: null, reason: "--no-model" } };
 }

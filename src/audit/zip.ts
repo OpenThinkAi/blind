@@ -4,6 +4,7 @@
 // cannot decode is returned with the reason, so the audit can say so.
 
 import { NO_ZIP_CODEC_REASON, zipCodec } from "../formats/zipcodec.ts";
+import { latin1 } from "./views.ts";
 
 /** Largest decompressed member the audit inflates; anything bigger is reported, not read. */
 export const MAX_MEMBER_BYTES = 256 * 1024 * 1024;
@@ -47,36 +48,51 @@ export function looksLikeZip(b: Uint8Array): boolean {
   return b.length >= 4 && b[0] === 0x50 && b[1] === 0x4b && ((b[2] === 3 && b[3] === 4) || (b[2] === 5 && b[3] === 6));
 }
 
-function findEocd(b: Buffer): number {
+/** The archive's fields, read little-endian; a read past the end throws RangeError, as Buffer's readers did. */
+interface Reader {
+  u16(at: number): number;
+  u32(at: number): number;
+}
+
+function reader(b: Uint8Array): Reader {
+  const v = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  return { u16: (at) => v.getUint16(at, true), u32: (at) => v.getUint32(at, true) };
+}
+
+/** Member names flagged UTF-8 (bit 11): invalid sequences become U+FFFD and a leading U+FEFF is kept. */
+const UTF8 = new TextDecoder("utf-8", { ignoreBOM: true });
+
+function findEocd(b: Uint8Array, r: Reader): number {
   const min = Math.max(0, b.length - 22 - 0xffff);
   for (let i = b.length - 22; i >= min; i--) {
-    if (b.readUInt32LE(i) === EOCD_SIG) return i;
+    if (r.u32(i) === EOCD_SIG) return i;
   }
   return -1;
 }
 
 /** Reads the archive's directory and every member. Throws ZipError only when there is no readable directory at all. */
 export function readZip(bytes: Uint8Array, budget: ZipBudget = zipBudget()): ZipMember[] {
-  const b = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const eocd = b.length >= 22 ? findEocd(b) : -1;
+  const b = bytes;
+  const r = reader(b);
+  const eocd = b.length >= 22 ? findEocd(b, r) : -1;
   if (eocd < 0) throw new ZipError("no end-of-central-directory record");
-  const count = b.readUInt16LE(eocd + 10);
-  const cdOffset = b.readUInt32LE(eocd + 16);
+  const count = r.u16(eocd + 10);
+  const cdOffset = r.u32(eocd + 16);
   if (count === 0xffff || cdOffset === 0xffffffff) throw new ZipError("ZIP64 archives are not supported");
   const members: ZipMember[] = [];
   let p = cdOffset;
   for (let n = 0; n < count; n++) {
-    if (p + 46 > b.length || b.readUInt32LE(p) !== CEN_SIG) throw new ZipError(`central directory entry ${n + 1} is corrupt`);
-    const flags = b.readUInt16LE(p + 8);
-    const method = b.readUInt16LE(p + 10);
-    const compSize = b.readUInt32LE(p + 20);
-    const size = b.readUInt32LE(p + 24);
-    const nameLen = b.readUInt16LE(p + 28);
-    const extraLen = b.readUInt16LE(p + 30);
-    const commentLen = b.readUInt16LE(p + 32);
-    const local = b.readUInt32LE(p + 42);
+    if (p + 46 > b.length || r.u32(p) !== CEN_SIG) throw new ZipError(`central directory entry ${n + 1} is corrupt`);
+    const flags = r.u16(p + 8);
+    const method = r.u16(p + 10);
+    const compSize = r.u32(p + 20);
+    const size = r.u32(p + 24);
+    const nameLen = r.u16(p + 28);
+    const extraLen = r.u16(p + 30);
+    const commentLen = r.u16(p + 32);
+    const local = r.u32(p + 42);
     const rawName = b.subarray(p + 46, p + 46 + nameLen);
-    const name = flags & 0x800 ? rawName.toString("utf8") : rawName.toString("latin1");
+    const name = flags & 0x800 ? UTF8.decode(rawName) : latin1(rawName);
     const member: ZipMember = { name, nameRanges: [[p + 46, p + 46 + nameLen]], dataRange: [0, 0] };
     members.push(member);
     p += 46 + nameLen + extraLen + commentLen;
@@ -85,12 +101,12 @@ export function readZip(bytes: Uint8Array, budget: ZipBudget = zipBudget()): Zip
       member.error = "ZIP64 member, not decoded";
       continue;
     }
-    if (local + 30 > b.length || b.readUInt32LE(local) !== LOC_SIG) {
+    if (local + 30 > b.length || r.u32(local) !== LOC_SIG) {
       member.error = "local header missing or corrupt, not decoded";
       continue;
     }
-    const lNameLen = b.readUInt16LE(local + 26);
-    const lExtraLen = b.readUInt16LE(local + 28);
+    const lNameLen = r.u16(local + 26);
+    const lExtraLen = r.u16(local + 28);
     member.nameRanges.push([local + 30, local + 30 + lNameLen]);
     const start = local + 30 + lNameLen + lExtraLen;
     const end = start + compSize;

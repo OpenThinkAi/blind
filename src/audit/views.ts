@@ -13,12 +13,37 @@ export interface View {
   byteAt(i: number): number;
 }
 
-function latin1View(b: Buffer): View {
-  return { encoding: "latin-1", text: b.toString("latin1"), byteAt: (i) => i };
+/** The bytes as Latin-1: every byte one code unit (U+0000 to U+00FF), never Windows-1252. */
+export function latin1(b: Uint8Array): string {
+  let text = "";
+  for (let k = 0; k < b.length; k += 8192) text += String.fromCharCode(...b.subarray(k, k + 8192));
+  return text;
+}
+
+/**
+ * Bytes `s` takes in UTF-8, without encoding it: TextEncoder's count, so a lone surrogate counts as the
+ * 3 bytes of the U+FFFD it is written as.
+ */
+export function utf8Length(s: string): number {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x80) n += 1;
+    else if (c < 0x800) n += 2;
+    else if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length && (s.charCodeAt(i + 1) & 0xfc00) === 0xdc00) {
+      n += 4;
+      i++;
+    } else n += 3;
+  }
+  return n;
+}
+
+function latin1View(b: Uint8Array): View {
+  return { encoding: "latin-1", text: latin1(b), byteAt: (i) => i };
 }
 
 /** UTF-8 with an offset per code unit; an invalid byte becomes U+FFFD and maps to itself. */
-function utf8View(b: Buffer): View {
+function utf8View(b: Uint8Array): View {
   const units: number[] = [];
   const offsets: number[] = [];
   let i = 0;
@@ -56,7 +81,7 @@ function utf8View(b: Buffer): View {
   return { encoding: "utf-8", text, byteAt: (k) => offsets[k] ?? b.length };
 }
 
-function utf16View(b: Buffer, littleEndian: boolean, align: 0 | 1): View {
+function utf16View(b: Uint8Array, littleEndian: boolean, align: 0 | 1): View {
   const units: number[] = [];
   for (let i = align; i + 1 < b.length; i += 2) {
     units.push(littleEndian ? (b[i] as number) | ((b[i + 1] as number) << 8) : ((b[i] as number) << 8) | (b[i + 1] as number));
@@ -143,7 +168,7 @@ export function unescapeView(v: View): View | null {
 
 /** Every view of the bytes the audit scans, each also with escapes undone. */
 export function viewsOf(bytes: Uint8Array): View[] {
-  const b = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const b = bytes;
   const base: View[] = [latin1View(b)];
   // For pure ASCII the UTF-8 view is the Latin-1 view.
   if (b.some((x) => x >= 0x80)) base.push(utf8View(b));

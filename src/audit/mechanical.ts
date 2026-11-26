@@ -64,7 +64,7 @@ import { detectHeaderRow } from "../profile/table.ts";
 import { valueStats } from "../profile/stats.ts";
 import { isHandle, isPlate, shapeHolds } from "../engine/shapes.ts";
 import { DICTIONARY } from "../engine/words.ts";
-import { fold, foldWithMap, stringView, type View, viewsOf, xmlBaseView } from "./views.ts";
+import { fold, foldWithMap, stringView, utf8Length, type View, viewsOf, xmlBaseView } from "./views.ts";
 import { maskValue } from "../mask.ts";
 import { accountSegments } from "../formats/paths.ts";
 import { CONTENT_TYPES_PART, localName, looksLikeXml, structuralValue, walkXml } from "./xml.ts";
@@ -1086,7 +1086,7 @@ function keptByRule(sink: PartSink, bytes: Uint8Array, rules: readonly ColumnRul
   const cells = keptCells(decoded.text, format === "tsv", rules);
   if (cells.length === 0) return;
   const bom = decoded.encoding === "utf8-bom" ? 3 : 0;
-  const place = (at: number): number => Buffer.byteLength(decoded.text.slice(0, at), "utf8") + bom;
+  const place = (at: number): number => utf8Length(decoded.text.slice(0, at)) + bom;
   const ranges = cells.map((c) => [place(c.start), place(c.end)] as const);
   sink.findings = sink.findings.map((f) => {
     if (f.severity !== "leak" || f.part !== "" || f.in !== "content" || f.offset === null) return f;

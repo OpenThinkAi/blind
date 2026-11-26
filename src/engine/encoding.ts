@@ -32,8 +32,7 @@ export interface Decoded {
   text: string;
 }
 
-export function decode(bytes: Uint8Array): Decoded {
-  const b = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+export function decode(b: Uint8Array): Decoded {
   if (b[0] === 0xef && b[1] === 0xbb && b[2] === 0xbf) {
     return { encoding: "utf8-bom", text: utf8(b.subarray(3), "UTF-8 (BOM)") };
   }
@@ -46,7 +45,7 @@ export function decode(bytes: Uint8Array): Decoded {
   }
 }
 
-function utf8(b: Buffer, label: string): string {
+function utf8(b: Uint8Array, label: string): string {
   try {
     return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(b);
   } catch {
@@ -54,7 +53,7 @@ function utf8(b: Buffer, label: string): string {
   }
 }
 
-function utf16(b: Buffer, label: "utf-16le" | "utf-16be"): string {
+function utf16(b: Uint8Array, label: "utf-16le" | "utf-16be"): string {
   if (b.length % 2 !== 0) throw new EncodingError(`marked ${label.toUpperCase()} but has an odd number of bytes`);
   try {
     return new TextDecoder(label, { fatal: true, ignoreBOM: true }).decode(b);
@@ -63,15 +62,39 @@ function utf16(b: Buffer, label: "utf-16le" | "utf-16be"): string {
   }
 }
 
+// Encoding uses only web-standard APIs (TextEncoder and plain byte arrays), never Node's Buffer, so the
+// engine runs in a browser (D-15). The bytes are the ones Buffer wrote: TextEncoder, like Buffer's
+// "utf8", writes a lone surrogate as EF BF BD; UTF-16 is written code unit by code unit, so a lone
+// surrogate is kept as it is, as Buffer's "utf16le" kept it.
 export function encode(text: string, encoding: Encoding): Uint8Array {
   switch (encoding) {
     case "utf8":
-      return Buffer.from(text, "utf8");
+      return new TextEncoder().encode(text);
     case "utf8-bom":
-      return Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(text, "utf8")]);
+      return withBom([0xef, 0xbb, 0xbf], new TextEncoder().encode(text));
     case "utf16le":
-      return Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, "utf16le")]);
+      return utf16Bytes(text, true);
     case "utf16be":
-      return Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from(text, "utf16le").swap16()]);
+      return utf16Bytes(text, false);
   }
+}
+
+function withBom(bom: readonly number[], body: Uint8Array): Uint8Array {
+  const out = new Uint8Array(bom.length + body.length);
+  out.set(bom, 0);
+  out.set(body, bom.length);
+  return out;
+}
+
+/** The byte-order mark for the byte order, then each UTF-16 code unit of `text` in that order. */
+function utf16Bytes(text: string, littleEndian: boolean): Uint8Array {
+  const out = new Uint8Array(2 + text.length * 2);
+  out[0] = littleEndian ? 0xff : 0xfe;
+  out[1] = littleEndian ? 0xfe : 0xff;
+  for (let i = 0; i < text.length; i++) {
+    const unit = text.charCodeAt(i);
+    out[2 + i * 2] = littleEndian ? unit & 0xff : unit >> 8;
+    out[3 + i * 2] = littleEndian ? unit >> 8 : unit & 0xff;
+  }
+  return out;
 }

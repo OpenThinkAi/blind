@@ -13,8 +13,9 @@
 //
 // Office files (DOCX, XLSX): the zip codec is injected (src/formats/zipcodec.ts),
 // and this entry installs none, so it never imports a compression library. With
-// no codec an Office input is skipped with NO_ZIP_CODEC_REASON and every other
-// format works. A Node or Bun caller that wants Office support installs Node's
+// no codec an Office input is skipped by applySpec, and refused by revealFile,
+// with NO_ZIP_CODEC_REASON, and every other format works. src/browser.ts is this
+// entry for a browser. A Node or Bun caller that wants Office support installs Node's
 // codec once, with the CLI's settings (level 6), so the bytes match the CLI's:
 //
 //   import { deflateRawSync, inflateRawSync } from "node:zlib";

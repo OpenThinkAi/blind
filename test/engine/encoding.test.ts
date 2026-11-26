@@ -62,3 +62,28 @@ describe("8-bit text that is not UTF-8 is refused (AGT-1857)", () => {
     expect(encode("Ω", "utf8").length).toBe(2);
   });
 });
+
+describe("encode writes the bytes Buffer wrote (AGT-2737: no Buffer in the engine)", () => {
+  // Buffer is used here, in the test, as the reference only.
+  const TEXTS = ["", SAMPLE, "Zoë 漢字 🐙\r\n", "lone \ud800 high", "lone \udc00 low", "﻿inner BOM"];
+  const reference = (text: string, enc: Encoding): Buffer => {
+    switch (enc) {
+      case "utf8":
+        return Buffer.from(text, "utf8");
+      case "utf8-bom":
+        return Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(text, "utf8")]);
+      case "utf16le":
+        return Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, "utf16le")]);
+      case "utf16be":
+        return Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from(text, "utf16le").swap16()]);
+    }
+  };
+  test.each(["utf8", "utf8-bom", "utf16le", "utf16be"] as const)("%s", (enc) => {
+    for (const text of TEXTS) expect(Buffer.from(encode(text, enc)).equals(reference(text, enc))).toBe(true);
+  });
+
+  test("decode reads a subarray of a larger buffer at its own offset", () => {
+    const whole = Uint8Array.from([0x00, 0xef, 0xbb, 0xbf, 0x41, 0x42, 0x00]);
+    expect(decode(whole.subarray(1, 6))).toEqual({ encoding: "utf8-bom", text: "AB" });
+  });
+});

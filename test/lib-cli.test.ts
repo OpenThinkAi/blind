@@ -172,6 +172,7 @@ describe("the library entry's import graph", () => {
     expect(files).toContain("src/policyrules.ts");
     expect(files).toContain("src/analyst/heuristic.ts");
     expect(files).toContain("src/analyst/policycolumns.ts");
+    expect(files).toContain("src/analyst/reasons.ts");
     expect(files).toContain("src/audit/rules.ts");
     expect(files).toContain("src/audit/mechanical.ts");
     expect(files).toContain("src/audit/semantic.ts");

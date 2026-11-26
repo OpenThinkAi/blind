@@ -95,6 +95,12 @@ export function heuristicShape(loc: Location, stats: ValueStats, policy: Heurist
   return s !== undefined && isShape(s.detector) ? { shape: s.detector, rate: s.rate, named: s.named } : undefined;
 }
 
+/** The detector that classified a column and the share of its values it matched; undefined for an unclassified column. */
+export function heuristicDetector(loc: Location, stats: ValueStats, policy: HeuristicPolicy): { detector: DetectorName; rate: number } | undefined {
+  const s = shapeOf(stats, policy, headerOf(loc));
+  return s === undefined ? undefined : { detector: s.detector, rate: s.rate };
+}
+
 /** The heuristic rule for one column. */
 export function heuristicRule(loc: Location, stats: ValueStats, policy: HeuristicPolicy): ColumnRule {
   const shape = shapeOf(stats, policy, headerOf(loc));

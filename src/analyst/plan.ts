@@ -19,9 +19,9 @@ import { buildProfile, forPrivacyMode, InputError } from "../profile/profile.ts"
 import { type ColumnRule, type DetectorRates, type EntityClassName, type HitPattern, type Location, type PatternName, patternOn, type Profile, REDACTED_VALUE, type Spec, type Treatment } from "../schema.ts";
 import { parseSpec, SchemaError, validateProfile, validateSpec } from "../validate.ts";
 import { AnalystError, type DroppedRule, answerQuestion, locationKey, proposeSpec, runAnalyst } from "./analyst.ts";
-import { isBirthDateName, lastKey } from "../engine/birthdate.ts";
-import { heuristicReason, heuristicShape, heuristicSpec, profileLocations } from "./heuristic.ts";
-import { applyColumnPolicy, describeMatch, type RuleMatch } from "./policycolumns.ts";
+import { heuristicSpec, profileLocations } from "./heuristic.ts";
+import { applyColumnPolicy } from "./policycolumns.ts";
+import { columnNotes, overlayNotes } from "./reasons.ts";
 import {
   ACCEPT_CLASSES,
   type AcceptClass,
@@ -464,41 +464,16 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
     // blind.toml's column rules ([[columns]], and headers that are [keep] terms) decide ahead of everything else.
     const overlay = applyColumnPolicy(spec, profile, policy);
     spec = overlay.spec;
-    if (overlay.decided.length > 0) remarks.push(`${overlay.decided.length} column(s) and key(s) decided by ${POLICY_FILE} (source policy)`);
+    const notesOf = overlayNotes(overlay);
+    if (notesOf.decided !== undefined) remarks.push(notesOf.decided);
     for (const id of overlay.removedQuestions) remarks.push(`question ${id} removed: ${POLICY_FILE} decides its column`);
     for (const l of overlay.human) remarks.push(`${where(l, show)}: the spec's human rule is kept over the ${POLICY_FILE} rule for it`);
     for (const l of overlay.reverted) remarks.push(`${where(l, show)}: no ${POLICY_FILE} rule matches it any more; the heuristic rule was used`);
-    // Rules that disagree on one column: name them (globs only, never a value) and say which won and why.
-    for (const o of overlay.overlaps) {
-      const win = o.matches[0] as RuleMatch;
-      remarks.push(`${where(o.loc, show)}: ${o.matches.length} ${POLICY_FILE} rules match: ${o.matches.map(describeMatch).join("; ")}; columns[${win.index}] wins (${o.reason})`);
-    }
-    for (const k of overlay.shadowedKeeps) {
-      const globs = [...(k.rule.header ?? []).map((h) => `header ${JSON.stringify(h)}`), ...(k.rule.path === undefined ? [] : [`path ${JSON.stringify(k.rule.path)}`])].join(", ");
-      remarks.push(
-        `warning: ${POLICY_FILE} columns[${k.index}] (${globs}, keep) decides nothing: at all ${k.locations} column(s) and key(s) it matches, ${k.by.map((i) => `columns[${i}]`).join(", ")} wins instead`,
-      );
-    }
-
-    // A heuristic rule is blind with its class unlisted only because the policy turned that shape's pattern on.
-    const heuristic = new Set(spec.columns.filter((c) => c.source === "heuristic" && c.treatment === "blind").map(locationKey));
-    // A heuristic rule from a column shape (plate, handle, phone) says which, and how much of the column matched.
-    const shaped = new Map(spec.columns.filter((c) => c.source === "heuristic" && c.class !== "unknown").map((c) => [locationKey(c), c]));
-    const ruled = new Map(spec.columns.map((c) => [locationKey(c), c]));
-    for (const { loc, stats } of profileLocations(profile)) {
-      // A birth-date column no rule decides is redacted at apply time (fail closed), not exempted as a date measure.
-      const decided = ruled.get(locationKey(loc));
-      if (isBirthDateName(loc.header ?? (loc.jsonPath === undefined ? undefined : lastKey(loc.jsonPath))) && (decided === undefined || (decided.class === "unknown" && decided.treatment === "value"))) {
-        remarks.push(`${where(loc, show)}: redact, birth-date header, no rule`);
-      }
-      const pattern = heuristic.has(locationKey(loc)) ? heuristicReason(stats, policy, loc) : undefined;
-      if (pattern !== undefined) remarks.push(`${where(loc, show)}: blind, because policy pattern ${pattern} on (its class is not in [sensitive].classes)`);
-      const rule = shaped.get(locationKey(loc));
-      const shape = rule === undefined ? undefined : heuristicShape(loc, stats, policy);
-      if (rule !== undefined && shape !== undefined) {
-        remarks.push(`${where(loc, show)}: ${rule.class} ${rule.treatment}, shape: ${shape.shape}, ${Math.round(shape.rate * 100)}%${shape.named ? " (its header names the shape)" : ""}`);
-      }
-    }
+    // Rules that disagree on one column: name them (globs only, never a value) and say which won and why (reasons.ts).
+    for (const n of notesOf.overlaps) remarks.push(`${where(n.loc, show)}: ${n.text}`);
+    remarks.push(...notesOf.shadowedKeeps);
+    // Birth-date columns, heuristic blinds from a policy pattern, and column shapes (reasons.ts).
+    for (const n of columnNotes(spec, profile, policy)) remarks.push(`${where(n.loc, show)}: ${n.text}`);
 
     const warnings = patternWarnings(profile, spec, policy);
     const written = writeSpec(io.cwd, checked(spec));

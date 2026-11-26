@@ -468,6 +468,11 @@ export class TextScanner {
     return this.free(text).filter((s) => s.part !== true);
   }
 
+  /** Whether `heading` leaves a name part in `text` that free text would have replaced (reported as a header part kept). */
+  headingKeepsPart(text: string): boolean {
+    return this.free(text).some((s) => s.part === true && s.cls !== null);
+  }
+
   /**
    * A cell under `keep`: only recurring values (and transcript speakers' names) are replaced. Spec entities still shield their text
    * (and stay as written, reported by `flagged`), as do hosts under a keep-list domain; other pattern

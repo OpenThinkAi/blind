@@ -1140,7 +1140,7 @@ function headerParts(sink: PartSink, path: string, bytes: Uint8Array) {
     if (f.severity !== "leak" || f.reason !== PART_SURVIVES || f.in !== "content" || f.offset === null) return f;
     const at = f.offset;
     if (!(byPart.get(f.part) ?? []).some(([a, b]) => at >= a && at < b)) return f;
-    return { ...f, severity: "candidate" as const, reason: `${f.reason}, in a column header (blind never rewrites a column's name for a name part)` };
+    return { ...f, severity: "candidate" as const, reason: `${f.reason}, kept as a column header (blind never changes a column's name for a name part): check it is not the person's name` };
   });
 }
 

@@ -194,7 +194,14 @@ export interface FileReport {
    * value, a spec entity, a pattern match or a key/value block's paired value can, and a rule or
    * consumer that names the column by its header then needs the new name. Absent when none.
    */
-  headerCellsReplaced?: HeaderCellReplaced[];
+  headerCellsReplaced?: HeaderCellReport[];
+  /**
+   * The same places (`index`, `sheet`, `header`) where the output KEPT a header cell (or JSON key)
+   * that holds a word of a blinded person's name, which free text would have replaced (AGT-2785):
+   * a column name such as `Tips` beside a blinded `Ada Tips`, but also a roster pivoted by first
+   * name or surname, so check each is not the person's name. Absent when none.
+   */
+  headerPartsKept?: HeaderCellReport[];
   columns: ColumnReport[];
   /** Free-text replacements (text files, and header, preamble and kept cells of tables). */
   entityReplacements: number;
@@ -229,7 +236,7 @@ export interface FileReport {
   changed: boolean;
 }
 
-export interface HeaderCellReplaced {
+export interface HeaderCellReport {
   /** 0-based column, as in `columns`; absent for a JSON key. */
   index?: number;
   /** XLSX only: the worksheet. */
@@ -368,6 +375,8 @@ interface Pending<K> {
    * part never rewrites it (TextScanner.heading, AGT-2785). Absent for everything else.
    */
   heading?: true;
+  /** Set by scanPending on a `heading` cell whose name part was kept (TextScanner.headingKeepsPart). */
+  partKept?: true;
 }
 
 interface TablePlan {
@@ -477,11 +486,27 @@ function proseInputs(plans: readonly Plan[]): { free: string[]; kept: string[] }
   return { free, kept };
 }
 
+/** The detected header cells of a table that kept a name part (FileReport.headerPartsKept), by column. */
+function keptHeaderCells(p: TablePlan): Pick<FileReport, "headerPartsKept"> {
+  const kept = p.pending
+    .filter((q) => q.partKept === true)
+    .map((q) => ({ index: Number(q.key.slice(q.key.indexOf(":") + 1)), header: q.value }))
+    .sort((a, b) => a.index - b.index);
+  return kept.length > 0 ? { headerPartsKept: kept } : {};
+}
+
+/** The structural keys of a JSON plan that kept a name part (FileReport.headerPartsKept), each once. */
+function keptKeys(p: JsonPlan): Pick<FileReport, "headerPartsKept"> {
+  const kept = [...new Set(p.pending.filter((q) => q.partKept === true).map((q) => q.value))].sort(cmp);
+  return kept.length > 0 ? { headerPartsKept: kept.map((header) => ({ header })) } : {};
+}
+
 /** Scan the pending text of a plan: free text gets every span, a `keep` cell only recurring values. */
 function scanPending<K>(pending: readonly Pending<K>[], edits: Map<K, CellEdit>, scanner: TextScanner): void {
   for (const p of pending) {
     if (p.keep && p.column !== null && scanner.flagged(p.value)) p.column.flagged++;
     const spans = p.keep ? scanner.kept(p.value) : p.heading === true ? scanner.heading(p.value) : scanner.free(p.value);
+    if (p.heading === true && scanner.headingKeepsPart(p.value)) p.partKept = true;
     if (spans.length > 0) edits.set(p.key, { kind: "spans", spans });
   }
 }
@@ -1508,6 +1533,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         ...(out.changed ? { datesScrubbed: out.dates } : {}),
         sheets: p.plan.sheets.map((s) => ({ ...s, outputName: r.sheetNames.find((n) => n.from === s.name)?.to ?? s.name })),
         ...(r.headerCells.length > 0 ? { headerCellsReplaced: r.headerCells.map((h) => ({ index: h.index, sheet: h.sheet, header: h.header })) } : {}),
+        ...(r.headerParts.length > 0 ? { headerPartsKept: r.headerParts.map((h) => ({ index: h.index, sheet: h.sheet, header: h.header })) } : {}),
         unread: r.members.filter((m) => m.kind === "other" && m.replaced !== true && !m.name.endsWith("/")).map((m) => m.name),
         ...(pictureNote.line !== null ? { warnings: [pictureNote.line] } : {}),
         changed,
@@ -1580,6 +1606,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         mappedReplacements: r.mappedReplacements,
         keptHosts: r.keptHosts,
         ...(r.keysReplaced.length > 0 ? { headerCellsReplaced: r.keysReplaced.map((header) => ({ header })) } : {}),
+        ...keptKeys(p),
         changed: false,
       };
     } else {
@@ -1587,7 +1614,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
       let patternReplacements = 0;
       let mappedReplacements = 0;
       let keptHosts = 0;
-      const headerCellsReplaced: HeaderCellReplaced[] = [];
+      const headerCellsReplaced: HeaderCellReport[] = [];
       for (const [key, edit] of p.edits) {
         const [r, c] = key.split(":").map(Number) as [number, number];
         const cell = (p.rows[r] as Row).cells[c] as Cell;
@@ -1626,6 +1653,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         columns: p.columns,
         ...(p.overflowRows > 0 ? { overflowRows: p.overflowRows } : {}),
         ...(headerCellsReplaced.length > 0 ? { headerCellsReplaced: headerCellsReplaced.sort((a, b) => (a.index as number) - (b.index as number)) } : {}),
+        ...keptHeaderCells(p),
         entityReplacements,
         patternReplacements,
         mappedReplacements,

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { renderReport } from "../../src/apply.ts";
 import { auditTree, type TreeEntry } from "../../src/audit/mechanical.ts";
 import { type ApplyOptions, type ApplyResult, applySpec, type InputFile } from "../../src/engine/apply.ts";
+import { EntityMatcher } from "../../src/engine/text.ts";
 import type { ColumnRule, Spec } from "../../src/schema.ts";
 import { buildWorkbook } from "../formats/xlsxfixture.ts";
 import { readZip } from "../formats/zipfixture.ts";
@@ -62,6 +63,13 @@ describe("a name part never rewrites a detected header cell (AGT-2785)", () => {
       expect(firstLine(out(r, "pay.csv"))).toBe("Date,Subtotal,Hours,Bonus,Tips,Net");
       expect(out(r, "pay.csv")).toBe(PAY);
       expect(report(r, "pay.csv")?.headerCellsReplaced).toBeUndefined();
+      // Each kept header that holds a name part is listed, so the user can check none is a person.
+      expect(report(r, "pay.csv")?.headerPartsKept).toEqual([
+        { index: 1, header: "Subtotal" },
+        { index: 3, header: "Bonus" },
+        { index: 4, header: "Tips" },
+        { index: 5, header: "Net" },
+      ]);
       // The same parts in free text are still replaced, with their person's pseudonym.
       const note = out(r, "note.txt");
       expect(note).not.toContain("Tips");
@@ -119,6 +127,8 @@ describe("a name part never rewrites a detected header cell (AGT-2785)", () => {
       { index: 1, header: "Nora Subtotal" },
       { index: 2, header: "Owen Hours" },
     ]);
+    // "Tips" is a part kept beside them; it is listed as kept, not changed.
+    expect(report(r, "hours.csv")?.headerPartsKept).toBeUndefined();
     // The printed report names them, masked unless values are shown.
     expect(renderReport(r)).toContain("2 header cells changed");
     expect(renderReport(r)).not.toContain("Nora Subtotal");
@@ -173,6 +183,7 @@ describe("a name part never rewrites a detected header cell (AGT-2785)", () => {
     expect(keys[2]).toBe(pseudo(r, "Ada Tips"));
     expect(o[0]?.note).toBe(`${pseudo(r, "Ada Tips")} was late`);
     expect(report(r, "pay.json")?.headerCellsReplaced).toEqual([{ header: "Ada Tips" }]);
+    expect(report(r, "pay.json")?.headerPartsKept).toEqual([{ header: "Subtotal" }, { header: "Tips" }]);
   });
 
   test("XLSX: a worksheet's detected header cells keep their text; data and preamble-free cells do not", () => {
@@ -190,6 +201,10 @@ describe("a name part never rewrites a detected header cell (AGT-2785)", () => {
     for (const h of ["Date", "Subtotal", "Tips", "Notes"]) expect(sheet).toContain(`<t>${h}</t>`);
     expect(sheet).toContain(`<t>${pseudo(r, "Ada Tips")} was late</t>`);
     expect(report(r, "pay.xlsx")?.headerCellsReplaced).toBeUndefined();
+    expect(report(r, "pay.xlsx")?.headerPartsKept).toEqual([
+      { index: 1, sheet: "Staff", header: "Subtotal" },
+      { index: 2, sheet: "Staff", header: "Tips" },
+    ]);
     // The audit calls the kept header part a candidate, not a leak.
     const a = audit(r, s);
     const part = a.files.find((f) => f.path === "pay.xlsx")?.findings.filter((f) => f.masked.startsWith("Ti")) ?? [];
@@ -238,13 +253,66 @@ describe("a name part never rewrites a detected header cell (AGT-2785)", () => {
   });
 });
 
+describe("name parts kept in headers: the other paths (AGT-2785)", () => {
+  test("a dropped person column's name parts are redacted in free text, never in a header", () => {
+    const s = spec([rule("staff.csv", "Full Name", "person", "drop"), rule("staff.csv", "Rate", "vocabulary", "keep")]);
+    const r = applySpec([file("staff.csv", STAFF), file("pay.csv", PAY), file("note.txt", NOTE)], s, { salt: SALT });
+    expect(out(r, "pay.csv")).toBe(PAY);
+    expect(out(r, "note.txt")).toBe("REDACTED covered the late shift; REDACTED checked the till.\n");
+  });
+
+  test("a transcript speaker's name part leaves a header as written", () => {
+    const vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n<v Ada Tips>Hello there.\n\n00:00:04.000 --> 00:00:06.000\n<v Owen Hours>Tips, can you hear me?\n";
+    const r = applySpec([file("call.vtt", vtt), file("pay.csv", PAY)], spec([]), { salt: SALT });
+    expect(out(r, "call.vtt")).not.toContain("Tips");
+    expect(firstLine(out(r, "pay.csv"))).toBe("Date,Subtotal,Hours,Bonus,Tips,Net");
+  });
+
+  test("a whole value with a name part's text wins it, whatever order the forms come in", () => {
+    const part = { cls: "person" as const, value: "Ada Tips", form: "Tips", part: true };
+    const whole = { cls: "person" as const, value: "Tips", form: "Tips" };
+    for (const extra of [[part, whole], [whole, part]]) {
+      const spans = new EntityMatcher({}, extra).find("Tips");
+      expect(spans).toEqual([{ start: 0, end: 4, cls: "person", value: "Tips", source: "map" }]);
+    }
+    // Across classes too: an equal-length tie goes to the whole value, not the part.
+    const org = { cls: "org" as const, value: "Tips", form: "Tips" };
+    expect(new EntityMatcher({}, [part, org]).find("Tips")[0]?.part).toBeUndefined();
+    // A part joined with another word of the name is no lone part.
+    const given = { cls: "person" as const, value: "Ada Tips", form: "Ada", part: true };
+    expect(new EntityMatcher({}, [part, given]).find("Ada Tips")).toEqual([{ start: 0, end: 8, cls: "person", value: "Ada Tips", source: "map" }]);
+  });
+
+  test("XLSX: a table column name repeating a header cell is written as the cell is", () => {
+    const is = (ref: string, t: string) => `<c r="${ref}" t="inlineStr"><is><t>${t}</t></is></c>`;
+    const rows =
+      `<row r="1">${is("A1", "Week")}${is("B1", "Tips")}${is("C1", "Nora Subtotal")}</row>` +
+      `<row r="2">${is("A2", "2026-W01")}<c r="B2"><v>4</v></c><c r="C2"><v>38.5</v></c></row>` +
+      `<row r="3">${is("A3", "2026-W02")}<c r="B3"><v>5</v></c><c r="C3"><v>36</v></c></row>`;
+    const table =
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="1" name="Hours" displayName="Hours" ref="A1:C3">' +
+      '<tableColumns count="3"><tableColumn id="1" name="Week"/><tableColumn id="2" name="Tips"/><tableColumn id="3" name="Nora Subtotal"/></tableColumns></table>';
+    const bytes = buildWorkbook({ staffRows: rows, extra: [{ name: "xl/tables/table1.xml", data: table }] });
+    const r = applySpec([file("staff.csv", STAFF), { path: "hours.xlsx", bytes }], STAFF_SPEC, { salt: SALT });
+    const o = r.outputs.find((x) => x.path === "hours.xlsx");
+    if (o === undefined) throw new Error(JSON.stringify(r.skipped));
+    const t = readZip(o.bytes).find((m) => m.name === "xl/tables/table1.xml")?.text ?? "";
+    expect(t).toContain('name="Tips"');
+    expect(t).toContain(`name="${pseudo(r, "Nora Subtotal")}"`);
+    // The audit places the kept name in the table part too: a candidate there, not a leak.
+    const tips = audit(r, STAFF_SPEC).files.find((f) => f.path === "hours.xlsx")?.findings.filter((f) => f.masked.startsWith("Ti")) ?? [];
+    expect(tips.map((f) => f.part).sort()).toEqual(["xl/tables/table1.xml", "xl/worksheets/sheet1.xml"]);
+    expect(tips.every((f) => f.severity === "candidate")).toBe(true);
+  });
+});
+
 describe("the audit and a name part kept in a header (AGT-2785)", () => {
   test("a clean run: the kept header parts are candidates, never leaks", () => {
     const r = applySpec([file("staff.csv", STAFF), file("pay.csv", PAY), file("keys.json", JSON.stringify([{ Subtotal: 1 }]))], STAFF_SPEC, { salt: SALT });
     const a = audit(r, STAFF_SPEC);
     expect(a.summary.leaks).toBe(0);
     expect(a.status).toBe("candidates");
-    const header = a.files.flatMap((f) => f.findings).filter((f) => f.reason.includes("in a column header"));
+    const header = a.files.flatMap((f) => f.findings).filter((f) => f.reason.includes("kept as a column header"));
     expect(header.map((f) => `${f.file}:${f.masked}`).sort()).toEqual(["keys.json:Su***8", "pay.csv:Bo***5", "pay.csv:N***3", "pay.csv:Su***8", "pay.csv:Ti***4"]);
   });
 

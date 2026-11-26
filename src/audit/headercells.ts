@@ -7,11 +7,13 @@
 
 import { CsvError, parseCsv, sniffDelimiter } from "../engine/csv.ts";
 import { scanJson, scanJsonl, JsonError } from "../engine/json.ts";
-import { cellText, readWorkbook, sheetRows } from "../formats/xlsx.ts";
+import { cellText, readWorkbook, sheetRows, XlsxError } from "../formats/xlsx.ts";
 import { detectHeaderRow } from "../profile/table.ts";
 import { latin1 } from "./views.ts";
 import { localName, walkXml } from "./xml.ts";
-import { readZip, zipBudget } from "./zip.ts";
+import { XmlError, ZipError as OoxmlZipError } from "../formats/ooxml.ts";
+import { zipCodec } from "../formats/zipcodec.ts";
+import { readZip, ZipError, zipBudget } from "./zip.ts";
 
 /** Code-unit ranges of the cells of a CSV/TSV table's detected header row, quotes included. Empty when none is detected. */
 export function headerCellRanges(text: string, tsv: boolean): [number, number][] {
@@ -50,9 +52,12 @@ export function jsonKeyRanges(text: string, jsonl: boolean): [number, number][] 
 
 const XML_ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
 const unescapeXml = (s: string): string =>
-  s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/giu, (m, e: string) =>
-    e[0] === "#" ? String.fromCodePoint(Number.parseInt(e[1] === "x" || e[1] === "X" ? e.slice(2) : e.slice(1), e[1] === "x" || e[1] === "X" ? 16 : 10)) : (XML_ENTITIES[e] ?? m),
-  );
+  s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/giu, (m, e: string) => {
+    if (e[0] !== "#") return XML_ENTITIES[e] ?? m;
+    const hex = e[1] === "x" || e[1] === "X";
+    return String.fromCodePoint(Number.parseInt(e.slice(hex ? 2 : 1), hex ? 16 : 10));
+  });
+const utf8 = new TextDecoder();
 
 /**
  * Per zip member of a workbook, the byte ranges that hold detected header text: the runs of a
@@ -62,14 +67,17 @@ const unescapeXml = (s: string): string =>
  */
 export function xlsxHeaderRanges(bytes: Uint8Array): Map<string, [number, number][]> {
   const out = new Map<string, [number, number][]>();
+  // With no zip codec the audit reports the workbook as unread anyway.
+  if (zipCodec() === null) return out;
   let wb;
   let members;
   try {
     wb = readWorkbook(bytes);
     members = readZip(bytes, zipBudget());
-  } catch {
+  } catch (e) {
     // Unreadable: nothing is placed, so every finding stands.
-    return out;
+    if (e instanceof XlsxError || e instanceof ZipError || e instanceof OoxmlZipError || e instanceof XmlError) return out;
+    throw e;
   }
   const uses = wb.sharedStrings.map(() => ({ header: 0, other: 0 }));
   const cells = new Set<string>();
@@ -108,7 +116,7 @@ export function xlsxHeaderRanges(bytes: Uint8Array): Map<string, [number, number
         if (el === "c" && attr === "r") ref = t.slice(start, end);
         else if ((el === "tableColumn" || el === "cacheField") && attr === "name") {
           const raw = Uint8Array.from(t.slice(start, end), (ch) => ch.charCodeAt(0));
-          if (texts.has(unescapeXml(new TextDecoder().decode(raw)))) ranges.push([start, end]);
+          if (texts.has(unescapeXml(utf8.decode(raw)))) ranges.push([start, end]);
         }
       },
       tag(name, closing, selfClosing) {

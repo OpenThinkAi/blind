@@ -48,7 +48,7 @@ import type { ColumnRule, EntityClassName, PatternName, Profile, Spec, Treatment
 import { SchemaError, validateProfile, validateSpec } from "./validate.ts";
 
 export { ApplyError, engineFormat } from "./engine/apply.ts";
-export type { ApplyResult, ColumnOutcome, ColumnReport, EngineFormat, FileReport, HeaderCellReplaced, InputFile, SkippedFile, TranscriptReport } from "./engine/apply.ts";
+export type { ApplyResult, ColumnOutcome, ColumnReport, EngineFormat, FileReport, HeaderCellReport, InputFile, SkippedFile, TranscriptReport } from "./engine/apply.ts";
 export { MapError, parseMap, serializeMap, type BlindMap, type MapEntry, type MapKind } from "./engine/map.ts";
 export { RevealError, revealFile, Revealer, type Revealed, type RevealedFile } from "./engine/reveal.ts";
 export { MIN_SALT_BYTES, PseudonymError } from "./engine/pseudonym.ts";

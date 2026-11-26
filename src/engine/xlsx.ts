@@ -491,6 +491,8 @@ export interface Rendered {
   metadataReplacements: number;
   /** Cells of a detected header row the output changed (AGT-2785): sheet, 0-based column, original text. */
   headerCells: { sheet: string; index: number; header: string }[];
+  /** Cells of a detected header row written as a heading that kept a name part free text would have replaced. */
+  headerParts: { sheet: string; index: number; header: string }[];
 }
 
 /**
@@ -835,6 +837,7 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
   // The detected header cells the output changed (a whole value, a spec entity, a pattern match or a
   // key/value block's paired value; never a lone name part).
   const headerCells: Rendered["headerCells"] = [];
+  const headerParts: Rendered["headerParts"] = [];
   for (const s of p.wb.sheets) {
     const info = p.sheets.find((x) => x.name === s.name);
     if (s.member === null || info === undefined || info.noHeader || info.headerRow < 1) continue;
@@ -844,10 +847,13 @@ function walk(path: string, bytes: Uint8Array, p: XlsxPlan, env: Env, pz: Namer,
       const after =
         c.type === "s" ? sharedOut.get(Number(c.v))?.join("") : c.type === "inlineStr" ? inlineOut.get(`${s.member}\0${c.ref}`)?.join("") : c.type === "str" ? strOut.get(`${s.member}\0${c.ref}`) : undefined;
       if (after !== undefined && after !== before) headerCells.push({ sheet: s.name, index: c.col, header: before });
+      const action = c.type === "s" ? p.strings[Number(c.v)] : p.cells.get(s.member)?.get(c.ref)?.action;
+      if (action?.kind === "heading" && env.scanner.headingKeepsPart(before)) headerParts.push({ sheet: s.name, index: c.col, header: before });
     }
   }
   return {
     headerCells,
+    headerParts,
     bytes: result.bytes,
     members: result.members,
     sheetNames: p.wb.sheets.map((s) => ({ from: s.name, to: sheetOut.get(s.name) as string })),

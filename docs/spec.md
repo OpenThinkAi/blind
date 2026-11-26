@@ -552,12 +552,17 @@ it or holds it (a pivoted sheet whose headers are client names, `Acme Roofing Q1
 someone's full name), and spec entities and patterns are replaced there as in any free text. The
 apply report lists each header cell (or JSON key) the output changed, by column and original text
 (`header cells changed` per file; `headerCellsReplaced` in the JSON report: `index`, `sheet` for a
-workbook, and `header`), since a rule naming that column needs the new name. Rows above the header
+workbook, and `header`), since a rule naming that column needs the new name. It also warns about each
+header cell (or key) it kept that holds a word of a blinded person's name (`headerPartsKept`, same
+shape): a column name such as `Tips` is the point, but a roster pivoted by first name or surname
+(`Week,Avery,Bea`) keeps those names too, so check the list and add a spec entity for any that is a
+person (a spec entity is replaced in a header). Rows above the header
 (a title, a note) are free text as before, name parts included. When no row looked like a header and
 row 1 stands in for one, that row may be data, so it is free text as before too. An XLSX shared string
 a header cell shares with another cell is written once for both, as free text. DOCX tables have no
 header row: their cells are free text. `blind audit` reports a name part surviving in one of these
-places as a `candidate`, not a leak.
+places as a `candidate` (`kept as a column header ... check it is not the person's name`), not a
+leak, so the audit's status is `candidates`, not `clean`.
 
 **Key/value blocks.** A vertical record (`Client | Dana Example`, then `Phone | ...`, `Card | ...`,
 `Email | ...` below) puts labels in one column and values in the next. When a rule pseudonymises a

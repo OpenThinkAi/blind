@@ -29,7 +29,7 @@ import { commaNames, peopleSegments, splitPeople } from "../src/engine/people.ts
 import { splitStandIn } from "../src/engine/pseudonym.ts";
 import { applySpec, explainProposal, profileInputs, revealFile, Revealer, serializeMap } from "../src/lib.ts";
 import { defaultPolicy, renderPolicy } from "../src/policy.ts";
-import type { Spec } from "../src/schema.ts";
+import type { Profile, Spec } from "../src/schema.ts";
 
 const FIXTURE = join(import.meta.dir, "fixtures", "name-shapes");
 const FILES = ["staff.csv", "payroll.csv", "jobs.csv"] as const;
@@ -240,6 +240,9 @@ describe("the joinWith rule", () => {
     const proposal = explainProposal(profile, { columns: [{ header: "first_name", treatment: "blind", class: "person", joinWith: "Last Name" }] });
     expect(proposal.spec.columns.find((c) => c.header === "first_name")).toMatchObject({ source: "policy", joinWith: "last_name" });
     expect(() => explainProposal(profile, { columns: [{ header: "first_name", treatment: "keep", joinWith: "last_name" }] })).toThrow(/joinWith pairs/);
+    const unpaired = explainProposal(profile, { columns: [{ header: "first_name", treatment: "blind", class: "person", joinWith: "maiden_name" }] });
+    expect(unpaired.spec.columns.find((c) => c.header === "first_name")?.joinWith).toBeUndefined();
+    expect(unpaired.columns.find((c) => c.header === "first_name")?.reason).toContain("join_with matched no other header");
   });
 
   test("blind.toml join_with parses and renders", async () => {
@@ -284,5 +287,92 @@ describe("the joinWith rule", () => {
     ] };
     expect(parseMap(JSON.stringify(ok)).entries).toHaveLength(3);
     expect(() => parseMap(JSON.stringify({ ...ok, entries: ok.entries.slice(1) }))).toThrow(/reuse the pseudonym/);
+  });
+});
+
+describe("detecting the shapes (nameshapes.ts)", () => {
+  test("nameHalf reads given-name and surname headers, and nothing else", async () => {
+    const { nameHalf } = await import("../src/analyst/nameshapes.ts");
+    const cases: [string, ReturnType<typeof nameHalf>][] = [
+      ["first_name", { half: "given", rest: "" }],
+      ["Last Name", { half: "family", rest: "" }],
+      ["Given", { half: "given", rest: "" }],
+      ["Surname", { half: "family", rest: "" }],
+      ["emp_fname", { half: "given", rest: "emp" }],
+      ["emp_lname", { half: "family", rest: "emp" }],
+      ["EmployeeFirstName", { half: "given", rest: "employee" }],
+      ["Forename", { half: "given", rest: "" }],
+      ["First", { half: "given", rest: "" }],
+      ["first_seen", undefined],
+      ["last_seen", undefined],
+      ["last visit", undefined],
+      ["first last name", undefined],
+      ["name", undefined],
+      ["employee", undefined],
+    ];
+    for (const [header, want] of cases) expect([header, nameHalf(header)]).toEqual([header, want]);
+  });
+
+  const stats = (samples: string[] = []) => ({ count: 4, distinctRatio: 1, digitRatio: 0, dictionaryRatio: 0, meanLength: 6, detectorRates: { ip: 0, email: 0, host: 0, guid: 0, mac: 0, numericId: 0 }, samples });
+  const profileOf = (headers: string[], samples: Record<string, string[]> = {}): Profile => ({
+    version: 1, sampleCount: 5, files: [{ path: "s.csv", format: "csv", size: 1 }], jsonKeys: [], documents: [], transcripts: [], cooccurrence: [],
+    tables: [{ file: "s.csv", headerRow: 1, columns: headers.map((header) => ({ header, stats: stats(samples[header]) })) }],
+  });
+  const undecidedSpec = (headers: string[], over: Record<string, Partial<Spec["columns"][number]>> = {}): Spec => ({
+    version: 1, entities: {}, patterns: { ip: true, email: true, host: true, guid: true, mac: false }, questions: [],
+    columns: headers.map((header) => ({ file: "s.csv", header, class: "unknown", treatment: "value", confidence: 0, source: "heuristic", ...over[header] }) as Spec["columns"][number]),
+  });
+  const people = { sensitive: { classes: ["person"] } } as never;
+
+  test("proposeNameShapes pairs only an unambiguous pair, never over a human rule", async () => {
+    const { proposeNameShapes } = await import("../src/analyst/nameshapes.ts");
+    const joined = (headers: string[], over = {}) => proposeNameShapes(undecidedSpec(headers, over), profileOf(headers), people).spec.columns.filter((c) => c.joinWith !== undefined).map((c) => [c.header, c.joinWith]);
+    expect(joined(["first_name", "last_name", "role"])).toEqual([["first_name", "last_name"]]);
+    expect(joined(["billing_first_name", "shipping_last_name"])).toEqual([]);
+    expect(joined(["first_name", "given_name", "last_name"])).toEqual([]);
+    expect(joined(["first_seen", "last_seen"])).toEqual([]);
+    expect(joined(["first_name", "last_name"], { first_name: { source: "human" } })).toEqual([]);
+    expect(joined(["first_name", "last_name"], { last_name: { class: "vocabulary", treatment: "keep", source: "policy" } })).toEqual([]);
+    expect(proposeNameShapes(undecidedSpec(["first_name", "last_name"]), profileOf(["first_name", "last_name"]), { sensitive: { classes: ["email"] } } as never).notes).toEqual([]);
+  });
+
+  test("proposeNameShapes asks about full names around a comma, once per column", async () => {
+    const { proposeNameShapes } = await import("../src/analyst/nameshapes.ts");
+    const headers = ["workers", "credentialed"];
+    const profile = profileOf(headers, { workers: ["Iris Halloway, Hugo Okonkwo-Lund"], credentialed: ["Owen Bellamy, PT", "Halloway, Iris"] });
+    const first = proposeNameShapes(undecidedSpec(headers), profile, people).spec;
+    expect(first.questions.map((q) => [q.id, q.about?.header])).toEqual([["names-1", "workers"]]);
+    expect(proposeNameShapes(first, profile, people).spec.questions).toHaveLength(1);
+  });
+});
+
+describe("worksheets and the map", () => {
+  test("a joinWith on a worksheet column is refused; person cells there still split and count", async () => {
+    const { buildWorkbook } = await import("./formats/xlsxfixture.ts");
+    const { ApplyError } = await import("../src/engine/apply.ts");
+    const rows =
+      '<row r="1"><c r="A1" t="inlineStr"><is><t>Workers</t></is></c><c r="B1" t="inlineStr"><is><t>Last</t></is></c></row>' +
+      '<row r="2"><c r="A2" t="inlineStr"><is><t>Nora Teasdale; Owen Brandvik</t></is></c><c r="B2" t="inlineStr"><is><t>Teasdale</t></is></c></row>' +
+      '<row r="3"><c r="A3" t="inlineStr"><is><t>Iris Halloway, Hugo Okonkwo-Lund</t></is></c><c r="B3" t="inlineStr"><is><t>Halloway</t></is></c></row>';
+    const book = [{ path: "book.xlsx", bytes: buildWorkbook({ staffRows: rows }) }];
+    const rule = (extra: Record<string, unknown>) => ({ version: 1, entities: {}, patterns: { ip: true, email: true, host: true, guid: true, mac: false }, questions: [], columns: [{ file: "book.xlsx", sheet: "Staff", header: "Workers", class: "person", treatment: "blind", confidence: 1, source: "human", ...extra }] }) as Spec;
+    expect(() => applySpec(book, rule({ joinWith: "Last" }), { salt: SALT })).toThrow(ApplyError);
+    const r = applySpec(book, rule({}), { salt: SALT });
+    const col = r.files[0]?.columns.find((c) => c.header === "Workers");
+    expect(col).toMatchObject({ people: 1, commaNames: 1 });
+  });
+
+  test("withoutValues drops a person's name parts with the person, and the map still parses", async () => {
+    const { withoutValues } = await import("../src/engine/map.ts");
+    const m = parseMap(JSON.stringify({ version: 1, entries: [
+      { kind: "person", canonical: "nora teasdale", value: "Nora Teasdale", pseudonym: "Staff QSPPW" },
+      { kind: "person-given", canonical: "nora teasdale", value: "Nora", pseudonym: "Staff QSPPW" },
+      { kind: "person-family", canonical: "nora teasdale", value: "Teasdale", pseudonym: "Staff QSPPW" },
+      { kind: "person", canonical: "owen brandvik", value: "Owen Brandvik", pseudonym: "Staff KQZTB" },
+    ] }));
+    const pruned = withoutValues(m, ["Nora Teasdale"]);
+    expect(pruned.dropped).toBe(3);
+    expect(pruned.map.entries.map((e) => e.kind)).toEqual(["person"]);
+    expect(parseMap(serializeMap(pruned.map)).entries).toHaveLength(1);
   });
 });

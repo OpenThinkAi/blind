@@ -204,16 +204,6 @@ export function shapeHolds(shape: ShapeName, stats: ShapeStats, header: string |
   return named ? digits || stats.distinctRatio >= 0.8 : digits && distinct;
 }
 
-/**
- * The values a pseudonymised cell asks stand-ins for: its core (pseudoCell), or for a person cell
- * written as several full names ("Nora Teasdale; Owen Brandvik", people.ts peopleSegments) each name,
- * so each person gets the stand-in they get written alone (AGT-2787).
- */
-export function pseudoCores(cls: PseudoClass, value: string): string[] {
-  const people = cls === "person" ? peopleSegments(value) : null;
-  return people !== null ? people.names : [pseudoCell(cls, value).core];
-}
-
 /** Writes a pseudonymised cell (see pseudoCell): a cell of several people gets one stand-in per person, its separators as written. */
 export function pseudoWrite(pz: { pseudonym(cls: PseudoClass, value: string): string }, cls: PseudoClass, value: string): string {
   const people = cls === "person" ? peopleSegments(value) : null;

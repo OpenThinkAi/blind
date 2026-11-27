@@ -54,6 +54,13 @@ export type ColumnRule = Location & {
   joinWith?: string;
 };
 
+/**
+ * Whether a column rule may be the surname column of a first/last name pair (`joinWith`, AGT-2787):
+ * blinded as a person, or undecided (`unknown`/`value`). The validator and the engine both use it.
+ */
+export const fitsSurnameRule = (r: Pick<ColumnRule, "class" | "treatment">): boolean =>
+  (r.class === "person" && r.treatment === "blind") || (r.class === "unknown" && r.treatment === "value");
+
 export interface Entity {
   canonical: string;
   aliases: string[];

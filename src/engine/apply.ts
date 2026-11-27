@@ -63,7 +63,7 @@
 // is blinded through src/engine/names.ts (patterns, entities and the column
 // values replaced above), planned with the cells and rendered after them.
 
-import { type ColumnRule, type EntityClassName, patternOn, REDACTED_VALUE, type Spec, type Treatment } from "../schema.ts";
+import { type ColumnRule, type EntityClassName, fitsSurnameRule, patternOn, REDACTED_VALUE, type Spec, type Treatment } from "../schema.ts";
 import { findRedactValues } from "./redactlist.ts";
 import { newSecretCarry } from "./secret.ts";
 import { Shield, type ShieldReport } from "./shield.ts";
@@ -627,7 +627,7 @@ function planTable(
       );
     }
     const theirs = rules.find((r) => (r.header as string).trim() === (rule.joinWith as string).trim());
-    if (f === g || pairs.has(g) || pairs.has(f) || (theirs !== undefined && !((theirs.class === "person" && theirs.treatment === "blind") || (theirs.class === "unknown" && theirs.treatment === "value")))) {
+    if (f === g || pairs.has(g) || pairs.has(f) || (theirs !== undefined && !fitsSurnameRule(theirs))) {
       throw new ApplyError(
         `${input.path}: column ${JSON.stringify(rule.joinWith)} cannot be the surname of ${JSON.stringify(rule.header)} (joinWith): a pair is two different columns, each in one pair, and the surname column's own rule (if any) must be person/blind`,
       );

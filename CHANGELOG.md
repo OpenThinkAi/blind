@@ -28,6 +28,11 @@
   (new entry kinds `person-given` and `person-family`, which reuse the person's stand-in), and
   `blind reveal` restores each cell exactly. A `joinWith` on a worksheet column is refused. See
   "Cells of several people" and "First and last name columns" in [docs/spec.md](docs/spec.md).
+- **Compatibility.** Against an existing map, a cell of several full names joined by `&`, `+` or
+  `and` (`Dana Quillfeather & Lee Marwick`) now gets one stand-in per person instead of its earlier
+  whole-cell stand-in; the old entry stays in the map and still reveals. A map that holds the new
+  `person-given` / `person-family` entries is refused by an older blind (unknown entry kind), so
+  reveal such output with this version or later.
 
 ## 0.4.0-rc.2
 

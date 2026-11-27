@@ -254,7 +254,7 @@ export function explainProposal(profile: Profile, policy: BlindPolicy = {}): Pro
   if (!checked.ok) throw new SchemaError("profile", "profile", checked.issues);
   const overlay = applyColumnPolicy(heuristicSpec(profile, p), profile, p);
   // First/last name pairs proposed as one person, and comma-separated names asked about, as `blind plan` does (AGT-2787).
-  const shapes = proposeNameShapes(overlay.spec, profile, p);
+  const shapes = proposeNameShapes(overlay.spec, profile, p, overlay.unjoined);
   const spec = shapes.spec;
   const result = validateSpec(spec);
   if (!result.ok) throw new SchemaError("spec", "proposed spec", result.issues);

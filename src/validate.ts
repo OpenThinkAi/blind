@@ -9,7 +9,7 @@
 import profileSchema from "../schema/profile.schema.json" with { type: "json" };
 import specSchema from "../schema/spec.schema.json" with { type: "json" };
 import { maskValue } from "./mask.ts";
-import type { Profile, Spec } from "./schema.ts";
+import { fitsSurnameRule, type Profile, type Spec } from "./schema.ts";
 
 export interface SchemaIssue {
   /** Where the problem is, e.g. `$.columns[2].class`. */
@@ -306,7 +306,7 @@ export function validateSpec(value: unknown): Validation<Spec> {
     const other = spec.columns.find((o) => o.header !== undefined && o.file === c.file && o.sheet === c.sheet && o.header.trim() === c.joinWith?.trim());
     if (other !== undefined && other.joinWith !== undefined) {
       issues.push({ path: at, message: "the surname column has a joinWith of its own; put joinWith on the given-name column only", ...strings(c.joinWith) });
-    } else if (other !== undefined && !((other.class === "person" && other.treatment === "blind") || (other.class === "unknown" && other.treatment === "value"))) {
+    } else if (other !== undefined && !fitsSurnameRule(other)) {
       issues.push({ path: at, message: `the surname column's rule is ${got(other.class)}/${got(other.treatment)}; a pair is blinded as one person, so make it person/blind`, ...strings(c.joinWith, other.class, other.treatment) });
     }
   });

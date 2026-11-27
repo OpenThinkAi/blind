@@ -474,7 +474,7 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
     for (const n of notesOf.overlaps) remarks.push(`${where(n.loc, show)}: ${n.text}`);
     for (const s of notesOf.shadowedKeeps) remarks.push(s);
     // First/last name pairs proposed as one person, and comma-separated names asked about (AGT-2787).
-    const shapes = proposeNameShapes(spec, profile, policy);
+    const shapes = proposeNameShapes(spec, profile, policy, overlay.unjoined);
     spec = shapes.spec;
     for (const n of shapes.notes) remarks.push(`${where(n.loc, show)}: ${n.text}`);
     // Birth-date columns, heuristic blinds from a policy pattern, and column shapes (reasons.ts).

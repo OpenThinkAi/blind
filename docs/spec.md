@@ -595,7 +595,11 @@ A compact stand-in has no space, so it is split at its last `_` instead: there t
 with `_`. A cell's own leading and trailing spaces are kept. A row with only one of the two cells
 filled blinds that cell whole as a person. The map records each person's given name and surname as
 written (`person-given` and `person-family` entries, which reuse the person's stand-in), and
-`blind reveal` restores each cell of the pair exactly. The pair is a CSV and TSV feature: a
+`blind reveal` restores each cell of the pair, its spacing kept. As for every value, one written form
+is kept per person: a person whose given name is written `Nora` in one row and `NORA` in another
+comes back as the one form the map records (the code-unit smallest), in both rows. A
+`join_with` in `blind.toml` that matches no other header of the table, or several, pairs nothing:
+`blind plan` notes it and the column is blinded on its own. The pair is a CSV and TSV feature: a
 `joinWith` on a worksheet column is refused (export the sheet as CSV), and a JSON key cannot use it.
 
 **Header cells and JSON keys.** A header cell names its column, and rules, consumers and the next
@@ -1043,7 +1047,10 @@ the same code as the commands themselves.
 - **First and last name pairs.** In a CSV or TSV row, a cell that is the surname side of a person's
   stand-in (map entries `person-given` and `person-family`) is restored together with the nearest
   cell of the same row that is the given-name side, before it first, each to the name as written
-  ([first and last name columns](#first-and-last-name-columns)).
+  ([first and last name columns](#first-and-last-name-columns)). In the compact style the surname
+  side is a bare tag (`CA35`), so a row that happened to hold `Person` and `CA35` in two unrelated
+  cells would be read as such a pair; the letters and readable sides (`DRTCK`, `#CA35]`) cannot
+  occur otherwise.
 - **Formats.** CSV/TSV cell by cell (a restored value that needs quoting is quoted), JSON and JSONL
   string by string (spliced in, the rest of the text unchanged), and text (`.txt`, `.md`, `.log`, and the
   `.vtt` and `.srt` transcripts, read as text), with the file's encoding kept. XLSX and DOCX are restored at the zip and XML level in exactly the

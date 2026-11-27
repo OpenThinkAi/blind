@@ -68,9 +68,10 @@ export interface NameShapes {
  * The spec with every first/last name pair proposed as one person (`joinWith`) and a question added for
  * every column whose samples put full names around a comma. Pairs are proposed only when the policy
  * lists people as sensitive, only in CSV and TSV tables (a worksheet pair is not blinded as one person),
- * and only between two columns of one table whose headers differ just by the half they name.
+ * and only between two columns of one table whose headers differ just by the half they name. `unjoined`
+ * (PolicyOverlay.unjoined) are columns a blind.toml `join_with` could not pair: none is proposed for them.
  */
-export function proposeNameShapes(spec: Spec, profile: Profile, policy: Pick<Policy, "sensitive">): NameShapes {
+export function proposeNameShapes(spec: Spec, profile: Profile, policy: Pick<Policy, "sensitive">, unjoined: readonly Location[] = []): NameShapes {
   const notes: NameShapes["notes"] = [];
   const columns = [...spec.columns];
   const at = new Map(columns.map((c, i) => [locationKey(c), i]));
@@ -82,7 +83,8 @@ export function proposeNameShapes(spec: Spec, profile: Profile, policy: Pick<Pol
     const i = at.get(locationKey(loc));
     if (i !== undefined) columns[i] = rule;
   };
-  const paired = new Set<string>();
+  // A column whose blind.toml join_with paired nothing keeps that rule's answer: no other pair is guessed for it.
+  const paired = new Set<string>(unjoined.map(locationKey));
   for (const c of columns) {
     if (c.joinWith === undefined || c.header === undefined) continue;
     paired.add(locationKey(c));

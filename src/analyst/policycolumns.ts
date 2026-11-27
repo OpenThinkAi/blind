@@ -325,6 +325,8 @@ export interface PolicyOverlay {
   overlaps: RuleOverlap[];
   /** Keep rules that match columns here but decide none of them. */
   shadowedKeeps: ShadowedKeep[];
+  /** Locations a rule with `join_with` decided without a pair: no other header (or several) of the table matched it, or the table is a worksheet. */
+  unjoined: Location[];
 }
 
 /** The spec with every profile column blind.toml decides set to the policy's rule. Other rules are untouched (same objects). */
@@ -335,6 +337,7 @@ export function applyColumnPolicy(spec: Spec, profile: Profile, policy: Pick<Pol
   const decided: Location[] = [];
   const reverted: Location[] = [];
   const human: Location[] = [];
+  const unjoined: Location[] = [];
   const decidedKeys = new Set<string>();
   const overlaps: RuleOverlap[] = [];
   // Per keep rule: how many locations it matched, and which rules won them.
@@ -375,6 +378,7 @@ export function applyColumnPolicy(spec: Spec, profile: Profile, policy: Pick<Pol
     }
     decided.push(loc);
     decidedKeys.add(key);
+    if (winner?.rule.joinWith !== undefined && rule.joinWith === undefined) unjoined.push(loc);
     if (saved !== undefined && i !== undefined) {
       const same = saved.source === "policy" && saved.class === rule.class && saved.treatment === rule.treatment && saved.joinWith === rule.joinWith;
       if (!same) columns[i] = rule;
@@ -390,5 +394,5 @@ export function applyColumnPolicy(spec: Spec, profile: Profile, policy: Pick<Pol
     .filter(([, k]) => !k.won)
     .sort(([a], [b]) => a - b)
     .map(([index, k]) => ({ index, rule: policy.columns[index] as ColumnPolicyRule, by: [...k.by].sort((a, b) => a - b), locations: k.locations }));
-  return { spec: changed ? { ...spec, columns, questions } : spec, decided, removedQuestions, reverted, human, overlaps, shadowedKeeps };
+  return { spec: changed ? { ...spec, columns, questions } : spec, decided, removedQuestions, reverted, human, overlaps, shadowedKeeps, unjoined };
 }

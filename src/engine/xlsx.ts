@@ -59,6 +59,7 @@ import { isLabelCell, isLabelColumn } from "./labels.ts";
 import { refuseUnrewritten } from "./unrewritten.ts";
 import { IMAGE, type ImageMode, placeholderFor } from "./images.ts";
 import { pseudoCell, pseudoWrite } from "./shapes.ts";
+import { commaNames, peopleSegments } from "./people.ts";
 
 /** The spec does not fit the workbook; the caller turns this into its ApplyError (exit 2). */
 export class XlsxSpecError extends Error {
@@ -175,6 +176,11 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
     if (rule.jsonPath !== undefined || rule.sheet === undefined) {
       throw new XlsxSpecError(`${path}: a spec rule for this workbook has no sheet; name the column by its sheet and header`);
     }
+    if (rule.joinWith !== undefined) {
+      throw new XlsxSpecError(
+        `${path}: the spec pairs worksheet ${JSON.stringify(rule.sheet)} column ${JSON.stringify(rule.header)} with ${JSON.stringify(rule.joinWith)} (joinWith), but first/last name pairs are blinded in CSV and TSV files only; remove joinWith (each column is then blinded on its own) or export the sheet as CSV`,
+      );
+    }
     const sheet = wb.sheets.find((s) => s.name === rule.sheet);
     if (sheet === undefined || sheet.member === null) {
       throw new XlsxSpecError(`${path}: the spec has a rule for worksheet ${JSON.stringify(rule.sheet)}, which is not in the workbook; fix the rule or re-plan`);
@@ -283,6 +289,10 @@ export function planXlsx(path: string, bytes: Uint8Array, rules: readonly Column
         if (removes) column.changed++;
         else if (cellAction.kind === "pseudo") {
           column.changed++;
+          if (c.type !== "n" && cellAction.cls === "person") {
+            if (peopleSegments(text) !== null) column.people = (column.people ?? 0) + 1;
+            else if (commaNames(text)) column.commaNames = (column.commaNames ?? 0) + 1;
+          }
           // A number is pseudonymised as an id; only a whole number is found again as written.
           const form: ExtraForm | null = c.type !== "n" ? { cls: cellAction.cls, value: pseudoCell(cellAction.cls, text).core } : /^\d+$/.test(text) ? { cls: "id", value: text } : null;
           if (form !== null) {

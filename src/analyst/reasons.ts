@@ -82,11 +82,14 @@ export function baseReason(rule: ColumnRule, stats: ValueStats, policy: NotePoli
   return d === undefined ? `${rule.class} ${rule.treatment}` : `${rule.class} ${rule.treatment}, detector: ${d.detector}, ${Math.round(d.rate * 100)}%${why}`;
 }
 
-/** The notes an overlay gives about columns (overlaps), and the ones about the plan as a whole, as `blind plan` orders them. */
-export function overlayNotes(overlay: Pick<PolicyOverlay, "decided" | "overlaps" | "shadowedKeeps">): { decided: string | undefined; overlaps: ColumnNote[]; shadowedKeeps: string[] } {
+/** A `join_with` rule that found no single surname column: the column is decided, but on its own. */
+export const UNJOINED_NOTE = `${POLICY_FILE} join_with matched no other header of this CSV or TSV table, or several, so no first/last name pair: the column is blinded on its own`;
+
+/** The notes an overlay gives about columns (overlaps, unpaired join_with rules), and the ones about the plan as a whole, as `blind plan` orders them. */
+export function overlayNotes(overlay: Pick<PolicyOverlay, "decided" | "overlaps" | "shadowedKeeps"> & Partial<Pick<PolicyOverlay, "unjoined">>): { decided: string | undefined; overlaps: ColumnNote[]; shadowedKeeps: string[] } {
   return {
     decided: overlay.decided.length > 0 ? decidedNote(overlay.decided.length) : undefined,
-    overlaps: overlay.overlaps.map(overlapNote),
+    overlaps: [...overlay.overlaps.map(overlapNote), ...(overlay.unjoined ?? []).map((loc) => ({ loc, text: UNJOINED_NOTE }))],
     shadowedKeeps: overlay.shadowedKeeps.map(shadowedKeepNote),
   };
 }

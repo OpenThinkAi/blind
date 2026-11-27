@@ -26,12 +26,12 @@ import { type Frame, localName, rewriteOoxml, ZipError } from "../formats/ooxml.
 import { NO_ZIP_CODEC_REASON, zipCodec } from "../formats/zipcodec.ts";
 import { classify, needsQuotes, quoteSheet, readWorkbook, type Slot, slotRules, tokenizeFormula, XlsxError } from "../formats/xlsx.ts";
 import { guidCore } from "./canonical.ts";
-import { CsvError, parseCsv, renderCell, serializeCsv, sniffDelimiter } from "./csv.ts";
+import { type Cell, CsvError, parseCsv, renderCell, serializeCsv, sniffDelimiter } from "./csv.ts";
 import { decode, EncodingError, encode } from "./encoding.ts";
 import { engineFormat } from "./apply.ts";
 import { isJsonNumber, JsonError, quote, scanJson, scanJsonl, stringOffsets } from "./json.ts";
 import type { BlindMap } from "./map.ts";
-import { nameSafe } from "./pseudonym.ts";
+import { nameSafe, splitStandIn } from "./pseudonym.ts";
 import { DocxError, type DocxPlan, planDocx, rulesFor } from "./docx.ts";
 import { type NameSlot, splitExtension, violation } from "./names.ts";
 
@@ -55,15 +55,34 @@ export interface Revealed {
   restored: number;
 }
 
+/** A person written across a first/last name pair (AGT-2787): the two cells as blinding wrote them, and as the map restores them. */
+interface NamePair {
+  /** The given-name cell's text in the blinded file (its side of the stand-in, splitStandIn). */
+  givenPart: string;
+  given: string;
+  family: string;
+}
+
 export class Revealer {
   private readonly targets = new Map<string, Target>();
   private readonly re: RegExp | null;
+  /** First/last name pairs, by the surname cell's text in the blinded file (its side of the stand-in). */
+  private readonly pairs = new Map<string, NamePair[]>();
 
   constructor(map: BlindMap) {
+    const parts = new Map<string, { given?: string; family?: string }>();
     for (const e of map.entries) {
       // Host labels and email local parts are components of the host and email pseudonyms,
       // which have entries of their own; apply never writes a component on its own.
       if (e.kind === "host-label" || e.kind === "email-local") continue;
+      // A name part shares its person's stand-in; it is restored only as a pair of cells (pair()).
+      if (e.kind === "person-given" || e.kind === "person-family") {
+        const got = parts.get(e.pseudonym) ?? {};
+        if (e.kind === "person-given") got.given = e.value;
+        else got.family = e.value;
+        parts.set(e.pseudonym, got);
+        continue;
+      }
       const core = e.kind === "id" ? guidCore(e.pseudonym) : undefined;
       if (core !== undefined) {
         const target = { value: e.value, guid: guidCore(e.value) };
@@ -75,6 +94,14 @@ export class Revealer {
         const twin = nameSafe(e.pseudonym);
         if (twin !== e.pseudonym) this.targets.set(twin, { value: e.value });
       }
+    }
+    for (const [pseudonym, got] of parts) {
+      if (got.given === undefined || got.family === undefined) continue;
+      const split = splitStandIn(pseudonym);
+      if (split.family === "") continue;
+      const list = this.pairs.get(split.family) ?? [];
+      list.push({ givenPart: split.given, given: got.given, family: got.family });
+      this.pairs.set(split.family, list);
     }
     const forms = [...this.targets.keys()].sort((a, b) => b.length - a.length || cmp(a, b));
     this.re =
@@ -98,6 +125,33 @@ export class Revealer {
       return this.original(m);
     });
     return { text: out, restored };
+  }
+
+  /**
+   * The first/last name pairs in one row of cells (AGT-2787): for each cell that is the surname side of
+   * a recorded pair's stand-in, the nearest other cell of the row that is its given-name side (before
+   * it first, then after). Each pair found is [given cell, surname cell, given name, surname]; the
+   * cells' own leading and trailing spacing is the caller's to keep. A cell is in one pair at most.
+   */
+  pairsIn(cells: readonly string[]): [number, number, string, string][] {
+    if (this.pairs.size === 0) return [];
+    const used = new Set<number>();
+    const out: [number, number, string, string][] = [];
+    cells.forEach((cell, j) => {
+      const found = used.has(j) ? undefined : this.pairs.get(cell.trim());
+      if (found === undefined) return;
+      for (const pair of found) {
+        let at = -1;
+        for (let i = j - 1; i >= 0 && at < 0; i--) if (!used.has(i) && (cells[i] as string).trim() === pair.givenPart) at = i;
+        for (let i = j + 1; i < cells.length && at < 0; i++) if (!used.has(i) && (cells[i] as string).trim() === pair.givenPart) at = i;
+        if (at < 0) continue;
+        used.add(at);
+        used.add(j);
+        out.push([at, j, pair.given, pair.family]);
+        return;
+      }
+    });
+    return out;
   }
 
   /** The original of `form` when the whole of it is a pseudonym the map records. */
@@ -132,11 +186,30 @@ export class Revealer {
   }
 }
 
+/** `cell` with its trimmed text replaced by `value`, its leading and trailing spacing kept. */
+const respace = (cell: string, value: string): string => {
+  const core = cell.trim();
+  const lead = cell.slice(0, cell.indexOf(core));
+  return lead + value + cell.slice(lead.length + core.length);
+};
+
 function revealTable(text: string, delim: string, rv: Revealer): Revealed {
   const rows = parseCsv(text, delim);
   let restored = 0;
   for (const row of rows) {
-    for (const cell of row.cells) {
+    // First/last name pairs first: their cells hold parts of a stand-in, which text matching never restores.
+    const paired = new Set<number>();
+    for (const [g, f, given, family] of rv.pairsIn(row.cells.map((c) => c.value))) {
+      for (const [at, value] of [[g, given], [f, family]] as const) {
+        const cell = row.cells[at] as Cell;
+        cell.value = respace(cell.value, value);
+        cell.raw = renderCell(cell.value, cell.quoted, delim);
+        paired.add(at);
+      }
+      restored++;
+    }
+    for (const [at, cell] of row.cells.entries()) {
+      if (paired.has(at)) continue;
       const r = rv.text(cell.value);
       if (r.restored === 0) continue;
       restored += r.restored;

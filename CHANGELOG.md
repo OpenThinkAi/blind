@@ -8,6 +8,31 @@
   columns took time growing with the square of its rows (40,000 rows took minutes; 130,000 never
   finished). The scanner now indexes those values by their first word: a 131,536-row file with two
   such columns blinds in a few seconds under Bun and Node. Output is unchanged.
+- **People cells with several names match across files (AGT-2787).** A person cell that holds two
+  or more full names separated by `;`, a line break, `&`, `+` or `and` (`Nora Teasdale; Owen
+  Brandvik`) is now written one stand-in per person, separators and spacing kept byte for byte, and
+  each stand-in is the one that person gets written alone elsewhere. Before, the whole cell was one
+  stand-in that matched no one. A cell where a name borrows a surname (`Dana & Lee Quillfeather`)
+  keeps one stand-in, as before. blind never splits on `,` or `/`. `blind plan` and `proposeSpec`
+  now ask a question (`names-1`, options `person` / `value`) about a column whose samples put a
+  full name on each side of a comma, which blind reads as one person written `Surname, Given`, and
+  the apply report warns about such cells (`commaNames`) and counts split ones (`people`).
+- **First-name and last-name columns join to the full name (AGT-2787).** A new column rule field,
+  `joinWith` (blind.toml `join_with`; `joinWith` on the library's `ColumnRuleInput`), on a
+  given-name column names its surname column in the same CSV or TSV table. Each row's two cells are
+  one person: the given-name cell gets the person's full-name stand-in up to its last space, the
+  surname cell the rest, so `given + " " + surname` equals that person's stand-in in any other file
+  (compact style, which has no space: split at the last `_`). Headers and columns are unchanged.
+  `blind plan` and `proposeSpec` propose the pair for headers like `first_name`/`last_name`,
+  `First Name`/`Last Name` or `Given`/`Surname` when people are sensitive. The map records each part
+  (new entry kinds `person-given` and `person-family`, which reuse the person's stand-in), and
+  `blind reveal` restores each cell exactly. A `joinWith` on a worksheet column is refused. See
+  "Cells of several people" and "First and last name columns" in [docs/spec.md](docs/spec.md).
+- **Compatibility.** Against an existing map, a cell of several full names joined by `&`, `+` or
+  `and` (`Dana Quillfeather & Lee Marwick`) now gets one stand-in per person instead of its earlier
+  whole-cell stand-in; the old entry stays in the map and still reveals. A map that holds the new
+  `person-given` / `person-family` entries is refused by an older blind (unknown entry kind), so
+  reveal such output with this version or later.
 
 ## 0.4.0-rc.2
 

@@ -87,7 +87,11 @@
         },
         "treatment": { "enum": ["blind", "keep", "value", "drop", "redact", "scan"] },
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-        "source": { "enum": ["analyst", "human", "heuristic", "policy"] }
+        "source": { "enum": ["analyst", "human", "heuristic", "policy"] },
+        "joinWith": {
+          "$ref": "#/$defs/nonEmpty",
+          "description": "Given-name column of a first/last pair: the header of the surname column in the same table (same file and sheet). Each row's two cells are one person: the person's full-name stand-in is split between them. Needs header, class person and treatment blind. See docs/spec.md."
+        }
       }
     },
     "entityList": {

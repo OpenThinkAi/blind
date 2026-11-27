@@ -63,7 +63,7 @@
 // is blinded through src/engine/names.ts (patterns, entities and the column
 // values replaced above), planned with the cells and rendered after them.
 
-import { type ColumnRule, type EntityClassName, patternOn, REDACTED_VALUE, type Spec, type Treatment } from "../schema.ts";
+import { type ColumnRule, type EntityClassName, fitsSurnameRule, patternOn, REDACTED_VALUE, type Spec, type Treatment } from "../schema.ts";
 import { findRedactValues } from "./redactlist.ts";
 import { newSecretCarry } from "./secret.ts";
 import { Shield, type ShieldReport } from "./shield.ts";
@@ -74,7 +74,7 @@ import { assertRowWidths, type Cell, CsvError, parseCsv, renderCell, type Row, s
 import { decode, type Encoding, EncodingError, encode } from "./encoding.ts";
 import { isJsonNumber, type JsonFormat, JsonError, type JsonToken, jsonCuts, quote, scanJson, scanJsonl, stringOffsets } from "./json.ts";
 import { type BlindMap, foldText, withoutValues } from "./map.ts";
-import { type EntityEntry, NAME_SAFE_SHAPE_RE, PseudonymError, Pseudonymizer, type PseudonymStyle, READABLE_SHAPE_RE } from "./pseudonym.ts";
+import { type EntityEntry, NAME_SAFE_SHAPE_RE, PseudonymError, Pseudonymizer, type PseudonymStyle, READABLE_SHAPE_RE, splitStandIn } from "./pseudonym.ts";
 import { cellText, readWorkbook } from "../formats/xlsx.ts";
 import { NO_ZIP_CODEC_REASON, zipCodec } from "../formats/zipcodec.ts";
 import { lastKey } from "./birthdate.ts";
@@ -93,6 +93,7 @@ import { EntityMatcher, type ExtraForm, keepDomains, type Span } from "./text.ts
 import { entrySpans, keptSpeakers, planTranscript, shapeParagraphs, speakerForms, speakersOf, type TranscriptPlan, transcriptSpans } from "./transcript.ts";
 import { unrewrittenSpans } from "./unrewritten.ts";
 import { pseudoCell, pseudoWrite } from "./shapes.ts";
+import { commaNames, peopleSegments } from "./people.ts";
 import { IMAGE, type ImageMode, imageWarning } from "./images.ts";
 import { scrubPackage } from "../formats/metadata.ts";
 import { type Env, planXlsx, prepareXlsx, renderXlsx, settleXlsx, XlsxError, type XlsxPlan, XlsxSpecError, xlsxValues, ZipError } from "./xlsx.ts";
@@ -169,6 +170,19 @@ export interface ColumnReport {
    * as written because the whole value is a `[keep]` term (AGT-2767). Absent when 0.
    */
   keptTerms?: number;
+  /**
+   * A column of a first/last name pair (a rule's `joinWith`, AGT-2787): the header of the other column.
+   * Each row's two cells are one person, each written as its side of that person's stand-in.
+   */
+  joinWith?: string;
+  /** A person column: cells holding several full names ("A B; C D"), written one stand-in per person (AGT-2787). Absent when 0. */
+  people?: number;
+  /**
+   * A person column: cells with a full name on each side of a comma ("A B, C D"), each blinded as ONE
+   * person written "Surname, Given": blind never splits on a comma. Two people? Separate them with ";".
+   * Absent when 0.
+   */
+  commaNames?: number;
 }
 
 export interface FileReport {
@@ -360,8 +374,60 @@ export function roleLabel(header: string | undefined): string | undefined {
   return label;
 }
 
+/** The values one request for `value` stands for: each person of a person cell written as several full names (people.ts peopleSegments), else the value. */
+const cellPeople = (cls: PseudoClass, value: string): string[] => (cls === "person" ? (peopleSegments(value)?.names ?? [value]) : [value]);
+
+/** A recurring form, as one form per person when it is a person cell of several full names. */
+const eachPerson = (f: ExtraForm): ExtraForm[] => {
+  const names = f.cls === "person" && f.form === undefined ? peopleSegments(f.value)?.names : undefined;
+  return names === undefined ? [f] : names.map((value) => ({ ...f, value }));
+};
+
 /** `fixed`: the whole value replaced by a set text (a `redact` column's REDACTED_VALUE). */
-type CellEdit = { kind: "pseudo"; cls: PseudoClass } | { kind: "spans"; spans: Span[] } | { kind: "fixed"; value: string };
+type CellEdit = { kind: "pseudo"; cls: PseudoClass } | { kind: "spans"; spans: Span[] } | { kind: "fixed"; value: string } | PartEdit;
+
+/**
+ * One cell of a first/last name pair (a rule's `joinWith`, AGT-2787): the person is `given family`,
+ * both trimmed as written in the row, and this cell is written as its side of that person's stand-in
+ * (pseudonym.ts splitStandIn).
+ */
+interface PartEdit {
+  kind: "part";
+  side: "given" | "family";
+  given: string;
+  family: string;
+}
+
+/** The person a pair's cells name: given name and surname with one space, as the full name is written elsewhere. */
+const pairName = (e: PartEdit): string => `${e.given} ${e.family}`;
+
+/** A cell written as its side of the pair's stand-in, its own leading and trailing spacing kept. */
+function writePart(pz: Pseudonymizer, e: PartEdit, cell: string): string {
+  const parts = splitStandIn(pz.nameParts(e.given, e.family));
+  const core = cell.trim();
+  const lead = cell.slice(0, cell.indexOf(core));
+  return lead + (e.side === "given" ? parts.given : parts.family) + cell.slice(lead.length + core.length);
+}
+
+/** Header words that say a column holds the given name or the surname of a pair: left out of the person's role label. */
+const PAIR_WORDS = new Set(["first", "given", "fore", "forename", "forenames", "firstname", "givenname", "fname", "last", "family", "surname", "surnames", "lastname", "familyname", "lname", "name", "names"]);
+
+/** The header a pair's role label is read from: the given-name header less its given-name words ("employee_first_name" reads "employee"), or none. */
+function pairHeader(header: string | undefined): string | undefined {
+  if (header === undefined) return undefined;
+  const rest = header
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .split(/[^A-Za-z]+/)
+    .filter((w) => w !== "" && !PAIR_WORDS.has(w.toLowerCase()));
+  return rest.length === 0 ? undefined : rest.join(" ");
+}
+
+/** Counts, on a person column's report, a cell written one stand-in per person and a cell with a full name on each side of a comma. */
+function noteNames(column: ColumnReport, cls: PseudoClass, value: string): void {
+  if (cls !== "person") return;
+  if (peopleSegments(value) !== null) column.people = (column.people ?? 0) + 1;
+  else if (commaNames(value)) column.commaNames = (column.commaNames ?? 0) + 1;
+}
 
 /** Text scanned once every column is decided: a cell kept as text or under `keep`, a header, a JSON key. */
 interface Pending<K> {
@@ -549,6 +615,27 @@ function planTable(
     }
   }
 
+  // First/last name pairs (AGT-2787): the given-name column's rule names its surname column.
+  const pairs = new Map<number, { other: number; given: boolean }>();
+  for (const rule of rules) {
+    if (rule.joinWith === undefined) continue;
+    const g = headers.findIndex((h) => h.trim() === (rule.header as string).trim());
+    const f = headers.findIndex((h) => h.trim() === (rule.joinWith as string).trim());
+    if (f < 0) {
+      throw new ApplyError(
+        `${input.path}: the spec pairs column ${JSON.stringify(rule.header)} with ${JSON.stringify(rule.joinWith)} (joinWith), which is not in the header row (row ${headerRow + 1}); fix the rule or re-plan`,
+      );
+    }
+    const theirs = rules.find((r) => (r.header as string).trim() === (rule.joinWith as string).trim());
+    if (f === g || pairs.has(g) || pairs.has(f) || (theirs !== undefined && !fitsSurnameRule(theirs))) {
+      throw new ApplyError(
+        `${input.path}: column ${JSON.stringify(rule.joinWith)} cannot be the surname of ${JSON.stringify(rule.header)} (joinWith): a pair is two different columns, each in one pair, and the surname column's own rule (if any) must be person/blind`,
+      );
+    }
+    pairs.set(g, { other: f, given: true });
+    pairs.set(f, { other: g, given: false });
+  }
+
   const edits = new Map<string, CellEdit>();
   const pending: Pending<string>[] = [];
   const mapped: ExtraForm[] = [];
@@ -566,6 +653,35 @@ function planTable(
     // The cells of this column in a row, with their positions: the last column also owns the overflow.
     const owned = (row: Row): { cell: Cell; at: number }[] =>
       (col === lastCol ? row.cells.slice(col) : row.cells.slice(col, col + 1)).map((cell, i) => ({ cell, at: col + i }));
+    const pair = pairs.get(col);
+    if (pair !== undefined) {
+      // One person across two cells of a row: each cell gets its side of the person's stand-in. A row
+      // with only one of the two filled blinds that cell whole as a person.
+      const column: ColumnReport = { index: col, header, class: "person", treatment: rule?.treatment ?? "blind", outcome: "blinded", changed: 0, flagged: 0, joinWith: headers[pair.other] as string };
+      columns.push(column);
+      data.forEach((row, i) => {
+        const r = headerRow + 1 + i;
+        // A last column's overflow cells (a stray delimiter) are blinded whole, as a person.
+        for (const { cell, at } of owned(row).slice(1)) {
+          if (!isFilled(cell)) continue;
+          edits.set(`${r}:${at}`, { kind: "pseudo", cls: "person" });
+          mapped.push({ cls: "person", value: cell.value });
+        }
+        const mine = row.cells[col];
+        const other = row.cells[pair.other];
+        if (!isFilled(mine)) return;
+        if (!isFilled(other)) {
+          edits.set(`${r}:${col}`, { kind: "pseudo", cls: "person" });
+          mapped.push({ cls: "person", value: mine.value });
+          return;
+        }
+        const [g, f] = pair.given ? [mine, other] : [other, mine];
+        const edit: PartEdit = { kind: "part", side: pair.given ? "given" : "family", given: g.value.trim(), family: f.value.trim() };
+        edits.set(`${r}:${col}`, edit);
+        if (pair.given) mapped.push({ cls: "person", value: pairName(edit) });
+      });
+      continue;
+    }
     const { action, outcome } = decide(rule, data.flatMap((r) => (col === lastCol ? owned(r).map((o) => o.cell.value) : [r.cells[col]?.value ?? ""])), { delimiter: delim, name: header }, unruled);
     const column: ColumnReport = {
       index: col,
@@ -608,6 +724,7 @@ function planTable(
         else if (labels && isLabelCell(cell.value)) pending.push({ key, value: cell.value, keep: false, column });
         else if (action.kind === "pseudo") {
           edits.set(key, { kind: "pseudo", cls: action.cls });
+          noteNames(column, action.cls, cell.value);
           const fallback = isFallback(outcome);
           if (rule?.class === "vocabulary") {
             wholeCells.push({ key, value: cell.value, column, form: undefined, fallback });
@@ -740,6 +857,7 @@ function planJson(
       }
       if (action.kind === "pseudo") {
         edits.set(i, { kind: "pseudo", cls: action.cls });
+        noteNames(column, action.cls, value);
         const fallback = isFallback(outcome);
         if (rule?.class === "vocabulary") {
           wholeCells.push({ key: i, value, column, form: undefined, fallback });
@@ -796,6 +914,7 @@ function renderJson(
     if (edit !== undefined) {
       if (edit.kind === "pseudo") value = pseudoWrite(pz, edit.cls, t.value);
       else if (edit.kind === "fixed") value = edit.value;
+      else if (edit.kind === "part") value = writePart(pz, edit, t.value);
       else {
         value = rewriteSpans(t.value, edit.spans, pz);
         entityReplacements += count(edit.spans, "entity");
@@ -1126,6 +1245,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     } else if (p.kind === "xlsx") for (const f of p.plan.columnValues) columnValues.push(f);
     else if (p.kind === "table") {
       for (const [key, edit] of p.edits) {
+        if (edit.kind === "part" && edit.side === "given") columnValues.push({ cls: "person", value: pairName(edit) });
         if (edit.kind !== "pseudo") continue;
         const [r, c] = key.split(":").map(Number) as [number, number];
         columnValues.push({ cls: edit.cls, value: ((p.rows[r] as Row).cells[c] as Cell).value });
@@ -1153,7 +1273,10 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   }
   // The values the column pass pseudonymised (an earlier map's are added by recurrenceForms), and
   // the people among them and in the map, whose name parts are matched alone too.
-  const columnMapped = [...plans.flatMap((p) => (p.kind === "text" || p.kind === "docx" ? [] : p.kind === "xlsx" ? p.plan.mapped : p.mapped)), ...metadata];
+  // A person cell of several full names recurs as each person (AGT-2787), never as the whole cell.
+  const columnMapped = [...plans.flatMap((p) => (p.kind === "text" || p.kind === "docx" ? [] : p.kind === "xlsx" ? p.plan.mapped : p.mapped)), ...metadata].flatMap(eachPerson);
+  const columnWhole = columnValues.splice(0);
+  for (const f of columnWhole) for (const one of eachPerson(f)) columnValues.push(one);
   // Values of dropped and redacted columns recur just as a pseudonymised column's do (AGT-1835), but
   // are written as the redaction placeholder: never a pseudonym, never in the map (AGT-1847). The
   // exception is a value some column also pseudonymises: that pseudonym wins, and only that path
@@ -1358,10 +1481,13 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   const requests = new Set<string>();
   // Where each request was first seen (file, and column or key path), for a PseudonymError (AGT-2786).
   const origins = new Map<string, string>();
-  const want = (cls: PseudoClass, value: string, where: string) => {
-    const req = `${cls}\0${value}`;
-    requests.add(req);
-    if (!origins.has(req)) origins.set(req, where);
+  const want = (cls: PseudoClass, whole: string, where: string) => {
+    // A person cell of several full names asks for each person (AGT-2787), as pseudoWrite writes it.
+    for (const value of cellPeople(cls, whole)) {
+      const req = `${cls}\0${value}`;
+      requests.add(req);
+      if (!origins.has(req)) origins.set(req, where);
+    }
   };
   for (const p of plans) {
     const path = p.input.path;
@@ -1395,7 +1521,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         for (const s of edit.spans) if (s.cls !== null) want(s.cls, s.value, where);
       } else if (edit.kind === "pseudo") {
         want(edit.cls, ((p.rows[r] as Row).cells[c] as Cell).value, where);
-      }
+      } else if (edit.kind === "part" && edit.side === "given") want("person", pairName(edit), where);
     }
   }
   for (const r of names.requests()) want(r.cls, r.value, "a file, folder or sheet name");
@@ -1405,8 +1531,10 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
   const setLabel = (cls: PseudoClass, value: string, header: string | undefined, headerHidden: boolean) => {
     const label = headerHidden || header === undefined || pz.isPseudonym(header) || /[A-Za-z]_[0-9A-Fa-f]{4}/.test(header) ? undefined : roleLabel(header);
     if (label === undefined) return;
-    const key = `${cls}\0${value}`;
-    if (!labels.has(key)) labels.set(key, label);
+    for (const one of cellPeople(cls, value)) {
+      const key = `${cls}\0${one}`;
+      if (!labels.has(key)) labels.set(key, label);
+    }
   };
   /** Whether a header cell's output differs from its input: it was pseudonymised or holds a pseudonymised span. */
   const hidden = (e: CellEdit | undefined): boolean => e !== undefined && (e.kind !== "spans" || e.spans.some((s) => s.cls !== null));
@@ -1415,8 +1543,12 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
     if (p.kind === "table") {
       if (p.noHeader || p.headerRow < 0) continue;
       for (const [key, edit] of p.edits) {
-        if (edit.kind !== "pseudo") continue;
         const [r, c] = key.split(":").map(Number) as [number, number];
+        if (edit.kind === "part" && edit.side === "given" && r > p.headerRow) {
+          // The pair's role label comes from the given-name header less its given-name words.
+          setLabel("person", pairName(edit), pairHeader((p.rows[p.headerRow] as Row).cells[c]?.value), hidden(p.edits.get(`${p.headerRow}:${c}`)));
+        }
+        if (edit.kind !== "pseudo") continue;
         if (r <= p.headerRow) continue;
         const header = (p.rows[p.headerRow] as Row).cells[c]?.value;
         const cell = (p.rows[r] as Row).cells[c];
@@ -1627,6 +1759,7 @@ export function applySpec(inputs: readonly InputFile[], spec: Spec, opts: ApplyO
         let value: string;
         if (edit.kind === "pseudo") value = pseudoWrite(pz, edit.cls, cell.value);
         else if (edit.kind === "fixed") value = edit.value;
+        else if (edit.kind === "part") value = writePart(pz, edit, cell.value);
         else {
           value = rewriteSpans(cell.value, edit.spans, pz);
           entityReplacements += count(edit.spans, "entity");

@@ -45,7 +45,21 @@ export type ColumnRule = Location & {
   /** 0..1 */
   confidence: number;
   source: ColumnSource;
+  /**
+   * A given-name column's surname column (AGT-2787): the header of the other column of a first/last
+   * name pair in the same table (same file and sheet). Each row's two cells are one person, and each
+   * cell gets its part of that person's full-name stand-in (pseudonym.ts splitStandIn). Only with
+   * `header`, class `person` and treatment `blind`.
+   */
+  joinWith?: string;
 };
+
+/**
+ * Whether a column rule may be the surname column of a first/last name pair (`joinWith`, AGT-2787):
+ * blinded as a person, or undecided (`unknown`/`value`). The validator and the engine both use it.
+ */
+export const fitsSurnameRule = (r: Pick<ColumnRule, "class" | "treatment">): boolean =>
+  (r.class === "person" && r.treatment === "blind") || (r.class === "unknown" && r.treatment === "value");
 
 export interface Entity {
   canonical: string;

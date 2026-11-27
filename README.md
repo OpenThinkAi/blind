@@ -110,7 +110,11 @@ documents ------------ engine (deterministic) ---------------+--> blinded docume
   compact style; `Person KQZTB` and `Org MRDHX`, with no digits, in the letters style; set with
   `[pseudonyms] style` in `blind.toml`), and so does one person however the name is
   written (`Quill, Avery`, `Avery+Quill`, `Dr. A. Quill` when nothing else fits), while a pet and
-  an owner who share a name stay apart. IPs stay IPs and emails stay emails, formulas,
+  an owner who share a name stay apart. A cell naming several people (`Nora Teasdale; Owen
+  Brandvik`) gets one stand-in per person, separators kept, and a first-name / last-name column pair
+  (proposed by `blind plan` as `joinWith`) splits the person's full-name stand-in across its two
+  cells, so a staff list still joins to payroll ([docs/spec.md](docs/spec.md#first-and-last-name-columns)).
+  IPs stay IPs and emails stay emails, formulas,
   joins and formatting survive. A column nobody classified that looks like identifiers is
   pseudonymised, not passed through; dates, amounts, quantities with units and small repeating
   categories (species, status) are not identifiers, and pass. People named only in prose are

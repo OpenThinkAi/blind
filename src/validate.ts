@@ -9,7 +9,7 @@
 import profileSchema from "../schema/profile.schema.json" with { type: "json" };
 import specSchema from "../schema/spec.schema.json" with { type: "json" };
 import { maskValue } from "./mask.ts";
-import type { Profile, Spec } from "./schema.ts";
+import { fitsSurnameRule, type Profile, type Spec } from "./schema.ts";
 
 export interface SchemaIssue {
   /** Where the problem is, e.g. `$.columns[2].class`. */
@@ -281,6 +281,34 @@ export function validateSpec(value: unknown): Validation<Spec> {
     if (first !== undefined) {
       issues.push({ path: `$.columns[${i}]`, message: `same column as $.columns[${first}]; keep one rule per column` });
     } else targets.set(key, i);
+  });
+
+  // A first/last name pair (AGT-2787): the given-name rule names its surname column by header.
+  const partners = new Map<string, number>();
+  spec.columns.forEach((c, i) => {
+    if (c.joinWith === undefined) return;
+    const at = `$.columns[${i}].joinWith`;
+    if (c.header === undefined) {
+      issues.push({ path: at, message: "joinWith pairs two table columns; a JSON key path cannot use it" });
+      return;
+    }
+    if (c.class !== "person" || c.treatment !== "blind") {
+      issues.push({ path: at, message: `joinWith needs class "person" and treatment "blind", got ${got(c.class)} and ${got(c.treatment)}`, ...strings(c.class, c.treatment) });
+    }
+    if (c.joinWith.trim() === c.header.trim()) {
+      issues.push({ path: at, message: "joinWith names the column itself; name the surname column", ...strings(c.joinWith) });
+      return;
+    }
+    const target = locationKey({ file: c.file, sheet: c.sheet, header: c.joinWith.trim() });
+    const first = partners.get(target);
+    if (first !== undefined) issues.push({ path: at, message: `the same surname column as $.columns[${first}].joinWith; a column is part of one pair only`, ...strings(c.joinWith) });
+    else partners.set(target, i);
+    const other = spec.columns.find((o) => o.header !== undefined && o.file === c.file && o.sheet === c.sheet && o.header.trim() === c.joinWith?.trim());
+    if (other !== undefined && other.joinWith !== undefined) {
+      issues.push({ path: at, message: "the surname column has a joinWith of its own; put joinWith on the given-name column only", ...strings(c.joinWith) });
+    } else if (other !== undefined && !fitsSurnameRule(other)) {
+      issues.push({ path: at, message: `the surname column's rule is ${got(other.class)}/${got(other.treatment)}; a pair is blinded as one person, so make it person/blind`, ...strings(c.joinWith, other.class, other.treatment) });
+    }
   });
 
   const ids = new Map<string, number>();

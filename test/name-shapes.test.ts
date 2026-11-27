@@ -1,14 +1,15 @@
-// AGT-2735 (blind-sdk D-28): pins what blind does TODAY, with `blind plan --no-model` defaults, for
-// two name shapes a staff and jobs export can have:
+// AGT-2735 / AGT-2787 (blind-sdk D-28): two name shapes a staff and jobs export can have, with
+// `blind plan --no-model` defaults:
 //
 // - A: a staff list with first and last name in separate columns (staff.csv) next to the full name
-//   in another file (payroll.csv `employee`).
+//   in another file (payroll.csv `employee`). The plan proposes the pair as one person (`joinWith`);
+//   each cell gets its part of the person's full-name stand-in, so `first + " " + last` is exactly the
+//   stand-in payroll writes for that person.
 // - B: one cell holding several workers (jobs.csv `workers`, "A; B" in some rows and "A, B" in
-//   others) next to the same people one per cell in payroll.csv.
+//   others) next to the same people one per cell in payroll.csv. A ";" cell is written one stand-in
+//   per person, separator kept; a "," cell is never split, and the plan asks the reviewer about it.
 //
-// The assertions state current behaviour, not desired behaviour: no engine change is made here, and
-// any fix is planned after these results (pm project blind-sdk, doc `name-shapes`). If engine work
-// changes one of these on purpose, update the assertion and that doc together.
+// Reveal restores every cell exactly. pm project blind-sdk, doc `name-shapes`, records the design.
 //
 // Synthetic data only: the fixture names are invented (common given names, made-up surnames).
 
@@ -19,17 +20,21 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { runPlan } from "../src/analyst/plan.ts";
 import { runApply } from "../src/apply.ts";
+import { runAudit } from "../src/audit/command.ts";
+import { runReveal } from "../src/reveal.ts";
 import { canonicalize } from "../src/engine/canonical.ts";
 import { parseCsv } from "../src/engine/csv.ts";
-import type { BlindMap } from "../src/engine/map.ts";
-import { splitPeople } from "../src/engine/people.ts";
-import { isPersonColumn } from "../src/engine/prose.ts";
+import { type BlindMap, parseMap } from "../src/engine/map.ts";
+import { commaNames, peopleSegments, splitPeople } from "../src/engine/people.ts";
+import { splitStandIn } from "../src/engine/pseudonym.ts";
+import { applySpec, explainProposal, profileInputs, revealFile, Revealer, serializeMap } from "../src/lib.ts";
 import { defaultPolicy, renderPolicy } from "../src/policy.ts";
 import type { Spec } from "../src/schema.ts";
 
 const FIXTURE = join(import.meta.dir, "fixtures", "name-shapes");
 const FILES = ["staff.csv", "payroll.csv", "jobs.csv"] as const;
 const PEOPLE = ["Nora Teasdale", "Owen Brandvik", "Iris Halloway", "Hugo Okonkwo-Lund"];
+const SALT = Uint8Array.from({ length: 32 }, (_, i) => i + 27);
 
 const sink = () => {
   const s = new PassThrough();
@@ -41,6 +46,7 @@ const sink = () => {
 let dir: string;
 let spec: Spec;
 let map: BlindMap;
+let planReport: string;
 let applyReport: string;
 /** Output rows of each file, header row first, as plain cell values. */
 const rows: Record<string, string[][]> = {};
@@ -53,11 +59,12 @@ beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), "blind-name-shapes-"));
   cpSync(FIXTURE, join(dir, "in"), { recursive: true });
   mkdirSync(join(dir, ".blind"), { mode: 0o700 });
-  writeFileSync(join(dir, ".blind", "salt"), Buffer.from(Array.from({ length: 32 }, (_, i) => i + 27)), { mode: 0o600 });
+  writeFileSync(join(dir, ".blind", "salt"), Buffer.from(SALT), { mode: 0o600 });
   writeFileSync(join(dir, "blind.toml"), renderPolicy(defaultPolicy()));
 
   const p = sink();
   expect(await runPlan(["in", "--no-model"], { out: p.s, err: p.s, cwd: dir, model: { env: {} } })).toBe(0);
+  planReport = p.text();
   spec = JSON.parse(readFileSync(join(dir, ".blind", "spec.json"), "utf8")) as Spec;
 
   const a = sink();
@@ -83,104 +90,199 @@ function cell(file: string, keyCol: string, value: string, col: string): string 
 
 /** The map entry for (kind, value as written), or undefined. */
 const entry = (kind: string, value: string) => map.entries.find((e) => e.kind === kind && e.value === value);
-/** The four-hex tag of a readable stand-in ("[Employee C #CA35]" gives "CA35"). */
-const tag = (p: string): string | undefined => /#([0-9A-F]{4})\]$/.exec(p)?.[1];
 
-describe("the fixture and the defaults it runs under", () => {
-  test("plan --no-model leaves every column unknown/value: nothing is classed person before apply", () => {
-    expect(spec.columns).toHaveLength(9);
-    for (const c of spec.columns) expect(c).toMatchObject({ class: "unknown", treatment: "value", source: "heuristic" });
+describe("the proposal", () => {
+  test("plan --no-model proposes the first/last pair as one person and asks about the comma column", () => {
+    const rule = (file: string, header: string) => spec.columns.find((c) => c.file === file && c.header === header);
+    expect(rule("staff.csv", "first_name")).toMatchObject({ class: "person", treatment: "blind", joinWith: "last_name", source: "heuristic" });
+    expect(rule("staff.csv", "last_name")).toMatchObject({ class: "person", treatment: "blind", source: "heuristic" });
+    expect(rule("staff.csv", "last_name")?.joinWith).toBeUndefined();
+    // Everything else is as before: unknown, decided at apply time.
+    for (const c of spec.columns.filter((c) => c.file !== "staff.csv" || c.header === "role")) expect(c).toMatchObject({ class: "unknown", treatment: "value", source: "heuristic" });
+    // The "A B, C D" cells are a question for the reviewer, never a silent choice.
+    expect(spec.questions).toHaveLength(1);
+    expect(spec.questions[0]).toMatchObject({ id: "names-1", options: ["person", "value"], answer: null, about: { file: "jobs.csv", header: "workers" } });
+    expect(planReport).toContain("joinWith");
+    expect(planReport).toContain("question names-1");
     expect(spec.entities).toEqual({});
   });
 
-  test("at apply time the full-name columns are read as people, the split name columns as plain values", () => {
-    // columns.ts decide(): an identifier-like unknown column is `person` when prose.ts isPersonColumn holds.
-    expect(applyReport).toMatch(/em\*+8: unknown → pseudonymised as people \(names\)/);
-    expect(applyReport).toMatch(/wo\*+7: unknown → pseudonymised as people \(names\)/);
-    expect(applyReport).toMatch(/fi\*+10: unknown → pseudonymised, 4 cells changed/);
-    expect(applyReport).toMatch(/la\*+9: unknown → pseudonymised, 4 cells changed/);
-    // A single word is never a person's name to isPersonColumn (two to four words are needed).
-    expect(isPersonColumn(["Nora", "Owen", "Iris", "Hugo"])).toBe(false);
-    expect(isPersonColumn(PEOPLE)).toBe(true);
+  test("the library proposal says the same, with reasons", () => {
+    const profile = profileInputs(FILES.map((f) => ({ path: f, bytes: new Uint8Array(readFileSync(join(FIXTURE, f))) }))).profile;
+    const proposal = explainProposal(profile, {});
+    expect(proposal.spec.columns.find((c) => c.header === "first_name")?.joinWith).toBe("last_name");
+    expect(proposal.spec.questions.map((q) => q.about?.header)).toEqual(["workers"]);
+    expect(proposal.columns.find((c) => c.header === "first_name")?.reason).toContain("joinWith");
+    expect(proposal.columns.find((c) => c.header === "workers")?.reason).toContain("question names-1");
+    // A person-free policy proposes no pair.
+    expect(explainProposal(profile, { sensitive: { classes: ["email"] } }).spec.columns.some((c) => c.joinWith !== undefined)).toBe(false);
   });
 
-  test("no real name, first name or surname survives in any output file", () => {
+  test("no real name, first name or surname survives in any output file or report", () => {
     for (const f of FILES) {
       const text = readFileSync(join(dir, "out", f), "utf8");
       for (const w of PEOPLE.flatMap((p) => p.split(" "))) expect(text).not.toContain(w);
     }
+    for (const w of PEOPLE.flatMap((p) => p.split(" "))) {
+      expect(planReport).not.toContain(w);
+      expect(applyReport).not.toContain(w);
+    }
+  });
+
+  test("the audit finds no leak", async () => {
+    const o = sink();
+    expect(await runAudit(["out", "--no-model", "--json"], { out: o.s, err: o.s, cwd: dir })).not.toBe(2);
+    const report = JSON.parse(o.text()) as { status: string };
+    expect(report.status).not.toBe("leak");
   });
 });
 
 describe("shape A: first and last name in separate columns vs the full name in payroll", () => {
-  test("one person gets three unrelated stand-ins: one for the first name, one for the surname, one for the full name", () => {
+  test("first + ' ' + last is exactly the person's stand-in in payroll", () => {
     for (const person of PEOPLE) {
       const [first, last] = person.split(" ") as [string, string];
       const firstOut = cell("staff.csv", "first_name", first, "first_name");
       const lastOut = cell("staff.csv", "first_name", first, "last_name");
       const fullOut = cell("payroll.csv", "employee", person, "employee");
-
-      // Each split cell is its own `value` entry; the full name is a `person` entry.
-      expect(firstOut).toBe(entry("value", first)?.pseudonym as string);
-      expect(lastOut).toBe(entry("value", last)?.pseudonym as string);
+      expect(`${firstOut} ${lastOut}`).toBe(fullOut);
       expect(fullOut).toBe(entry("person", person)?.pseudonym as string);
-
-      // Nothing ties them: three different stand-ins with three different tags.
-      expect(new Set([firstOut, lastOut, fullOut]).size).toBe(3);
-      expect(new Set([tag(firstOut), tag(lastOut), tag(fullOut)]).size).toBe(3);
-      expect(firstOut).toMatch(/^\[First Name [A-Z]+ #[0-9A-F]{4}\]$/);
-      expect(lastOut).toMatch(/^\[Last Name [A-Z]+ #[0-9A-F]{4}\]$/);
-
-      // The given name and surname are never person entries of their own.
-      expect(entry("person", first)).toBeUndefined();
-      expect(entry("person", last)).toBeUndefined();
+      expect(splitStandIn(fullOut)).toEqual({ given: firstOut, family: lastOut, joiner: " " });
+      // The map records how the person was split, under the person's own stand-in.
+      expect(entry("person-given", first)?.pseudonym).toBe(fullOut);
+      expect(entry("person-family", last)?.pseudonym).toBe(fullOut);
+      // The given name and surname are never person or value entries of their own.
+      for (const k of ["person", "value"]) {
+        expect(entry(k, first)).toBeUndefined();
+        expect(entry(k, last)).toBeUndefined();
+      }
     }
+    expect(applyReport).toMatch(/fi\*+10: person\/blind → .*4 cells changed/);
+    expect(applyReport).toContain("(joinWith)");
   });
 });
 
 describe("shape B: several workers in one cell vs each worker in payroll", () => {
-  test("splitPeople splits neither separator: only '&', '+' and ' and ' make a cell several people", () => {
-    expect(splitPeople("Nora Teasdale; Owen Brandvik")).toBeNull();
+  test("people cells split on ';' and line breaks too, never on ',' or '/'", () => {
+    expect(splitPeople("Nora Teasdale; Owen Brandvik")).toEqual(["Nora Teasdale", "Owen Brandvik"]);
+    expect(splitPeople("Nora Teasdale\nOwen Brandvik")).toEqual(["Nora Teasdale", "Owen Brandvik"]);
     expect(splitPeople("Iris Halloway, Hugo Okonkwo-Lund")).toBeNull();
     expect(splitPeople("Nora Teasdale & Owen Brandvik")).toEqual(["Nora Teasdale", "Owen Brandvik"]);
+    expect(peopleSegments("Nora Teasdale;  Owen Brandvik\r\nIris Halloway")).toEqual({ names: ["Nora Teasdale", "Owen Brandvik", "Iris Halloway"], around: ["", ";  ", "\r\n", ""] });
+    expect(peopleSegments("Main / Room 1")).toBeNull();
+    expect(peopleSegments("Owen Bellamy, PT")).toBeNull();
+    // A borrowed surname keeps the cell whole, so reveal restores it exactly.
+    expect(peopleSegments("Dana & Lee Quillfeather")).toBeNull();
+    expect(commaNames("Iris Halloway, Hugo Okonkwo-Lund")).toBe(true);
+    expect(commaNames("Halloway, Iris")).toBe(false);
+    expect(commaNames("Owen Bellamy, PT")).toBe(false);
   });
 
-  test("a ';' cell is one person entry for the whole cell, matching neither worker's payroll stand-in", () => {
+  test("a ';' cell is one stand-in per worker, each the worker's payroll stand-in, separator kept", () => {
     for (const [job, a, b] of [["J-101", "Nora Teasdale", "Owen Brandvik"], ["J-103", "Owen Brandvik", "Iris Halloway"]] as const) {
       const out = cell("jobs.csv", "job_id", job, "workers");
-      const whole = entry("person", `${a}; ${b}`);
-      expect(whole?.canonical).toBe(`${a}; ${b}`.toLowerCase());
-      expect(out).toBe(whole?.pseudonym as string);
-      for (const w of [a, b]) {
-        const payroll = cell("payroll.csv", "employee", w, "employee");
-        expect(out).not.toContain(payroll);
-        expect(tag(out)).not.toBe(tag(payroll));
-      }
+      expect(out).toBe(`${cell("payroll.csv", "employee", a, "employee")}; ${cell("payroll.csv", "employee", b, "employee")}`);
+      expect(entry("person", `${a}; ${b}`)).toBeUndefined();
     }
+    expect(applyReport).toContain("2 cells name several people");
   });
 
-  test("a ',' cell is read as ONE reversed name ('Surname, Given'), matching neither worker's payroll stand-in", () => {
+  test("a ',' cell is still read as ONE reversed name, and the apply report warns about it", () => {
     for (const [job, a, b] of [["J-102", "Iris Halloway", "Hugo Okonkwo-Lund"], ["J-104", "Nora Teasdale", "Hugo Okonkwo-Lund"]] as const) {
       const out = cell("jobs.csv", "job_id", job, "workers");
       const whole = entry("person", `${a}, ${b}`);
-      // canonical.ts reads "X Y, Z W" as surname "X Y", given "Z W": one person called "Z W X Y".
       expect(whole?.canonical).toBe(`${b} ${a}`.toLowerCase());
       expect(canonicalize("person", `${a}, ${b}`)).toBe(`${b} ${a}`.toLowerCase());
       expect(out).toBe(whole?.pseudonym as string);
-      for (const w of [a, b]) {
-        const payroll = cell("payroll.csv", "employee", w, "employee");
-        expect(out).not.toContain(payroll);
-        expect(tag(out)).not.toBe(tag(payroll));
-      }
     }
+    expect(applyReport).toMatch(/warning: 2 cells have a full name on each side of a comma/);
   });
 
   test("control: a cell with one worker, written exactly as in payroll, gets the same stand-in in both files", () => {
     const jobs = cell("jobs.csv", "job_id", "J-105", "workers");
-    const payroll = cell("payroll.csv", "employee", "Owen Brandvik", "employee");
-    expect(jobs).toBe(payroll);
-    expect(jobs).toBe(entry("person", "Owen Brandvik")?.pseudonym as string);
-    // The readable label comes from the first file that asks for the person (jobs.csv sorts first).
+    expect(jobs).toBe(cell("payroll.csv", "employee", "Owen Brandvik", "employee"));
     expect(jobs).toMatch(/^\[Workers [A-Z]+ #[0-9A-F]{4}\]$/);
+  });
+});
+
+describe("reveal", () => {
+  test("blind reveal restores every file byte for byte, separators and split names included", async () => {
+    const o = sink();
+    expect(await runReveal(["out", "-o", "back"], { out: o.s, err: o.s, cwd: dir })).toBe(0);
+    for (const f of FILES) expect(readFileSync(join(dir, "back", f), "utf8")).toBe(readFileSync(join(FIXTURE, f), "utf8"));
+  });
+
+  for (const style of ["letters", "readable", "compact"] as const) {
+    test(`library, ${style} style: the pair joins to the full name and every cell reveals exactly`, () => {
+      const files = FILES.map((f) => ({ path: f, bytes: new Uint8Array(readFileSync(join(FIXTURE, f))) }));
+      const r = applySpec(files, spec, { salt: SALT, policy: { pseudonyms: { style } } });
+      const out = Object.fromEntries(r.outputs.map((o) => [o.path, table(new TextDecoder().decode(o.bytes))]));
+      const joiner = style === "compact" ? "_" : " ";
+      for (const [i, person] of PEOPLE.entries()) {
+        const staff = out["staff.csv"]?.[i + 1] as string[];
+        expect(`${staff[0]}${joiner}${staff[1]}`).toBe(out["payroll.csv"]?.[i + 1]?.[0] as string);
+      }
+      const rv = new Revealer(parseMap(serializeMap(r.map)));
+      for (const o of r.outputs) {
+        const back = revealFile(o.path, o.bytes, rv);
+        expect("bytes" in back ? new TextDecoder().decode(back.bytes) : "").toBe(readFileSync(join(FIXTURE, o.path), "utf8"));
+      }
+    });
+  }
+});
+
+describe("the joinWith rule", () => {
+  const files = () => FILES.map((f) => ({ path: f, bytes: new Uint8Array(readFileSync(join(FIXTURE, f))) }));
+  const base = (columns: unknown[]): Spec => ({ version: 1, columns, entities: {}, patterns: { ip: true, email: true, host: true, guid: true, mac: false }, questions: [] }) as Spec;
+  const col = (header: string, extra: Record<string, unknown> = {}) => ({ file: "staff.csv", header, class: "person", treatment: "blind", confidence: 1, source: "human", ...extra });
+
+  test("a policy rule's joinWith (blind.toml join_with) reaches the spec through the library", () => {
+    const profile = profileInputs(files()).profile;
+    const proposal = explainProposal(profile, { columns: [{ header: "first_name", treatment: "blind", class: "person", joinWith: "Last Name" }] });
+    expect(proposal.spec.columns.find((c) => c.header === "first_name")).toMatchObject({ source: "policy", joinWith: "last_name" });
+    expect(() => explainProposal(profile, { columns: [{ header: "first_name", treatment: "keep", joinWith: "last_name" }] })).toThrow(/joinWith pairs/);
+  });
+
+  test("blind.toml join_with parses and renders", async () => {
+    const { parsePolicy } = await import("../src/policy.ts");
+    const p = parsePolicy(`${renderPolicy(defaultPolicy())}\n[[columns]]\nheader = "first_name"\ntreatment = "blind"\nclass = "person"\njoin_with = "last_name"\n`);
+    expect(p.columns[0]?.joinWith).toBe("last_name");
+    expect(renderPolicy(p)).toContain('join_with = "last_name"');
+  });
+
+  test("an explicit rule is honoured, and a bad one is refused", async () => {
+    const { validateSpec } = await import("../src/validate.ts");
+    const { ApplyError } = await import("../src/engine/apply.ts");
+    expect(validateSpec(base([col("first_name", { joinWith: "last_name" }), col("last_name")])).ok).toBe(true);
+    expect(validateSpec(base([col("first_name", { joinWith: "first_name" })])).ok).toBe(false);
+    expect(validateSpec(base([col("first_name", { joinWith: "last_name", class: "org" })])).ok).toBe(false);
+    expect(validateSpec(base([col("first_name", { joinWith: "last_name" }), col("last_name", { treatment: "keep", class: "vocabulary" })])).ok).toBe(false);
+    expect(() => applySpec(files(), base([col("first_name", { joinWith: "surname" })]), { salt: SALT })).toThrow(ApplyError);
+    // Only the given-name rule is needed: the surname column follows the pair.
+    const r = applySpec(files(), base([col("first_name", { joinWith: "last_name" })]), { salt: SALT, policy: { pseudonyms: { style: "letters" } } });
+    const staff = table(new TextDecoder().decode(r.outputs.find((o) => o.path === "staff.csv")?.bytes));
+    const payroll = table(new TextDecoder().decode(r.outputs.find((o) => o.path === "payroll.csv")?.bytes));
+    expect(`${staff[1]?.[0]} ${staff[1]?.[1]}`).toBe(payroll[1]?.[0] as string);
+    expect(payroll[1]?.[0]).toMatch(/^[A-Za-z ]+ [BCDFGHJKLMNPQRSTVWXZ]{5}$/);
+  });
+
+  test("a row with only one half blinds that cell whole; reveal restores it", () => {
+    const csv = "first_name,last_name\nNora,Teasdale\n Owen ,\n";
+    const input = [{ path: "staff.csv", bytes: new TextEncoder().encode(csv) }];
+    const r = applySpec(input, base([col("first_name", { joinWith: "last_name" })]), { salt: SALT, policy: { pseudonyms: { style: "readable" } } });
+    const out = new TextDecoder().decode(r.outputs[0]?.bytes);
+    expect(out).not.toContain("Owen");
+    expect(out).not.toContain("Teasdale");
+    const back = revealFile("staff.csv", r.outputs[0]?.bytes as Uint8Array, new Revealer(r.map));
+    expect(new TextDecoder().decode(back.bytes)).toBe(csv);
+  });
+
+  test("the map: a name part must reuse an entry's pseudonym", () => {
+    const ok = { version: 1, entries: [
+      { kind: "person", canonical: "nora teasdale", value: "Nora Teasdale", pseudonym: "Staff QSPPW" },
+      { kind: "person-given", canonical: "nora teasdale", value: "Nora", pseudonym: "Staff QSPPW" },
+      { kind: "person-family", canonical: "nora teasdale", value: "Teasdale", pseudonym: "Staff QSPPW" },
+    ] };
+    expect(parseMap(JSON.stringify(ok)).entries).toHaveLength(3);
+    expect(() => parseMap(JSON.stringify({ ...ok, entries: ok.entries.slice(1) }))).toThrow(/reuse the pseudonym/);
   });
 });

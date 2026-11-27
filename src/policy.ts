@@ -122,6 +122,7 @@ export function renderPolicy(p: Policy): string {
           ...(c.file === undefined ? [] : [`file = ${str(c.file)}`]),
           `treatment = ${str(c.treatment)}`,
           `class = ${str(c.class)}`,
+          ...(c.joinWith === undefined ? [] : [`join_with = ${str(c.joinWith)}`]),
         ])),
     "",
     "[defaults]",

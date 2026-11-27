@@ -6,8 +6,14 @@
 
 import { canonicalize, PSEUDO_CLASSES } from "./canonical.ts";
 
-/** Components of shaped pseudonyms are recorded too, so hosts and emails rebuild without the salt. */
-export const MAP_KINDS = [...PSEUDO_CLASSES, "host-label", "email-local"] as const;
+/**
+ * Components of shaped pseudonyms are recorded too, so hosts and emails rebuild without the salt.
+ * `person-given` and `person-family` record how a person was written across a first/last name column
+ * pair (AGT-2787): keyed on the person's canonical form, their pseudonym is the person's own full-name
+ * stand-in (the entry the person resolved to, which the map must hold), and their value is the given name or surname as written. Reveal reads them only
+ * to restore such a pair of cells (pseudonym.ts splitStandIn); they are never matched in text.
+ */
+export const MAP_KINDS = [...PSEUDO_CLASSES, "host-label", "email-local", "person-given", "person-family"] as const;
 export type MapKind = (typeof MAP_KINDS)[number];
 
 export const MAP_VERSION = 1;
@@ -95,12 +101,23 @@ export function parseMap(text: string, source = "map.json"): BlindMap {
     const key = `${entry.kind}\0${entry.canonical}`;
     if (keys.has(key)) throw new MapError(`${at}: duplicate ${entry.kind} entry`);
     keys.add(key);
-    if (pseudonyms.has(entry.pseudonym)) throw new MapError(`${at}.pseudonym: already used by another entry`);
-    pseudonyms.add(entry.pseudonym);
+    // A name part reuses its person's stand-in, checked once every entry is read.
+    if (!isNamePart(entry.kind)) {
+      if (pseudonyms.has(entry.pseudonym)) throw new MapError(`${at}.pseudonym: already used by another entry`);
+      pseudonyms.add(entry.pseudonym);
+    }
     return { kind: entry.kind, canonical: entry.canonical, value: entry.value, pseudonym: entry.pseudonym };
+  });
+  entries.forEach((e, i) => {
+    if (isNamePart(e.kind) && !pseudonyms.has(e.pseudonym)) {
+      throw new MapError(`${source}: entries[${i}].pseudonym: a ${e.kind} entry must reuse the pseudonym of the entry it is part of`);
+    }
   });
   return { version: MAP_VERSION, entries };
 }
+
+/** A `person-given` or `person-family` entry: one part of a person written across a first/last name pair. */
+export const isNamePart = (kind: string): boolean => kind === "person-given" || kind === "person-family";
 
 export const foldText = (s: string): string => s.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
 
@@ -130,6 +147,8 @@ export function withoutValues(map: BlindMap, values: readonly string[]): { map: 
   const kept = map.entries.filter((e) => !hit(e));
   const used = new Set(kept.flatMap(pieces));
   const orphaned = new Set(gone.flatMap(pieces).filter((p) => !used.has(p)));
-  const entries = kept.filter((e) => !(isComponent(e.kind) && orphaned.has(e.canonical)));
+  // A name part goes with the entry whose pseudonym it reuses.
+  const whole = new Set(kept.filter((e) => !isNamePart(e.kind)).map((e) => e.pseudonym));
+  const entries = kept.filter((e) => !(isComponent(e.kind) && orphaned.has(e.canonical)) && !(isNamePart(e.kind) && !whole.has(e.pseudonym)));
   return { map: { version: map.version, entries }, dropped: map.entries.length - entries.length };
 }

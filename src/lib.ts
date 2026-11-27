@@ -36,6 +36,7 @@ import { heuristicSpec, locationKey, profileLocations } from "./analyst/heuristi
 import type { AuditReport } from "./audit/mechanical.ts";
 import { auditRules, memoryTree } from "./audit/rules.ts";
 import { applyColumnPolicy, ColumnPolicy } from "./analyst/policycolumns.ts";
+import { proposeNameShapes } from "./analyst/nameshapes.ts";
 import { baseReason, columnNotes, overlayNotes } from "./analyst/reasons.ts";
 import { applySpec as engineApply, type ApplyOptions, type ApplyResult, type InputFile } from "./engine/apply.ts";
 import type { ColumnDefault } from "./engine/columns.ts";
@@ -85,6 +86,13 @@ export interface ColumnRuleInput {
   file?: string;
   treatment: Treatment;
   class?: EntityClassName;
+  /**
+   * On a given-name column's rule: the header of its surname column in the same table (AGT-2787, blind.toml
+   * `join_with`). proposeSpec writes it into the spec rule as `joinWith`, so each row's two cells are blinded
+   * as one person: `given cell + " " + surname cell` is that person's full-name stand-in (compact style:
+   * joined by "_"). Needs `header` (no `path`), treatment `blind` and class `person`. CSV and TSV only.
+   */
+  joinWith?: string;
 }
 
 /**
@@ -245,12 +253,14 @@ export function explainProposal(profile: Profile, policy: BlindPolicy = {}): Pro
   const checked = validateProfile(profile);
   if (!checked.ok) throw new SchemaError("profile", "profile", checked.issues);
   const overlay = applyColumnPolicy(heuristicSpec(profile, p), profile, p);
-  const spec = overlay.spec;
+  // First/last name pairs proposed as one person, and comma-separated names asked about, as `blind plan` does (AGT-2787).
+  const shapes = proposeNameShapes(overlay.spec, profile, p);
+  const spec = shapes.spec;
   const result = validateSpec(spec);
   if (!result.ok) throw new SchemaError("spec", "proposed spec", result.issues);
   const notesOf = overlayNotes(overlay);
   const byLoc = new Map<string, string[]>();
-  for (const n of [...notesOf.overlaps, ...columnNotes(spec, profile, p)]) {
+  for (const n of [...notesOf.overlaps, ...shapes.notes, ...columnNotes(spec, profile, p)]) {
     const k = locationKey(n.loc);
     byLoc.set(k, [...(byLoc.get(k) ?? []), n.text]);
   }

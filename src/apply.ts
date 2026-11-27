@@ -204,6 +204,19 @@ export function renderReport(result: ApplyResult, show = false): string {
         const n = c.keptTerms as number;
         lines.push(`    ${n} ${unit}${n === 1 ? "" : "s"} kept as written: the whole value is a [keep] term`);
       }
+      if (c.joinWith !== undefined) {
+        lines.push(`    one person with ${v(c.joinWith)} (joinWith): each row's two cells hold the parts of that person's full-name stand-in`);
+      }
+      if ((c.people ?? 0) > 0) {
+        const n = c.people as number;
+        lines.push(`    ${n} ${unit}${n === 1 ? "" : "s"} name several people: one stand-in per person, separators kept`);
+      }
+      if ((c.commaNames ?? 0) > 0) {
+        const n = c.commaNames as number;
+        lines.push(
+          `    warning: ${n} ${unit}${n === 1 ? " has" : "s have"} a full name on each side of a comma; each is blinded as ONE person written "Surname, Given" (blind never splits on a comma). If they are two people, separate them with ";" and apply again`,
+        );
+      }
     }
     const place = (h: HeaderCellReport): string =>
       `${h.sheet === undefined ? "" : `sheet ${v(h.sheet)} `}${h.index === undefined ? `key ${v(h.header)}` : `column ${h.index + 1} ${v(h.header)}`}`;

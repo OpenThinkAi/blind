@@ -75,6 +75,12 @@ export interface ColumnPolicyRule {
   treatment: Treatment;
   /** Defaults to `vocabulary` for `keep` and to `unknown` for the rest (a `scan` column needs no class). */
   class: EntityClassName;
+  /**
+   * `join_with` (`joinWith` in a policy object, AGT-2787): on a given-name column's rule, the header of
+   * its surname column in the same table (any case; `_ - .` and spaces alike). The spec rule gets
+   * `joinWith`, so each row's two cells are one person. Needs `header`, treatment blind, class person.
+   */
+  joinWith?: string;
 }
 
 export interface Policy {
@@ -265,7 +271,7 @@ function readModels(r: Reader, models: Table): Policy["models"] {
   return { analyst, auditor: readModel(r, models, "auditor"), auditorExplicit: true };
 }
 
-const COLUMN_RULE_KEYS = ["header", "path", "sheet", "file", "treatment", "class"] as const;
+const COLUMN_RULE_KEYS = ["header", "path", "sheet", "file", "treatment", "class", "join_with"] as const;
 
 function readColumns(r: Reader, doc: Table, source: string): ColumnPolicyRule[] {
   const v = doc.columns;
@@ -301,7 +307,16 @@ function readColumns(r: Reader, doc: Table, source: string): ColumnPolicyRule[] 
     if (cls === "unknown" && treatment === "keep") {
       throw new PolicyError(`${source}: ${path}: class "unknown" cannot use treatment "keep"; leave class out or name one (e.g. "vocabulary")`);
     }
+    let joinWith: string | undefined;
+    if (t.join_with !== undefined) {
+      joinWith = r.string(t, "join_with", `${path}.join_with`);
+      if (joinWith.trim() === "") r.fail(`${path}.join_with`, "a non-empty header", joinWith);
+      if (header === undefined || keyPath !== undefined || treatment !== "blind" || cls !== "person") {
+        throw new PolicyError(`${source}: ${path}: join_with pairs a given-name column with its surname column: it needs header (no path), treatment "blind" and class "person"`);
+      }
+    }
     const rule: ColumnPolicyRule = { treatment, class: cls };
+    if (joinWith !== undefined) rule.joinWith = joinWith;
     if (header !== undefined) rule.header = header;
     if (keyPath !== undefined) rule.path = keyPath;
     if (sheet !== undefined) rule.sheet = sheet;
@@ -453,6 +468,15 @@ export function policyFromObject(policy: unknown, source = "policy"): Policy {
   fill("models", { analyst: { ...d.models.analyst } });
   fill("profile", {});
   fill("privacy", { mode: d.privacy.mode });
+  // A column rule's joinWith is blind.toml's join_with.
+  if (Array.isArray(doc.columns)) {
+    doc.columns = (doc.columns as unknown[]).map((c, i) => {
+      if (!isTable(c)) return c;
+      if (c.join_with !== undefined) throw new PolicyError(`${source}: unknown key columns[${i}].join_with (expected one of: joinWith)`);
+      const { joinWith, ...rest } = c;
+      return joinWith === undefined ? rest : { ...rest, join_with: joinWith };
+    });
+  }
   const metadata = doc.metadata;
   if (isTable(metadata)) {
     if (metadata.keep_dates !== undefined) throw new PolicyError(`${source}: unknown key metadata.keep_dates (expected one of: keepDates)`);
@@ -463,7 +487,14 @@ export function policyFromObject(policy: unknown, source = "policy"): Policy {
     return policyFromDocument(doc, source);
   } catch (e) {
     // The rules name blind.toml's key; the object spells it keepDates (a literal keep_dates was refused above).
-    if (!(e instanceof PolicyError) || !isTable(metadata)) throw e;
-    throw new PolicyError(e.message.replace("metadata.keep_dates", "metadata.keepDates").replace("(expected one of: keep_dates)", "(expected one of: keepDates)"));
+    if (!(e instanceof PolicyError)) throw e;
+    throw new PolicyError(
+      e.message
+        .replace("metadata.keep_dates", "metadata.keepDates")
+        .replace("(expected one of: keep_dates)", "(expected one of: keepDates)")
+        .replace(/(columns\[\d+\])\.join_with/g, "$1.joinWith")
+        .replace(/join_with pairs/g, "joinWith pairs")
+        .replace(/, join_with\)/g, ", joinWith)"),
+    );
   }
 }

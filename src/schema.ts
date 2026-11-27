@@ -45,6 +45,13 @@ export type ColumnRule = Location & {
   /** 0..1 */
   confidence: number;
   source: ColumnSource;
+  /**
+   * A given-name column's surname column (AGT-2787): the header of the other column of a first/last
+   * name pair in the same table (same file and sheet). Each row's two cells are one person, and each
+   * cell gets its part of that person's full-name stand-in (pseudonym.ts splitStandIn). Only with
+   * `header`, class `person` and treatment `blind`.
+   */
+  joinWith?: string;
 };
 
 export interface Entity {

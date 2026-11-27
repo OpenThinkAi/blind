@@ -21,6 +21,7 @@ import { parseSpec, SchemaError, validateProfile, validateSpec } from "../valida
 import { AnalystError, type DroppedRule, answerQuestion, locationKey, proposeSpec, runAnalyst } from "./analyst.ts";
 import { heuristicSpec, profileLocations } from "./heuristic.ts";
 import { applyColumnPolicy } from "./policycolumns.ts";
+import { proposeNameShapes } from "./nameshapes.ts";
 import { columnNotes, overlayNotes } from "./reasons.ts";
 import {
   ACCEPT_CLASSES,
@@ -198,7 +199,7 @@ export function renderSpec(spec: Spec, policyPatterns: PolicyPatterns = {}, show
   for (const [label, rules] of sections) {
     if (rules.length === 0) continue;
     out.push(`  ${label}`);
-    const rows = rules.map((c: ColumnRule) => [where(c, show), c.treatment, c.confidence.toFixed(2), c.source]);
+    const rows = rules.map((c: ColumnRule) => [where(c, show), c.treatment, c.confidence.toFixed(2), c.joinWith === undefined ? c.source : `${c.source}, joinWith ${val(c.joinWith, show)}`]);
     const widths = [0, 1, 2].map((i) => rows.reduce((w, r) => Math.max(w, (r[i] ?? "").length), 0));
     for (const r of rows) out.push(`    ${r.map((cell, i) => (i < 3 ? cell.padEnd(widths[i] ?? 0) : cell)).join("  ")}`);
   }
@@ -472,6 +473,10 @@ export async function runPlan(argv: string[], io: PlanIO): Promise<number> {
     // Rules that disagree on one column: name them (globs only, never a value) and say which won and why (reasons.ts).
     for (const n of notesOf.overlaps) remarks.push(`${where(n.loc, show)}: ${n.text}`);
     for (const s of notesOf.shadowedKeeps) remarks.push(s);
+    // First/last name pairs proposed as one person, and comma-separated names asked about (AGT-2787).
+    const shapes = proposeNameShapes(spec, profile, policy);
+    spec = shapes.spec;
+    for (const n of shapes.notes) remarks.push(`${where(n.loc, show)}: ${n.text}`);
     // Birth-date columns, heuristic blinds from a policy pattern, and column shapes (reasons.ts).
     for (const n of columnNotes(spec, profile, policy)) remarks.push(`${where(n.loc, show)}: ${n.text}`);
 

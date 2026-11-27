@@ -63,8 +63,11 @@ One rule per table column or JSON key path. An array, possibly empty. Each rule:
 | `treatment` | `blind` \| `keep` \| `value` \| `drop` \| `redact` \| `scan` | yes | `blind`: replace with a class-labelled pseudonym (`Person_BCF6` compact, `[Person A #BCF6]` readable; see [pseudonym styles](#pseudonym-styles)). `keep`: leave as written, apart from values blinded or removed elsewhere that recur in it (never a digits-only one in a kept number, amount or date; see [recurring values](#how-blind-apply-uses-the-spec)). `value`: replace with a neutral `Value` pseudonym. `scan`: keep the cell as written except for what the free-text scanner finds in it. `drop`: remove the column or key from the output. `redact`: write `REDACTED` in place of every non-empty value. Neither `drop` nor `redact` is recorded in the map, so neither can be revealed. The model analyst may not use `drop`, `redact` or `scan`: they come from `blind.toml` ([policy.md](policy.md#columns)) or from you. A column rule in the analyst's reply with one of them is dropped, not the reply: `blind plan` prints a note per dropped rule and that column is ruled as if the analyst had left it out (heuristic, then your `[[columns]]` rules, which may set them). The analyst also may not `keep` (or class `vocabulary`) an identifying column (an email, host, ID, address, phone or a column of names): that rule is dropped and noted the same way, and it may not turn a pattern off that the policy's classes call sensitive (it is turned back on and noted); `blind.toml` or you can do either. |
 | `confidence` | number, 0 to 1 | yes | How sure the author of the rule was. Example: `0.95`. |
 | `source` | `analyst` \| `human` \| `heuristic` \| `policy` | yes | Who wrote the rule: the model analyst, you, the built-in heuristics, or `blind plan` from a `[[columns]]` rule or `[keep]` term in `blind.toml`. |
+| `joinWith` | string, non-empty | no | On a given-name column: the header of its surname column in the same CSV or TSV table. Each row's two cells are one person. See [first and last name columns](#first-and-last-name-columns). Needs `header`, class `person` and treatment `blind`. |
 
-A rule sets exactly one of `header` and `jsonPath`; neither, or both, is an error. Two rules for
+A rule sets exactly one of `header` and `jsonPath`; neither, or both, is an error. A `joinWith` that
+names the column itself, a column already in another pair, or a surname column whose own rule is
+not `person`/`blind` (or the undecided `unknown`/`value`) is an error too. Two rules for
 the same column (same `file`, `sheet`, and `header` or `jsonPath`) are an error: keep one. A rule
 with class `unknown` cannot use treatment `keep`: an undecided column never passes through
 unchanged. To keep it, classify it (for example as `vocabulary`).
@@ -126,6 +129,14 @@ that column's rule as your decision (`source: "human"`, `confidence: 1`):
 A column has at most one question. The analyst's reply is rejected if two of its questions are
 about the same column, and `--answer` refuses to answer either of two such questions in a
 hand-edited spec until one is deleted.
+
+`blind plan` asks one question itself (any analyst, model or not): about a column whose sample
+values put a full name on each side of a comma (`Iris Halloway, Hugo Okonkwo-Lund`). blind never
+splits a cell on a comma, so such a cell is one person written `Surname, Given` unless you say
+otherwise. The question is `names-1` (then `names-2`, ...), with options `person` (each cell one
+person) and `value` (each cell blinded whole as a plain value). If the cells hold two people,
+separate them with `;` in the input instead: each person then gets their own stand-in (see
+[cells of several people](#cells-of-several-people)). The apply report warns about such cells too.
 
 ### `seen`
 
@@ -528,9 +539,10 @@ Vellacourt`) is matched alone except in a date: next to a day number or year (`9
 or joined to one by `-`, `/` or `.` (`1-Jan-2026`, `Jan-2026`, `01/Jan/26`). A part two
 different people share (`Quill` for `Avery Quill` and `Bea Quill`, or a column person and a
 transcript speaker) gets its own pseudonym, never either person's, and the apply report lists those
-pseudonyms. A cell of several people (`Dana & Lee Quillfeather`, `Dana and Lee Quillfeather`,
-`Dana + Lee Quillfeather`, `Quillfeather, Dana & Lee`, `Dana Quillfeather & Lee Marwick`) still gets
-one pseudonym as a cell, but each person in it has parts of their own, the shared surname
+pseudonyms. A cell of several people where a name shares a surname (`Dana & Lee Quillfeather`,
+`Dana and Lee Quillfeather`, `Dana + Lee Quillfeather`, `Quillfeather, Dana & Lee`) still gets one
+pseudonym as a cell (a cell of full names, `Dana Quillfeather & Lee Marwick`, gets one per person:
+[cells of several people](#cells-of-several-people)), but each person in it has parts of their own, the shared surname
 included: a bare given name takes the surname of the next full name (else the reversed `Surname,`
 before it), so `Rex Quillfeather` in a pet column or `the Quillfeather household` in prose is
 replaced. A surname two of them share is a part two people share (own pseudonym, above), each
@@ -540,6 +552,51 @@ surname is resolved to one. A cell with no surname to share (`Dana & Lee`) is re
 before. Spec entities are not split this way: their parts are the ones the spec lists. A cell
 pseudonymised as `value` that reads as a person's name (`Avery Quill`, `Quill, Avery`; the same test
 as a column of people) has name parts too, which carry that cell's `Value` pseudonym.
+
+### Cells of several people
+
+A cell of a person column that holds two or more full names separated by `;`, a line break, `&`,
+`+` or the word `and` (`Nora Teasdale; Owen Brandvik`) is written one stand-in per person, with the
+separators and spacing exactly as written: `[Workers C #CA35]; [Workers E #881E]`. Each person's
+stand-in is the one that person gets written alone in any other file or column, so the cell joins
+to payroll, a schedule or a staff list. Reveal restores the cell byte for byte. A cell is split this
+way only when every name in it is a full name of its own (two to four words, no digit, no
+organisation word); a cell where a name borrows a surname (`Dana & Lee Quillfeather`) or is written
+`Surname, Given` keeps one stand-in for the whole cell, as above, so reveal still restores it
+exactly. blind never splits on `,` (`Owen Bellamy, PT` is one person with a credential) or `/`
+(`Main / Room 1`). The apply report counts the cells split this way (`people` in the JSON report),
+and warns about cells with a full name on each side of a comma (`commaNames`): each of those is one
+person written `Surname, Given`.
+
+### First and last name columns
+
+A given-name column and a surname column in one CSV or TSV table (`first_name` and `last_name`,
+`First Name` and `Last Name`, `Given` and `Surname`, `emp_fname` and `emp_lname`) are one person per
+row. `blind plan` proposes the pair: the given-name rule gets `joinWith` naming the surname column,
+and both rules class `person`, treatment `blind` (with a note saying so). Approve it like any rule,
+or remove `joinWith` (or mark the rules `source: "human"`) to blind each column on its own. You can
+also write the rule yourself, or have `blind.toml` write it (`join_with`,
+[policy.md](policy.md#columns)). The pair is proposed only when people are sensitive, only when
+the two headers differ just by the half they name, and never over a human rule.
+
+With `joinWith`, the headers and columns stay as they are. Each row's person is `given surname`
+(each cell trimmed, one space), the same person as that full name written anywhere else, with the
+same stand-in. The stand-in is split at its last space: the given-name cell gets everything before
+it and the surname cell everything after it, so `given cell + " " + surname cell` is exactly the
+person's stand-in in another file.
+
+| Style | Full-name stand-in elsewhere | Given-name cell | Surname cell |
+|---|---|---|---|
+| letters | `Workers DRTCK` | `Workers` | `DRTCK` |
+| readable | `[Workers C #CA35]` | `[Workers C` | `#CA35]` |
+| compact | `Person_CA35` | `Person` | `CA35` |
+
+A compact stand-in has no space, so it is split at its last `_` instead: there the two cells join
+with `_`. A cell's own leading and trailing spaces are kept. A row with only one of the two cells
+filled blinds that cell whole as a person. The map records each person's given name and surname as
+written (`person-given` and `person-family` entries, which reuse the person's stand-in), and
+`blind reveal` restores each cell of the pair exactly. The pair is a CSV and TSV feature: a
+`joinWith` on a worksheet column is refused (export the sheet as CSV), and a JSON key cannot use it.
 
 **Header cells and JSON keys.** A header cell names its column, and rules, consumers and the next
 run's spec refer to the column by that name, so a lone name part never changes one: `Tips` stays
@@ -983,6 +1040,10 @@ the same code as the commands themselves.
   Text that happens to equal a pseudonym is restored too. Dropped and redacted columns are not in
   the map: they stay as apply left them (absent, or `REDACTED`). Their values recur elsewhere all
   the same, and a recurrence is in the map like any other.
+- **First and last name pairs.** In a CSV or TSV row, a cell that is the surname side of a person's
+  stand-in (map entries `person-given` and `person-family`) is restored together with the nearest
+  cell of the same row that is the given-name side, before it first, each to the name as written
+  ([first and last name columns](#first-and-last-name-columns)).
 - **Formats.** CSV/TSV cell by cell (a restored value that needs quoting is quoted), JSON and JSONL
   string by string (spliced in, the rest of the text unchanged), and text (`.txt`, `.md`, `.log`, and the
   `.vtt` and `.srt` transcripts, read as text), with the file's encoding kept. XLSX and DOCX are restored at the zip and XML level in exactly the

@@ -277,10 +277,23 @@ export class ColumnPolicy {
     return out.sort((a, b) => compareRank(b.rank, a.rank) || a.index - b.index);
   }
 
-  /** The policy's rule for one location, or undefined when blind.toml says nothing about it. */
-  ruleFor(loc: Location): ColumnRule | undefined {
+  /**
+   * The policy's rule for one location, or undefined when blind.toml says nothing about it. A rule's
+   * `join_with` becomes the spec rule's `joinWith` when exactly one other header of `headers` (the
+   * location's table) matches it; otherwise the rule decides the column on its own.
+   */
+  ruleFor(loc: Location, headers: readonly string[] = []): ColumnRule | undefined {
     const hit = this.matches(loc)[0];
-    if (hit !== undefined) return { ...loc, class: hit.rule.class, treatment: hit.rule.treatment, confidence: 1, source: "policy" };
+    if (hit !== undefined) {
+      const rule: ColumnRule = { ...loc, class: hit.rule.class, treatment: hit.rule.treatment, confidence: 1, source: "policy" };
+      const join = hit.rule.joinWith;
+      if (join !== undefined && loc.header !== undefined && loc.sheet === undefined) {
+        const re = headerGlob(join);
+        const partners = headers.filter((h) => h !== loc.header && re.test(norm(h)));
+        if (partners.length === 1) rule.joinWith = partners[0] as string;
+      }
+      return rule;
+    }
     const name = loc.jsonPath !== undefined ? keyName(loc.jsonPath) : (loc.header as string);
     if (name !== null && this.keep.has(fold(name))) return { ...loc, class: "vocabulary", treatment: "keep", confidence: 1, source: "policy" };
     return undefined;
@@ -326,6 +339,8 @@ export function applyColumnPolicy(spec: Spec, profile: Profile, policy: Pick<Pol
   const overlaps: RuleOverlap[] = [];
   // Per keep rule: how many locations it matched, and which rules won them.
   const keepSeen = new Map<number, { locations: number; won: boolean; by: Set<number> }>();
+  // Each table's headers, for a rule's join_with (its surname column must be in the same table).
+  const tableHeaders = new Map(profile.tables.map((t) => [JSON.stringify([t.file, t.sheet ?? null]), t.columns.map((c) => c.header)]));
   for (const { loc, stats } of profileLocations(profile)) {
     const key = locationKey(loc);
     const matches = cp.matches(loc);
@@ -346,7 +361,7 @@ export function applyColumnPolicy(spec: Spec, profile: Profile, policy: Pick<Pol
     }
     const i = at.get(key);
     const saved = i === undefined ? undefined : columns[i];
-    const rule = cp.ruleFor(loc);
+    const rule = cp.ruleFor(loc, loc.header === undefined ? [] : (tableHeaders.get(JSON.stringify([loc.file, loc.sheet ?? null])) ?? []));
     if (rule === undefined) {
       if (saved?.source === "policy" && i !== undefined) {
         columns[i] = heuristicRule(loc, stats, policy);
@@ -361,7 +376,7 @@ export function applyColumnPolicy(spec: Spec, profile: Profile, policy: Pick<Pol
     decided.push(loc);
     decidedKeys.add(key);
     if (saved !== undefined && i !== undefined) {
-      const same = saved.source === "policy" && saved.class === rule.class && saved.treatment === rule.treatment;
+      const same = saved.source === "policy" && saved.class === rule.class && saved.treatment === rule.treatment && saved.joinWith === rule.joinWith;
       if (!same) columns[i] = rule;
     } else {
       at.set(key, columns.length);

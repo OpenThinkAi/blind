@@ -408,6 +408,22 @@ export function mayShare(cls: PseudoClass, other: PseudoClass, value: string): b
   return words.length >= 2 && !/\p{N}/u.test(value);
 }
 
+/**
+ * A full-name stand-in split for a first/last name column pair (AGT-2787): the given-name cell gets
+ * everything before the stand-in's last space, the surname cell everything after it, so
+ * `given + " " + family` is the stand-in exactly. Readable `[Staff A #7F3A]` gives `[Staff A` and
+ * `#7F3A]`; letters `Front Desk KQZTB` gives `Front Desk` and `KQZTB`. A compact stand-in has no
+ * space (`Person_7F3A`): it splits at its last `_` instead (`Person` and `7F3A`, joined by `_`).
+ * Total: a stand-in with neither gives the whole of it and "".
+ */
+export function splitStandIn(pseudonym: string): { given: string; family: string; joiner: string } {
+  for (const joiner of [" ", "_"]) {
+    const at = pseudonym.lastIndexOf(joiner);
+    if (at > 0 && at < pseudonym.length - 1) return { given: pseudonym.slice(0, at), family: pseudonym.slice(at + 1), joiner };
+  }
+  return { given: pseudonym, family: "", joiner: "" };
+}
+
 export class Pseudonymizer {
   private readonly salt: Uint8Array | undefined;
   private readonly entries = new Map<string, MapEntry>();
@@ -771,6 +787,27 @@ export class Pseudonymizer {
       case "value":
         return this.prefixed(cls, c, surface, label);
     }
+  }
+
+  /**
+   * The stand-in of the person written across a first/last name pair (`given` and `family` as written,
+   * trimmed), recording both parts so reveal can restore each cell (map.ts `person-given`,
+   * `person-family`). The person is `given family`, the same person as that full name written anywhere.
+   */
+  nameParts(given: string, family: string): string {
+    const full = `${given} ${family}`;
+    const pseudo = this.pseudonym("person", full);
+    const key = this.resolve("person", full).key;
+    for (const [kind, value] of [["person-given", given], ["person-family", family]] as const) {
+      const known = this.entries.get(`${kind}\0${key}`);
+      if (known === undefined) this.entries.set(`${kind}\0${key}`, { kind, canonical: key, value, pseudonym: pseudo });
+      else {
+        if (value < known.value) known.value = value;
+        // A reloaded part keeps up with its person's stand-in.
+        known.pseudonym = pseudo;
+      }
+    }
+    return pseudo;
   }
 
   /** The key one entity's spellings share (class and resolved canonical form), for grouping requests. */

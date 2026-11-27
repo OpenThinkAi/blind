@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.4.0-rc.3
 
-- **Fix: a dropped column with a different value on every row no longer makes blinding quadratic.**
+Name shapes across files, and speed on large till exports. A map with the new first/last name entries cannot be read by an earlier blind.
+
+- **Fix: a dropped column with a different value on every row no longer makes blinding quadratic (AGT-2807).**
   Each dropped value is looked for wherever it recurs, and every word in a kept cell was checked
   against every dropped value sharing its first letter, so a file with transaction or payment id
   columns took time growing with the square of its rows (40,000 rows took minutes; 130,000 never

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Fix: a dropped column with a different value on every row no longer makes blinding quadratic.**
+  Each dropped value is looked for wherever it recurs, and every word in a kept cell was checked
+  against every dropped value sharing its first letter, so a file with transaction or payment id
+  columns took time growing with the square of its rows (40,000 rows took minutes; 130,000 never
+  finished). The scanner now indexes those values by their first word: a 131,536-row file with two
+  such columns blinds in a few seconds under Bun and Node. Output is unchanged.
+
 ## 0.4.0-rc.2
 
 Fixes found by running the library on small-business exports (job history, payroll, bank and till files).

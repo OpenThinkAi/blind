@@ -366,6 +366,13 @@ export interface JoinOptions {
 /** An index of every entity form in the spec, ready to scan text with. */
 export class EntityMatcher {
   private readonly byFirst = new Map<string, Form[]>();
+  /**
+   * Each byFirst list indexed by its forms' first word (AGT-2807): the distinct first-word lengths,
+   * and the forms under each length and folded first word, in the list's order. Without it, every
+   * scan position tried every form sharing its first character, so a dropped column with a
+   * different value on every row made blinding quadratic in rows.
+   */
+  private readonly byWord = new Map<string, { lengths: number[]; forms: Map<string, Form[]>; order: Map<Form, number> }>();
   readonly empty: boolean;
 
   /**
@@ -427,7 +434,46 @@ export class EntityMatcher {
           b.length - a.length || Number(b.shield) - Number(a.shield) || Number(a.part) - Number(b.part) || a.rank - b.rank || cmp(a.value, b.value),
       );
     }
+    for (const [first, list] of this.byFirst) {
+      if (list.length <= SMALL_BUCKET) continue;
+      const lengths = new Set<number>();
+      const forms = new Map<string, Form[]>();
+      const order = new Map<Form, number>();
+      for (const [i, form] of list.entries()) {
+        const length = (form.words[0] as string).length;
+        lengths.add(length);
+        const key = `${length}\0${form.folded[0] as string}`;
+        const at = forms.get(key) ?? [];
+        at.push(form);
+        forms.set(key, at);
+        order.set(form, i);
+      }
+      this.byWord.set(first, { lengths: [...lengths], forms, order });
+    }
     this.empty = this.byFirst.size === 0;
+  }
+
+  /**
+   * The forms that may match at `pos`, in their list's order: those whose first word, folded, is the
+   * text there folded. matchAt compares the first word the same way, so no form it would match is
+   * left out.
+   */
+  private candidatesAt(text: string, pos: number, first: string): readonly Form[] | undefined {
+    const index = this.byWord.get(first);
+    if (index === undefined) return this.byFirst.get(first);
+    let found: Form[] | undefined;
+    let merged = false;
+    for (const length of index.lengths) {
+      const at = index.forms.get(`${length}\0${text.slice(pos, pos + length).toLowerCase()}`);
+      if (at === undefined) continue;
+      if (found === undefined) found = at;
+      else {
+        found = [...found, ...at];
+        merged = true;
+      }
+    }
+    if (merged && found !== undefined) found.sort((a, b) => (index.order.get(a) as number) - (index.order.get(b) as number));
+    return found;
   }
 
   /** End offset of `form` matched at `pos`, or -1. `starts`, when given, receives each word's offset. */
@@ -472,7 +518,7 @@ export class EntityMatcher {
       }
       const ch = text[pos] as string;
       const inWord = isWordChar(text[pos - 1]) && isWordChar(ch) && !URL_ESCAPE_BEFORE_RE.test(text.slice(Math.max(0, pos - 3), pos));
-      const candidates = inWord ? undefined : this.byFirst.get(ch.toLowerCase());
+      const candidates = inWord ? undefined : this.candidatesAt(text, pos, ch.toLowerCase());
       let matched = false;
       for (const form of candidates ?? []) {
         const starts: number[] = [];
@@ -493,6 +539,9 @@ export class EntityMatcher {
 }
 
 const URL_ESCAPE_BEFORE_RE = /%[0-9A-Fa-f]{2}$/;
+
+/** A byFirst list this short is scanned whole: indexing it by first word saves nothing. */
+const SMALL_BUCKET = 8;
 
 /** A value written only in ASCII digits ("1048", "2026"). */
 export const DIGITS_RE = /^[0-9]+$/;
